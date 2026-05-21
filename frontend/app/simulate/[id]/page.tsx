@@ -18,6 +18,16 @@ import type {
 
 type PageProps = { params: Promise<{ id: string }> };
 
+const ACTION_COLORS: Record<string, string> = {
+  statement: "bg-canvas/10 text-canvas/70",
+  question: "bg-accent-teal/20 text-accent-teal",
+  challenge: "bg-primary/25 text-primary",
+  compromise: "bg-green-500/20 text-green-300",
+  coalition_signal: "bg-accent-amber/20 text-accent-amber",
+  interrupt: "bg-red-500/25 text-red-300",
+  escalate: "bg-red-700/30 text-red-200",
+};
+
 const HEATMAP_COLOR = (v: number) =>
   v >= 60 ? "bg-green-500" : v >= 35 ? "bg-accent-amber" : "bg-primary";
 
