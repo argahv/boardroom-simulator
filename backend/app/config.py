@@ -1,0 +1,25 @@
+import os
+
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_BASE_URL = os.getenv(
+    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+).rstrip("/")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4")
+OPENROUTER_EMBEDDING_MODEL = os.getenv(
+    "OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small"
+).strip()
+OPENROUTER_HTTP_REFERRER = os.getenv("OPENROUTER_HTTP_REFERRER", "").strip()
+OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Boardroom Simulator").strip()
+
+MAX_TURNS = int(os.getenv("MAX_TURNS", "20"))
+
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").strip()
+RQ_QUEUE_SIMULATION = os.getenv("RQ_QUEUE_SIMULATION", "simulation").strip()
+RQ_QUEUE_POSTMORTEM = os.getenv("RQ_QUEUE_POSTMORTEM", "postmortem").strip()
+RQ_JOB_TIMEOUT_SECONDS = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "300"))

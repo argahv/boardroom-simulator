@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+:root {
+  --color-canvas: #faf9f5;
+  --color-ink: #141413;
+  --color-primary: #cc785c;
+  --color-primary-active: #a9583e;
+  --color-surface-card: #efe9de;
+  --color-surface-dark: #181715;
+  --color-muted: #6c6a64;
+  --color-accent-teal: #3d9e8c;
+  --color-accent-amber: #c9883a;
+}
+
+@theme inline {
+  --color-canvas: var(--color-canvas);
+  --color-ink: var(--color-ink);
+  --color-primary: var(--color-primary);
+  --color-primary-active: var(--color-primary-active);
+  --color-surface-card: var(--color-surface-card);
+  --color-surface-dark: var(--color-surface-dark);
+  --color-muted: var(--color-muted);
+  --color-accent-teal: var(--color-accent-teal);
+  --color-accent-amber: var(--color-accent-amber);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-sans);
+  --tracking-display: -0.02em;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(204, 120, 92, 0.14), transparent 26rem),
+    linear-gradient(135deg, rgba(239, 233, 222, 0.72), rgba(250, 249, 245, 0.96));
+  color: var(--color-ink);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Accessibility: Focus-visible rings */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Accessibility: Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Touch targets: Minimum size utility */
+.touch-target {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
