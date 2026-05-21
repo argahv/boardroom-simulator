@@ -35,6 +35,7 @@ export default function PostmortemPage({ params }: PageProps) {
 
   return (
     <AppShell activeTab="War Room">
+      <div className="px-8 py-8">
       {/* Header */}
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -183,6 +184,7 @@ export default function PostmortemPage({ params }: PageProps) {
           )}
         </div>
       )}
+      </div>
     </AppShell>
   );
 }

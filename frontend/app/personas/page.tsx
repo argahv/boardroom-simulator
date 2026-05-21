@@ -139,6 +139,7 @@ export default function PersonasPage() {
 
   return (
     <AppShell activeTab="Personas">
+      <div className="px-8 py-8">
       <div className="mb-8">
         <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Strategic Archetypes</p>
         <h2 className="mt-3 font-display text-5xl font-semibold tracking-display">Persona Library</h2>
@@ -247,6 +248,7 @@ export default function PersonasPage() {
           </button>
         </div>
       )}
+      </div>
 
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/50 p-4 backdrop-blur-sm">

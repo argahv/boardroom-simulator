@@ -3,13 +3,22 @@
 :root {
   --color-canvas: #faf9f5;
   --color-ink: #141413;
-  --color-primary: #cc785c;
+  --color-primary: #924a31;
   --color-primary-active: #a9583e;
   --color-surface-card: #efe9de;
   --color-surface-dark: #181715;
+  --color-surface-dark-elevated: #252320;
+  --color-surface-dark-soft: #1f1e1b;
+  --color-surface-container-low: #fff1ed;
   --color-muted: #6c6a64;
+  --color-hairline: #e6dfd8;
+  --color-on-dark: #faf9f5;
+  --color-on-dark-soft: #a09d96;
+  --color-body-strong: #252523;
+  --color-secondary: #006b5c;
+  --color-error: #ba1a1a;
+  --color-accent-amber: #e8a55a;
   --color-accent-teal: #3d9e8c;
-  --color-accent-amber: #c9883a;
 }
 
 @theme inline {
@@ -19,12 +28,23 @@
   --color-primary-active: var(--color-primary-active);
   --color-surface-card: var(--color-surface-card);
   --color-surface-dark: var(--color-surface-dark);
+  --color-surface-dark-elevated: var(--color-surface-dark-elevated);
+  --color-surface-dark-soft: var(--color-surface-dark-soft);
+  --color-surface-container-low: var(--color-surface-container-low);
   --color-muted: var(--color-muted);
-  --color-accent-teal: var(--color-accent-teal);
+  --color-hairline: var(--color-hairline);
+  --color-on-dark: var(--color-on-dark);
+  --color-on-dark-soft: var(--color-on-dark-soft);
+  --color-body-strong: var(--color-body-strong);
+  --color-secondary: var(--color-secondary);
+  --color-error: var(--color-error);
   --color-accent-amber: var(--color-accent-amber);
+  --color-accent-teal: var(--color-accent-teal);
   --font-display: var(--font-display);
+  --font-newsreader: var(--font-newsreader);
   --font-sans: var(--font-sans);
-  --tracking-display: -0.02em;
+  --font-mono: var(--font-mono);
+  --tracking-display: -0.04em;
 }
 
 * {
@@ -39,9 +59,7 @@ html {
 body {
   min-height: 100vh;
   margin: 0;
-  background:
-    radial-gradient(circle at 12% 8%, rgba(204, 120, 92, 0.14), transparent 26rem),
-    linear-gradient(135deg, rgba(239, 233, 222, 0.72), rgba(250, 249, 245, 0.96));
+  background: var(--color-canvas);
   color: var(--color-ink);
 }
 
@@ -88,4 +106,40 @@ a:focus-visible,
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Newsreader display utility */
+.font-serif-title {
+  font-family: var(--font-newsreader), 'Newsreader', serif;
+  letter-spacing: -0.04em;
+}
+
+/* JetBrains Mono utility */
+.font-code {
+  font-family: var(--font-mono), 'JetBrains Mono', monospace;
+}
+
+/* War room dark gradient */
+.war-room-gradient {
+  background: radial-gradient(circle at center, #1f1e1b 0%, #181715 100%);
+}
+
+/* Pulse coral animation for active timeline marker */
+.pulse-coral {
+  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(0.95);
+    opacity: 0.8;
+  }
 }

@@ -143,6 +143,7 @@ export default function NewSimulationPage() {
 
   return (
     <AppShell>
+      <div className="px-8 py-8">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">New Simulation</p>
@@ -342,6 +343,7 @@ export default function NewSimulationPage() {
             {submitting ? "Creating..." : "Finish & enter war room"}
           </Button>
         )}
+      </div>
       </div>
     </AppShell>
   );

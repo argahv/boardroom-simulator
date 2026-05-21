@@ -6,6 +6,7 @@ import { Button } from "@/components/Button";
 export default function Home() {
   return (
     <AppShell>
+      <div className="px-8 py-8">
       <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <section>
           <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Simulation Console</p>
@@ -39,6 +40,7 @@ export default function Home() {
             )}
           </div>
         </section>
+      </div>
       </div>
     </AppShell>
   );

@@ -86,10 +86,11 @@ async def _get_state_or_404(simulation_id: str) -> SimulationState:
     return state
 
 
-def _transcript(state: SimulationState) -> str:
+def _transcript(state: SimulationState, max_turns: int = 30) -> str:
+    turns = state.turns[-max_turns:] if len(state.turns) > max_turns else state.turns
     return "\n".join(
         f"{turn.turn_index}. {turn.stakeholder_name} ({turn.role}): {turn.content}"
-        for turn in state.turns
+        for turn in turns
     )
 
 
@@ -197,7 +198,7 @@ def _postmortem_messages(state: SimulationState) -> list[dict[str, str]]:
                     },
                     "stakeholders": [s.model_dump() for s in state.config.stakeholders],
                     "transcript": _transcript(state),
-                    "event_log": state.event_log,
+                    "event_log": state.event_log[-20:],
                     "heatmap": state.heatmap.model_dump(),
                     "sentiment": state.sentiment,
                     "coalitions": [c.model_dump() for c in state.coalitions],

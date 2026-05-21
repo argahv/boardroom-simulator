@@ -79,6 +79,7 @@ export default function SimulationsPage() {
 
   return (
     <AppShell activeTab="War Room">
+      <div className="px-8 py-8">
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary">Simulations</p>
@@ -204,6 +205,7 @@ export default function SimulationsPage() {
           })}
         </div>
       )}
+      </div>
     </AppShell>
   );
 }
