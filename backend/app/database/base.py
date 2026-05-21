@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from app.models import SimulationState, Stakeholder
+from app.models import ScenarioTemplate, SimulationState, Stakeholder
 
 
 class DatabaseBackend(ABC):
@@ -66,4 +66,28 @@ class DatabaseBackend(ABC):
     
     @abstractmethod
     async def get_all_stakeholders(self) -> List[Stakeholder]:
+        pass
+
+    # ------------------------------------------------------------------
+    # Scenario templates
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def create_template(self, template: ScenarioTemplate) -> ScenarioTemplate:
+        pass
+
+    @abstractmethod
+    async def get_template(self, template_id: str) -> Optional[ScenarioTemplate]:
+        pass
+
+    @abstractmethod
+    async def list_templates(self) -> List[ScenarioTemplate]:
+        pass
+
+    @abstractmethod
+    async def template_exists(self, template_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def stakeholder_exists(self, stakeholder_id: str) -> bool:
         pass

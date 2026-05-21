@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
 
-from . import config, partnership, store
+from . import config, store
 from .database import initialize_database, close_database
 from .engine import advance_turn, run_simulation
 from .llm import openrouter_completion, parse_json_object
@@ -18,13 +18,14 @@ from .infrastructure.queue import jobs_repo
 from .models import (
     AlignmentDelta,
     Postmortem,
+    ScenarioTemplate,
     SimulationCreate,
     SimulationState,
     Stakeholder,
     StrategyCard,
     TopologyNode,
 )
-from .personas import DEFAULT_LIBRARY
+from .seeds import run as run_seeds
 
 app = FastAPI(title="Boardroom Simulator API")
 
@@ -41,15 +42,9 @@ app.add_middleware(
 async def startup_event() -> None:
     await initialize_database()
     try:
-        existing = await store.get_all_stakeholders()
-        if not existing:
-            for persona in DEFAULT_LIBRARY:
-                await store.add_stakeholder(persona)
-            print(f"✓ Initialized store with {len(DEFAULT_LIBRARY)} default personas")
-        else:
-            print(f"✓ Store already contains {len(existing)} personas, skipping initialization")
+        await run_seeds()
     except Exception as exc:
-        print(f"⚠ Error during persona initialization: {exc}")
+        print(f"⚠ Error during seed loading: {exc}")
         raise
 
 
@@ -69,6 +64,7 @@ class CreateStakeholderRequest(BaseModel):
     incentive_tuning: int = Field(default=50, ge=0, le=100)
     hidden_agenda: str = ""
     tag: str | None = None
+    tool_profile: str = "none"
 
 class UpdateStakeholderRequest(BaseModel):
     name: str | None = None
@@ -77,6 +73,7 @@ class UpdateStakeholderRequest(BaseModel):
     incentive_tuning: int | None = Field(default=None, ge=0, le=100)
     hidden_agenda: str | None = None
     tag: str | None = None
+    tool_profile: str | None = None
 
 
 async def _get_state_or_404(simulation_id: str) -> SimulationState:
@@ -248,13 +245,45 @@ def health() -> dict[str, str | bool]:
     return {"ok": True, "mode": "production"}
 
 
+# ---------------------------------------------------------------------------
+# Scenario templates
+# ---------------------------------------------------------------------------
+
+@app.get("/templates", response_model=list[ScenarioTemplate])
+async def list_templates() -> list[ScenarioTemplate]:
+    return await store.list_templates()
+
+
+@app.get("/templates/{template_id}", response_model=ScenarioTemplate)
+async def get_template(template_id: str) -> ScenarioTemplate:
+    template = await store.get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return template
+
+
+@app.get("/templates/{template_id}/personas", response_model=list[Stakeholder])
+async def get_template_personas(template_id: str) -> list[Stakeholder]:
+    template = await store.get_template(template_id)
+    if template is None:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return await store.get_template_personas(template_id)
+
+
 @app.get("/library")
-def library() -> dict[str, object]:
+async def library_compat() -> dict:
+    """
+    Backwards-compat shim for frontend fetchLibrary().
+    Returns all stakeholders in the old {default_library, partnership_defaults} shape.
+    partnership_defaults = suggested personas for the partnership_negotiation template.
+    default_library = everything else.
+    """
+    all_personas = await store.get_all_stakeholders()
+    partnership_personas = await store.get_template_personas("partnership_negotiation")
+    partnership_ids = {p.id for p in partnership_personas}
     return {
-        "default_library": [s.model_dump() for s in DEFAULT_LIBRARY],
-        "partnership_defaults": [
-            s.model_dump() for s in partnership.default_stakeholders()
-        ],
+        "partnership_defaults": [p.model_dump() for p in partnership_personas],
+        "default_library": [p.model_dump() for p in all_personas if p.id not in partnership_ids],
     }
 
 @app.get("/api/stakeholders", response_model=list[Stakeholder])
@@ -271,6 +300,7 @@ async def create_stakeholder(payload: CreateStakeholderRequest) -> Stakeholder:
         incentive_tuning=payload.incentive_tuning,
         hidden_agenda=payload.hidden_agenda,
         tag=payload.tag,
+        tool_profile=payload.tool_profile,
     )
     return await store.add_stakeholder(stakeholder)
 
@@ -281,7 +311,7 @@ async def update_stakeholder(
     existing = await store.get_stakeholder(stakeholder_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
-    
+
     updated = Stakeholder(
         id=stakeholder_id,
         name=payload.name if payload.name is not None else existing.name,
@@ -290,6 +320,7 @@ async def update_stakeholder(
         incentive_tuning=payload.incentive_tuning if payload.incentive_tuning is not None else existing.incentive_tuning,
         hidden_agenda=payload.hidden_agenda if payload.hidden_agenda is not None else existing.hidden_agenda,
         tag=payload.tag if payload.tag is not None else existing.tag,
+        tool_profile=payload.tool_profile if payload.tool_profile is not None else existing.tool_profile,
     )
     return await store.update_stakeholder(stakeholder_id, updated)
 
@@ -298,11 +329,6 @@ async def delete_stakeholder(stakeholder_id: str) -> Response:
     if not await store.delete_stakeholder(stakeholder_id):
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     return Response(status_code=204)
-
-@app.get("/scenario/partnership")
-def partnership_scenario() -> SimulationCreate:
-    return partnership.default_create()
-
 
 @app.post("/simulations", response_model=SimulationState)
 async def create_simulation(payload: SimulationCreate) -> SimulationState:
@@ -384,6 +410,8 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
                         "event_log": current_state.event_log[-5:],
                         "sentiment": current_state.sentiment,
                         "turn_count": len(current_state.turns),
+                        "trust_matrix": current_state.trust_matrix,
+                        "leverage_scores": current_state.leverage_scores,
                     },
                 }
                 yield f"data: {json.dumps(event)}\n\n"

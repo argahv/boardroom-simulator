@@ -9,6 +9,9 @@ SimulationStatus = Literal["idle", "running", "complete"]
 InterruptType = Literal["cut_off", "reframe", "pile_on", "deflect"]
 
 
+ToolProfile = Literal["financial", "legal", "technical", "comms", "none"]
+
+
 class Stakeholder(BaseModel):
     id: str
     name: str
@@ -17,6 +20,19 @@ class Stakeholder(BaseModel):
     incentive_tuning: int = Field(default=50, ge=0, le=100)
     hidden_agenda: str = ""
     tag: Optional[str] = None  # SKEPTICAL / AGREEABLE / LOCKED / CALIBRATING / VISIONARY
+    tool_profile: ToolProfile = "none"  # determines which tools this agent gets
+
+
+class ScenarioTemplate(BaseModel):
+    """A reusable scenario blueprint stored in the DB; not hardcoded."""
+    id: str
+    name: str
+    description: str
+    default_background: str
+    default_primary_goal: str
+    default_voltage: int = Field(default=50, ge=0, le=100)
+    default_model_temperature: ModelTemperature = "stable"
+    suggested_persona_ids: list[str] = Field(default_factory=list)
 
 
 class EnvFlags(BaseModel):
@@ -72,6 +88,11 @@ class Turn(BaseModel):
     leverage_gained: bool = False  # orchestrator flags leverage shift
     emotional_tone: Optional[str] = None  # tense / neutral / heated / conciliatory
 
+    # production-grade negotiation dynamics
+    interrupt_bid: float = Field(default=0.0, ge=0.0, le=1.0)  # urgency to grab floor
+    position_delta: dict[str, str] = Field(default_factory=dict)  # e.g. {"pricing": "accept pilot"}
+    leverage_delta: dict[str, int] = Field(default_factory=dict)  # e.g. {"self": +5, "other_id": -5}
+
 
 class HeatmapState(BaseModel):
     commercial_gain: int = 50
@@ -103,6 +124,11 @@ class SimulationState(BaseModel):
     agent_memories: list[AgentMemory] = Field(default_factory=list)
     current_agenda_item: int = 0  # index into a conceptual agenda
     deadlock_risk_score: int = 0  # 0-100, rises with repeated challenge/escalate
+
+    # production dynamics
+    trust_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
+    leverage_scores: dict[str, int] = Field(default_factory=dict)
+    agent_objectives: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class StrategyCard(BaseModel):

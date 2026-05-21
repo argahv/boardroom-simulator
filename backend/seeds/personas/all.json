@@ -1,0 +1,232 @@
+[
+  {
+    "id": "startup_ceo",
+    "name": "Jordan Kim",
+    "role": "Startup Founder & CEO",
+    "focus": "distribution reach, velocity to market, co-brand value, runway preservation",
+    "incentive_tuning": 62,
+    "hidden_agenda": "Avoid exclusivity traps that cap later channels; anchor on landmark logo win.",
+    "tag": "VISIONARY",
+    "tool_profile": "none"
+  },
+  {
+    "id": "corp_dev_vp",
+    "name": "Priya Kapoor",
+    "role": "Corp Dev VP (Counterparty)",
+    "focus": "risk posture, reputational optics with regulators, phased rollout readiness",
+    "incentive_tuning": 58,
+    "hidden_agenda": "Internal pressure to show a marquee AI partnership before fiscal year-end.",
+    "tag": "CALIBRATING",
+    "tool_profile": "none"
+  },
+  {
+    "id": "telecom_cfo",
+    "name": "Marcus Bale",
+    "role": "Telecom CFO / Commercial Finance",
+    "focus": "ROI path, capex-lite structures, breakage risk from startups, clawbacks",
+    "incentive_tuning": 76,
+    "hidden_agenda": "Modeling churn if API pricing dips post-launch.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "telecom_counsel",
+    "name": "Olivia Reyes",
+    "role": "Chief Counsel & Compliance",
+    "focus": "data ownership, SLA breach remedies, portability, SOC2 + regional privacy overlays",
+    "incentive_tuning": 82,
+    "hidden_agenda": "Seeking carve-outs that create negotiating leverage downstream.",
+    "tag": "LOCKED",
+    "tool_profile": "legal"
+  },
+  {
+    "id": "cfo_skeptical",
+    "name": "Marcus Vale",
+    "role": "Skeptical CFO",
+    "focus": "Margins, payback period, working capital impact",
+    "incentive_tuning": 78,
+    "hidden_agenda": "Quietly building case to defer this deal to next fiscal year.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "architect_calibrating",
+    "name": "Priya Iyer",
+    "role": "Technical Architect",
+    "focus": "Integration risk, latency, vendor lock-in",
+    "incentive_tuning": 55,
+    "hidden_agenda": "Wants to prove a competing in-house build is still viable.",
+    "tag": "CALIBRATING",
+    "tool_profile": "technical"
+  },
+  {
+    "id": "legal_compliance",
+    "name": "Adetola Bankole",
+    "role": "Compliance Officer",
+    "focus": "Data residency, indemnity, regulatory exposure",
+    "incentive_tuning": 72,
+    "hidden_agenda": "Looking for a reason to veto Section 8.4 (data export).",
+    "tag": "LOCKED",
+    "tool_profile": "legal"
+  },
+  {
+    "id": "procurement_strategist",
+    "name": "Sara Lindqvist",
+    "role": "Procurement Strategist",
+    "focus": "Pricing leverage, terms, alternative vendors",
+    "incentive_tuning": 63,
+    "hidden_agenda": "Holding a competing quote 18% below current proposal.",
+    "tag": "CALIBRATING",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "internal_champion",
+    "name": "Daniel Reyes",
+    "role": "Internal Champion",
+    "focus": "Speed of rollout, team adoption, executive optics",
+    "incentive_tuning": 30,
+    "hidden_agenda": "Career bet on this deal closing this quarter.",
+    "tag": "AGREEABLE",
+    "tool_profile": "none"
+  },
+  {
+    "id": "security_lead",
+    "name": "Hana Okafor",
+    "role": "Security Lead",
+    "focus": "Threat surface, audit posture, breach playbook",
+    "incentive_tuning": 68,
+    "hidden_agenda": "Has unspoken concerns about a recent vendor incident.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "technical"
+  },
+  {
+    "id": "vc_partner",
+    "name": "Elena Voss",
+    "role": "VC General Partner",
+    "focus": "TAM, defensibility, founder-market fit, exit multiples",
+    "incentive_tuning": 70,
+    "hidden_agenda": "Already passed on one competing deal; needs to show conviction to LP base.",
+    "tag": "CALIBRATING",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "vc_associate",
+    "name": "James Okonkwo",
+    "role": "Skeptical VC Associate",
+    "focus": "Unit economics, churn risk, comparable valuations",
+    "incentive_tuning": 80,
+    "hidden_agenda": "Trying to surface a deal-killer before the GP commits.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "market_analyst",
+    "name": "Sora Tanaka",
+    "role": "Market Analyst",
+    "focus": "Competitive landscape, sector tailwinds, market sizing methodology",
+    "incentive_tuning": 50,
+    "hidden_agenda": "Published a bearish note on this sector last quarter.",
+    "tag": "CALIBRATING",
+    "tool_profile": "none"
+  },
+  {
+    "id": "ceo_visionary",
+    "name": "Rafael Santos",
+    "role": "CEO",
+    "focus": "Long-term vision, stakeholder alignment, board optics",
+    "incentive_tuning": 55,
+    "hidden_agenda": "Board has given an ultimatum to show profitability path by Q3.",
+    "tag": "VISIONARY",
+    "tool_profile": "none"
+  },
+  {
+    "id": "cto_strategy",
+    "name": "Mei-Lin Zhao",
+    "role": "CTO",
+    "focus": "Build vs buy, technical debt, engineering bandwidth",
+    "incentive_tuning": 65,
+    "hidden_agenda": "Protecting team from another rushed external integration.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "technical"
+  },
+  {
+    "id": "cfo_strategy",
+    "name": "Bernard Osei",
+    "role": "CFO",
+    "focus": "Runway, cost structure, fundraising readiness",
+    "incentive_tuning": 72,
+    "hidden_agenda": "Quietly exploring a down-round; needs this initiative to show traction.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "financial"
+  },
+  {
+    "id": "pr_lead",
+    "name": "Camille Dubois",
+    "role": "Head of Communications",
+    "focus": "Message control, media relations, public statement timing",
+    "incentive_tuning": 60,
+    "hidden_agenda": "Has a journalist contact who already knows part of the story.",
+    "tag": "CALIBRATING",
+    "tool_profile": "comms"
+  },
+  {
+    "id": "crisis_ceo",
+    "name": "Thomas Adeyemi",
+    "role": "CEO (Crisis Mode)",
+    "focus": "Damage containment, employee confidence, regulatory response",
+    "incentive_tuning": 75,
+    "hidden_agenda": "Board has called an emergency session; buyout rumors are circulating.",
+    "tag": "LOCKED",
+    "tool_profile": "none"
+  },
+  {
+    "id": "legal_crisis",
+    "name": "Nadia Kowalski",
+    "role": "General Counsel (Crisis)",
+    "focus": "Liability exposure, disclosure obligations, regulatory notifications",
+    "incentive_tuning": 85,
+    "hidden_agenda": "Previous incident was settled quietly; second incident triggers mandatory disclosure.",
+    "tag": "LOCKED",
+    "tool_profile": "legal"
+  },
+  {
+    "id": "affected_customer",
+    "name": "Chris Harrington",
+    "role": "Affected Customer Representative",
+    "focus": "Remediation timeline, compensation, trust restoration",
+    "incentive_tuning": 90,
+    "hidden_agenda": "Coordinating with a consumer advocacy group considering a class action.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "none"
+  },
+  {
+    "id": "podcast_host",
+    "name": "Morgan Blake",
+    "role": "Podcast Host",
+    "focus": "Audience engagement, provocative questions, narrative arc",
+    "incentive_tuning": 55,
+    "hidden_agenda": "Wants a viral clip; will push until someone says something controversial.",
+    "tag": "CALIBRATING",
+    "tool_profile": "comms"
+  },
+  {
+    "id": "contrarian_guest",
+    "name": "Dr. Yuki Nakamura",
+    "role": "Contrarian Expert Guest",
+    "focus": "Challenging consensus, citing counterevidence, academic rigor",
+    "incentive_tuning": 78,
+    "hidden_agenda": "Promoting a forthcoming book that contradicts the other guest's thesis.",
+    "tag": "SKEPTICAL",
+    "tool_profile": "none"
+  },
+  {
+    "id": "industry_guest",
+    "name": "Samuel Obi",
+    "role": "Industry Practitioner Guest",
+    "focus": "Real-world application, ground-level data points, product perspective",
+    "incentive_tuning": 45,
+    "hidden_agenda": "Company is in stealth fundraise; needs positive press without triggering SEC quiet period.",
+    "tag": "AGREEABLE",
+    "tool_profile": "none"
+  }
+]

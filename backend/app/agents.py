@@ -22,6 +22,12 @@ class AgentResponse(BaseModel):
     directed_at: Optional[str] = Field(None, description="Stakeholder ID this turn is addressed to")
     coalition_with: Optional[str] = Field(None, description="Stakeholder ID forming coalition with")
     emotional_tone: str = Field(default="neutral", description="Emotional tone: tense, neutral, heated, conciliatory")
+
+    # production dynamics
+    interrupt_bid: float = Field(default=0.0, ge=0.0, le=1.0, description="How urgently you want to interrupt immediately after this turn")
+    position_delta: Dict[str, str] = Field(default_factory=dict, description="Key stance updates made in this turn")
+    leverage_delta: Dict[str, int] = Field(default_factory=dict, description="Suggested leverage adjustments: map stakeholder_id -> -10..+10")
+
     tool_calls: List[Dict[str, Any]] = Field(default_factory=list, description="Tools invoked during reasoning")
 
 
@@ -97,7 +103,27 @@ class BoardroomAgent:
         self.red_lines: List[str] = []
     
     def _build_system_prompt(self, state: AgentState) -> str:
-        """Build persona-specific system prompt."""
+        agent_id = self.stakeholder.id
+        memories = state.get("agent_memories", {})
+
+        # Own semantic memory: what I've said on similar topics before
+        own_ctx = memories.get(agent_id, [])
+        own_ctx_text = (
+            "\n".join(f"  [{i+1}] {m['content'][:200]}" for i, m in enumerate(own_ctx))
+            if own_ctx else "  (none yet)"
+        )
+
+        # Cross-agent memory: what OTHERS said on this topic
+        cross_ctx = memories.get("_cross_agent", [])
+        cross_ctx_text = (
+            "\n".join(
+                f"  [{i+1}] {m['metadata'].get('stakeholder_name','?')} "
+                f"({m['metadata'].get('role','?')}): {m['content'][:200]}"
+                for i, m in enumerate(cross_ctx)
+            )
+            if cross_ctx else "  (none yet)"
+        )
+
         return f"""You are {self.stakeholder.name}, {self.stakeholder.role} in a high-stakes boardroom negotiation.
 
 **Your Character:**
@@ -112,14 +138,17 @@ Background: {state.get('background', '')}
 Primary Goal: {state.get('primary_goal', '')}
 Current Voltage (tension level): {state.get('voltage', 50)}/100
 
-**Your Memory (key positions you've taken):**
-{chr(10).join(f"- {pos}" for pos in self.positions) if self.positions else "No positions stated yet"}
+**Your Memory (positions you've taken on similar topics):**
+{own_ctx_text}
 
 **Your Concessions So Far:**
-{chr(10).join(f"- {conc}" for conc in self.concessions) if self.concessions else "No concessions made"}
+{chr(10).join(f"- {conc}" for conc in self.concessions) if self.concessions else "  No concessions made"}
 
 **Your Red Lines:**
-{chr(10).join(f"- {red}" for red in self.red_lines) if self.red_lines else "No hard boundaries stated"}
+{chr(10).join(f"- {red}" for red in self.red_lines) if self.red_lines else "  No hard boundaries stated"}
+
+**What Others Have Said On This Topic:**
+{cross_ctx_text}
 
 **Available Tools:**
 {chr(10).join(f"- {tool.name}: {tool.description}" for tool in self.tools) if self.tools else "No tools available"}
@@ -127,23 +156,19 @@ Current Voltage (tension level): {state.get('voltage', 50)}/100
 **Your Mission:**
 Advance your agenda while appearing reasonable. Use data from your tools to bolster arguments.
 Be strategic: know when to push, when to compromise, when to form coalitions.
+Reference what others said above — agree with allies, challenge opponents with their own words.
 
 **Response Guidelines:**
-1. Stay in character - your role, focus, and incentive level guide your behavior
+1. Stay in character — your role, focus, and incentive level guide your behavior
 2. Use tools when you need factual data to support your position
-3. Track what others have said - reference their positions when strategic
-4. Be specific and actionable - vague statements reduce your leverage
+3. Reference prior statements by other participants when strategic
+4. Be specific and actionable — vague statements reduce your leverage
 5. Adapt tone based on voltage and negotiation dynamics
 
-**Formatting Your Response:**
-Use markdown for emphasis and structure:
-- Use **bold** for key demands or important points
-- Use lists (-, *) for multiple arguments or conditions
-- Use `backticks` for specific numbers or financial terms
-- Use > for quotes or blockquotes
-- Use # headings if presenting multiple distinct positions
+**Formatting:**
+Use **bold** for key demands, lists for arguments, `backticks` for numbers.
 
-Remember: You're not just stating positions - you're negotiating outcomes."""
+Remember: You're not just stating positions — you're negotiating outcomes."""
     
     def _build_history_context(self, history: List[Dict[str, Any]]) -> str:
         """Build conversation history context."""
@@ -261,35 +286,38 @@ def create_agent_for_stakeholder(
     model: str = "anthropic/claude-sonnet-4"
 ) -> BoardroomAgent:
     """
-    Factory function to create a BoardroomAgent with appropriate tools.
-    
-    Assigns tools based on role:
-    - CFO roles get financial tools
-    - Legal roles get compliance tools  
-    - CTO/Technical roles get tech assessment tools
-    - Others get no tools (rely on reasoning only)
+    Factory: create a BoardroomAgent with tools determined by stakeholder.tool_profile.
+
+    tool_profile values → tool set:
+      financial  → CFO financial tools
+      legal      → compliance / clause tools
+      technical  → tech stack / integration tools
+      comms      → (no tools yet; profile reserved for future comms tools)
+      none       → no tools
     """
     import os
     os.environ["OPENAI_API_KEY"] = openrouter_api_key
-    
+
     llm = ChatOpenAI(
         model=model,
         api_key=openrouter_api_key,
         base_url="https://openrouter.ai/api/v1",
         temperature=0.7
     )
-    
-    role_lower = stakeholder.role.lower()
-    
-    if "cfo" in role_lower or "finance" in role_lower or "financial" in role_lower:
-        tools = convert_tools_to_langchain("cfo")
-    elif "legal" in role_lower or "counsel" in role_lower or "compliance" in role_lower:
-        tools = convert_tools_to_langchain("legal")
-    elif "cto" in role_lower or "technical" in role_lower or "engineer" in role_lower or "tech" in role_lower:
-        tools = convert_tools_to_langchain("cto")
-    else:
-        tools = []
-    
+
+    profile = (stakeholder.tool_profile or "none").lower()
+
+    _profile_to_registry_key = {
+        "financial": "cfo",
+        "legal": "legal",
+        "technical": "cto",
+        "comms": None,   # reserved — no tools implemented yet
+        "none": None,
+    }
+
+    registry_key = _profile_to_registry_key.get(profile)
+    tools = convert_tools_to_langchain(registry_key) if registry_key else []
+
     return BoardroomAgent(
         stakeholder=stakeholder,
         llm_base=llm,

@@ -1,0 +1,62 @@
+[
+  {
+    "id": "partnership_negotiation",
+    "name": "Partnership Negotiation",
+    "description": "Startup vs enterprise term sheet negotiation covering distribution scope, exclusivity, revenue share, and compliance.",
+    "default_background": "Scenario: Startup–enterprise partnership negotiation. The startup prioritizes distribution, co-brand go-to-market velocity, and capital efficiency under a constrained budget. The counterparty behaves like a risk-averse telecom/global tech enterprise: favors exclusivity, compliance-heavy contractual posture, and prefers revenue-aligned economics over flat fees alone. Agenda: distribution scope, exclusivity & carve-outs, revenue share mechanics, compliance pack.",
+    "default_primary_goal": "Close a pragmatic partnership term sheet balancing distribution scale with workable exclusivity boundaries and sane compliance obligations.",
+    "default_voltage": 72,
+    "default_model_temperature": "volatile",
+    "suggested_persona_ids": ["startup_ceo", "corp_dev_vp", "telecom_cfo", "telecom_counsel"]
+  },
+  {
+    "id": "investor_meeting",
+    "name": "Investor Meeting",
+    "description": "Founder pitching to a VC partnership. VC team probes unit economics, market size, team, and competitive moat.",
+    "default_background": "A Series A pitch meeting. The founder is presenting to the full partnership. The GP is broadly positive but the associate is tasked with finding deal-breakers. The market analyst has published a cautious sector view. The finance partner is focused on return profile and exit timeline.",
+    "default_primary_goal": "Secure a term sheet commitment or clear next-step by end of meeting while surfacing and defusing the partnership's key objections.",
+    "default_voltage": 60,
+    "default_model_temperature": "stable",
+    "suggested_persona_ids": ["vc_partner", "vc_associate", "market_analyst", "cfo_skeptical"]
+  },
+  {
+    "id": "internal_strategy",
+    "name": "Internal Strategy Debate",
+    "description": "C-suite alignment session on a high-stakes initiative: build vs buy, new market entry, or major org restructure.",
+    "default_background": "Quarterly executive offsite. The leadership team must reach a go/no-go decision on a major strategic initiative before the board meeting next week. Each executive has different departmental incentives and risk tolerances. Tension between growth ambitions and financial constraints is at an all-time high.",
+    "default_primary_goal": "Reach a clear, committed decision on the initiative with buy-in from all functions, or surface an irreconcilable blocker that escalates to the board.",
+    "default_voltage": 65,
+    "default_model_temperature": "stable",
+    "suggested_persona_ids": ["ceo_visionary", "cto_strategy", "cfo_strategy"]
+  },
+  {
+    "id": "crisis_simulation",
+    "name": "Crisis Simulation",
+    "description": "High-pressure incident response: PR disaster, data breach, product failure, or regulatory action. Tests response coordination under fire.",
+    "default_background": "A major incident has just become public. Internal teams are scrambling. Media is calling. Regulatory bodies have been notified. The leadership team must align on response strategy, public statement, and remediation timeline within the hour. Every word said in this room may surface in litigation.",
+    "default_primary_goal": "Produce a coordinated, legally defensible public response and internal action plan within the session while managing stakeholder conflicts under extreme time pressure.",
+    "default_voltage": 90,
+    "default_model_temperature": "volatile",
+    "suggested_persona_ids": ["crisis_ceo", "pr_lead", "legal_crisis", "affected_customer"]
+  },
+  {
+    "id": "legal_contract",
+    "name": "Legal Contract Negotiation",
+    "description": "Buyer and seller legal teams negotiate a complex commercial contract clause by clause.",
+    "default_background": "Final-stage contract negotiation between buyer and seller legal teams. The business deal is agreed in principle; this session is to resolve remaining legal blockers: liability cap, indemnification, data processing terms, and termination rights. Both sides have hard deadlines.",
+    "default_primary_goal": "Resolve all open legal issues and reach executable contract language, or document remaining gaps for escalation to business principals.",
+    "default_voltage": 75,
+    "default_model_temperature": "stable",
+    "suggested_persona_ids": ["telecom_counsel", "legal_compliance", "procurement_strategist", "security_lead"]
+  },
+  {
+    "id": "podcast",
+    "name": "Podcast / Panel Debate",
+    "description": "Recorded podcast or live panel where guests debate a contested topic. Good for media prep and argument stress-testing.",
+    "default_background": "A recorded podcast episode on a contested topic in tech, business, or policy. The host is looking for heat and clarity. One guest holds the consensus view, the other is a contrarian. The audience is informed but not expert. The host will push all parties toward concrete, quotable positions.",
+    "default_primary_goal": "Produce a compelling 45-minute episode where the core tension is fully explored, both positions are steelmanned, and listeners leave with a sharper view of the debate.",
+    "default_voltage": 55,
+    "default_model_temperature": "volatile",
+    "suggested_persona_ids": ["podcast_host", "contrarian_guest", "industry_guest"]
+  }
+]
