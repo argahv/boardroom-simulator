@@ -135,6 +135,14 @@ Be strategic: know when to push, when to compromise, when to form coalitions.
 4. Be specific and actionable - vague statements reduce your leverage
 5. Adapt tone based on voltage and negotiation dynamics
 
+**Formatting Your Response:**
+Use markdown for emphasis and structure:
+- Use **bold** for key demands or important points
+- Use lists (-, *) for multiple arguments or conditions
+- Use `backticks` for specific numbers or financial terms
+- Use > for quotes or blockquotes
+- Use # headings if presenting multiple distinct positions
+
 Remember: You're not just stating positions - you're negotiating outcomes."""
     
     def _build_history_context(self, history: List[Dict[str, Any]]) -> str:
