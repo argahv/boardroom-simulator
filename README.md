@@ -2,6 +2,9 @@
 
 Multi-agent negotiation prototype: **FastAPI + OpenRouter** backend and **Next.js** frontend (war room + wizard). Default scenario is a startup versus enterprise partnership term sheet.
 
+NOTE: This is an early prototype with significant capability gaps. See "Capability gaps" below and [ROADMAP.md](docs/ROADMAP.md) for planned features.
+Also recent push broke features, will be fixing in the next few days.
+
 ## Prerequisites
 
 - Python 3.11+
@@ -41,11 +44,11 @@ See [docs/MVP.md](docs/MVP.md), [docs/ROADMAP.md](docs/ROADMAP.md), and [docs/te
 
 ## Capability gaps
 
-| Capability | Status | Notes |
-|---|---|---|
-| Interrupt / coalition / escalation dynamics | ❌ Missing | Agents take sequential turns; no interruption, pushback, or mid-turn coalition signaling |
-| Agent memory graphs | ⚠️ Partial | `memory.py` exists but stores flat per-session state; agents don't reference prior statements from other agents |
-| Dynamic objectives | ❌ Missing | Persona goals are static; no mechanism for objectives to shift after a concession or coalition forms |
-| Trust / leverage scoring | ❌ Missing | No inter-agent trust score, leverage indicator, or agreement/conflict metric updated during simulation |
-| Visual meeting room | 🗓 Roadmap (Phase 5) | Tile-based room view with live transcript, highlight reel, and user injection |
-| Rehearsal mode | 🗓 Roadmap (Phase 4) | User joins mid-simulation and responds to predicted objections; agents push back in character |
+| Capability                                  | Status               | Notes                                                                                                           |
+| ------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Interrupt / coalition / escalation dynamics | ❌ Missing           | Agents take sequential turns; no interruption, pushback, or mid-turn coalition signaling                        |
+| Agent memory graphs                         | ⚠️ Partial           | `memory.py` exists but stores flat per-session state; agents don't reference prior statements from other agents |
+| Dynamic objectives                          | ❌ Missing           | Persona goals are static; no mechanism for objectives to shift after a concession or coalition forms            |
+| Trust / leverage scoring                    | ❌ Missing           | No inter-agent trust score, leverage indicator, or agreement/conflict metric updated during simulation          |
+| Visual meeting room                         | 🗓 Roadmap (Phase 5) | Tile-based room view with live transcript, highlight reel, and user injection                                   |
+| Rehearsal mode                              | 🗓 Roadmap (Phase 4) | User joins mid-simulation and responds to predicted objections; agents push back in character                   |

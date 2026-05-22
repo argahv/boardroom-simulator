@@ -8,6 +8,7 @@ from typing import Any, Optional
 import httpx
 
 from . import config
+from .budget import BudgetGuard, BudgetExhaustedError
 
 log = logging.getLogger(__name__)
 
@@ -109,7 +110,11 @@ async def openrouter_completion(
         "model": config.OPENROUTER_MODEL,
         "messages": messages,
         "temperature": temperature,
+        "max_tokens": config.MAX_OUTPUT_TOKENS,
     }
+
+    guard = BudgetGuard.for_simulation(simulation_id or "global")
+    guard.preflight(estimated_tokens=config.MIN_OUTPUT_TOKENS)
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
@@ -117,6 +122,12 @@ async def openrouter_completion(
             headers=headers,
             json=payload,
         )
+        if resp.status_code == 402:
+            guard.trip("credits_402")
+            raise BudgetExhaustedError(
+                "Provider credits exhausted (402).",
+                reason="credits_402",
+            )
         resp.raise_for_status()
         body = resp.json()
 
@@ -141,7 +152,9 @@ async def openrouter_completion(
         "cost_usd": round(estimated_cost, 4),
         "finish_reason": choices[0].get("finish_reason")
     })
-    
+
+    guard.record(total_tokens)
+
     return content, False, trace_metadata
 
 

@@ -38,6 +38,9 @@ from app.agents import BoardroomAgent, AgentState, create_agent_for_stakeholder
 from app.memory import NegotiationMemory, get_memory
 from app.models import Stakeholder
 from app import config
+from app.graph.driver import get_driver, neo4j_enabled
+from app.graph.writer import GraphWriter
+from app.budget import BudgetGuard, BudgetExhaustedError
 
 # ---------------------------------------------------------------------------
 # Module-level registries
@@ -227,8 +230,56 @@ async def generate_turn(state: WorkflowState) -> WorkflowState:
         "_agent_objectives": state.get("agent_objectives", {}),
     }
 
+    # Budget preflight + dynamic token control
+    budget_guard = BudgetGuard.for_simulation(state["simulation_id"])
+    try:
+        budget_guard.preflight(estimated_tokens=config.MIN_OUTPUT_TOKENS)
+    except BudgetExhaustedError as be:
+        state["event_log"].append(f"Budget stop: {be.reason}")
+        state["_budget_tripped"] = True
+        return state
+
+    # Adapt model output token ceiling as budget depletes
+    try:
+        dynamic_cap = budget_guard.dynamic_max_tokens(config.MAX_OUTPUT_TOKENS)
+        if hasattr(agent.llm_base, "max_tokens"):
+            agent.llm_base.max_tokens = dynamic_cap
+    except Exception:
+        pass
+
     loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(None, agent.invoke, agent_state)
+    try:
+        response = await asyncio.wait_for(
+            loop.run_in_executor(None, agent.invoke, agent_state),
+            timeout=config.TURN_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        state["event_log"].append(
+            f"Turn timeout: agent {agent_id} exceeded {config.TURN_TIMEOUT_SECONDS}s"
+        )
+        # Soft fallback turn to preserve continuity
+        stakeholder = next((s for s in state["stakeholders"] if s["id"] == agent_id), None)
+        timeout_turn = {
+            "turn_index": state["turn_index"],
+            "stakeholder_id": agent_id,
+            "stakeholder_name": stakeholder["name"] if stakeholder else agent_id,
+            "role": stakeholder["role"] if stakeholder else "Unknown",
+            "tool_profile": stakeholder.get("tool_profile", "none") if stakeholder else "none",
+            "content": "I need to pause briefly and restate my position succinctly.",
+            "internal_reasoning": "[DEGRADED: timeout fallback]",
+            "action_type": "statement",
+            "directed_at": None,
+            "coalition_with": None,
+            "emotional_tone": "neutral",
+            "interrupt_bid": 0.0,
+            "position_delta": {},
+            "leverage_delta": {},
+            "tool_calls": [],
+        }
+        state["current_turn"] = timeout_turn
+        state["history"].append(timeout_turn)
+        state["turn_index"] += 1
+        return state
 
     stakeholder = next((s for s in state["stakeholders"] if s["id"] == agent_id), None)
 
@@ -266,6 +317,10 @@ async def generate_turn(state: WorkflowState) -> WorkflowState:
             "role": stakeholder["role"] if stakeholder else "Unknown",
         },
     )
+
+    # Approximate token accounting for budget guard
+    approx_tokens = max(config.MIN_OUTPUT_TOKENS, int(len(response.content.split()) * 2.2))
+    budget_guard.record(approx_tokens)
 
     state["turn_index"] += 1
     return state
@@ -429,6 +484,84 @@ def update_dynamics(state: WorkflowState) -> WorkflowState:
             objectives[aid] = objs
 
     state["agent_objectives"] = objectives
+
+    # ── Neo4j fire-and-forget write ────────────────────────────────────────
+    # Build a minimal sim-like proxy (avoids importing SimulationState to
+    # prevent circular imports).  GraphWriter only accesses the fields used
+    # in its _sync_* and _link_* helpers.
+    if neo4j_enabled():
+        try:
+            from app.models import (
+                CoalitionSignal, SimulationCreate, Stakeholder as _Stakeholder,
+                EnvFlags, SimulationState as _SimulationState,
+            )
+            from app.models import Turn as _Turn
+
+            # Build a minimal SimulationState for the writer
+            _stakeholders = [
+                _Stakeholder(
+                    id=s["id"],
+                    name=s["name"],
+                    role=s["role"],
+                    focus=s.get("focus", ""),
+                    incentive_tuning=s.get("incentive_tuning", 50),
+                    hidden_agenda=s.get("hidden_agenda", ""),
+                    tag=s.get("tag"),
+                    tool_profile=s.get("tool_profile", "none"),
+                )
+                for s in state["stakeholders"]
+            ]
+            _sim_create = SimulationCreate(
+                background=state["background"],
+                primary_goal=state["primary_goal"],
+                stakeholders=_stakeholders,
+                voltage=state["voltage"],
+                env_flags=EnvFlags(**state.get("env_flags", {})),
+            )
+            _sim = _SimulationState(
+                simulation_id=state["simulation_id"],
+                config=_sim_create,
+                trust_matrix=state.get("trust_matrix", {}),
+                leverage_scores=state.get("leverage_scores", {}),
+                agent_objectives=state.get("agent_objectives", {}),
+                coalitions=[
+                    CoalitionSignal(**c) if isinstance(c, dict) else c
+                    for c in state.get("coalitions", [])
+                ] if "coalitions" in state else [],
+            )
+
+            _turn_dict = current_turn
+            _turn = _Turn(
+                turn_index=_turn_dict.get("turn_index", 0),
+                stakeholder_id=_turn_dict.get("stakeholder_id", ""),
+                stakeholder_name=_turn_dict.get("stakeholder_name", ""),
+                role=_turn_dict.get("role", ""),
+                content=_turn_dict.get("content", ""),
+                internal_reasoning=_turn_dict.get("internal_reasoning", ""),
+                action_type=_turn_dict.get("action_type", "statement"),
+                interrupt_type=_turn_dict.get("interrupt_type"),
+                directed_at=_turn_dict.get("directed_at"),
+                coalition_with=_turn_dict.get("coalition_with"),
+                leverage_gained=_turn_dict.get("leverage_gained", False),
+                emotional_tone=_turn_dict.get("emotional_tone"),
+                interrupt_bid=_turn_dict.get("interrupt_bid", 0.0),
+                position_delta=_turn_dict.get("position_delta", {}),
+                leverage_delta=_turn_dict.get("leverage_delta", {}),
+            )
+
+            _driver = get_driver()
+            _writer = GraphWriter(_driver)
+
+            # Schedule as a background task (fire-and-forget)
+            loop = asyncio.get_event_loop()
+            loop.create_task(
+                asyncio.to_thread(_writer.write_turn, _sim, _turn)
+            )
+        except Exception as _neo4j_exc:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "Neo4j write scheduling failed: %s", _neo4j_exc
+            )
 
     return state
 

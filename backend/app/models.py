@@ -163,3 +163,62 @@ class Postmortem(BaseModel):
     alignment_deltas: list[AlignmentDelta]
     strategy_cards: list[StrategyCard]
     mocked: bool = False
+    graph_analytics: Optional["GraphAnalytics"] = None  # enriched when Neo4j is available
+
+
+# ── Neo4j Graph Analytics Models ────────────────────────────────────────────
+
+class HostilePair(BaseModel):
+    """Two agents with persistently low mutual trust."""
+    agent_a: str
+    agent_b: str
+    final_trust_a_to_b: int
+    final_trust_b_to_a: int
+    clash_count: int
+
+
+class InfluenceNode(BaseModel):
+    """Node in the influence chain showing who shaped the negotiation most."""
+    agent_id: str
+    name: str
+    out_degree: int          # number of agents this agent influenced
+    avg_leverage_delta: float
+
+
+class CoalitionEvolution(BaseModel):
+    """How a coalition formed and evolved across turns."""
+    agent_a: str
+    agent_b: str
+    issue: str
+    first_turn: int
+    last_turn: int
+    duration_turns: int
+
+
+class InterruptEvent(BaseModel):
+    """A single interrupt edge in the graph."""
+    interrupter_id: str
+    interrupted_id: str
+    interrupt_type: str
+    turn_index: int
+
+
+class CrossSimPattern(BaseModel):
+    """Pattern observed across multiple simulations."""
+    agent_id: str
+    name: str
+    avg_final_leverage: float
+    sim_count: int
+
+
+class GraphAnalytics(BaseModel):
+    """
+    Full graph analytics payload appended to Postmortem when Neo4j is available.
+    All fields are optional — partial results are valid if some queries fail.
+    """
+    hostile_pairs: list[HostilePair] = Field(default_factory=list)
+    influence_chain: list[InfluenceNode] = Field(default_factory=list)
+    coalition_evolution: list[CoalitionEvolution] = Field(default_factory=list)
+    interrupt_chain: list[InterruptEvent] = Field(default_factory=list)
+    cross_sim_patterns: list[CrossSimPattern] = Field(default_factory=list)
+    neo4j_available: bool = False

@@ -8,20 +8,65 @@ import type {
 } from "@/lib/types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const API_LOGGING = (process.env.NEXT_PUBLIC_API_LOGGING ?? "true").toLowerCase() === "true";
+
+const logApi = (phase: "REQ" | "RES" | "ERR", data: Record<string, unknown>) => {
+  if (!API_LOGGING) return;
+  const payload = JSON.stringify(data);
+  console.info(`[API:${phase}] ${payload}`);
+};
+
+const nowMs = () => {
+  if (typeof performance !== "undefined" && typeof performance.now === "function") {
+    return performance.now();
+  }
+  return Date.now();
+};
+
+const genRequestId = () => {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+  const requestId = genRequestId();
+  const started = nowMs();
+  const method = init?.method ?? "GET";
+  logApi("REQ", { id: requestId, method, path });
+
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      "X-Request-ID": requestId,
       ...init?.headers,
     },
   });
 
+  const elapsedMs = Math.round((nowMs() - started) * 100) / 100;
+
   if (!response.ok) {
     const message = await response.text();
+    logApi("ERR", {
+      id: requestId,
+      method,
+      path,
+      status: response.status,
+      elapsedMs,
+      message,
+    });
     throw new Error(message || `Request failed with ${response.status}`);
   }
+
+  logApi("RES", {
+    id: requestId,
+    method,
+    path,
+    status: response.status,
+    elapsedMs,
+  });
 
   return response.json() as Promise<T>;
 };

@@ -1,10 +1,14 @@
 from typing import List, Dict, Any, Optional, TypedDict
 import json
+import logging
+import re
 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool as langchain_tool
 from langchain_openai import ChatOpenAI
+
+from app import config
 
 from app.tools import (
     calculate_roi, check_financials, calculate_burn_rate,
@@ -13,6 +17,9 @@ from app.tools import (
     TOOL_REGISTRY
 )
 from app.models import Stakeholder, ActionType
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentResponse(BaseModel):
@@ -183,19 +190,86 @@ Remember: You're not just stating positions — you're negotiating outcomes."""
         
         return "Recent conversation:\n" + "\n".join(formatted)
     
+    # ── structured-output helpers ──────────────────────────────────────────
+
+    @staticmethod
+    def _extract_json_from_text(text: str) -> dict | None:
+        """
+        Try to salvage a JSON object from prose/fenced model output.
+        Handles: plain JSON, ```json fences, JSON embedded in surrounding text.
+        Returns parsed dict or None.
+        """
+        text = text.strip()
+        # Strip markdown fences
+        if text.startswith("```"):
+            lines = text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines).strip()
+
+        # Direct JSON
+        if text.startswith("{"):
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError:
+                pass
+
+        # JSON block anywhere in text
+        match = re.search(r"\{[\s\S]+\}", text)
+        if match:
+            try:
+                return json.loads(match.group(0))
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def _safe_fallback_response(
+        self,
+        raw_text: str,
+        error: Exception,
+        turn_index: int,
+    ) -> AgentResponse:
+        """
+        Soft-fallback AgentResponse used when all parse attempts fail.
+        Logs telemetry: raw_output_preview, error class, stakeholder, turn.
+        Marked degraded=true via event_log (caller sees it).
+        """
+        preview = (raw_text or "")[:200].replace("\n", " ")
+        logger.warning(
+            "PARSE_FALLBACK stakeholder=%s turn=%d error=%s raw_preview=%r",
+            self.stakeholder.id,
+            turn_index,
+            type(error).__name__,
+            preview,
+        )
+        # Extract at least the content if it looks like prose
+        content = raw_text.strip() if raw_text.strip() else (
+            f"I need a moment to gather my thoughts on this."
+        )
+        # If it's just a JSON parse failure, the LLM may have returned a valid
+        # English statement — use it directly as content.
+        return AgentResponse(
+            content=content[:1500],
+            internal_reasoning="[DEGRADED: parse fallback]",
+            action_type="statement",
+            emotional_tone="neutral",
+            interrupt_bid=0.0,
+        )
+
     def invoke(self, state: AgentState) -> AgentResponse:
         """
         Generate agent response for current turn.
-        
-        Flow:
-        1. If agent has tools, invoke LLM with tool binding first
-        2. Let LLM call tools if needed
-        3. Inject tool results back into context
-        4. Generate final structured response
+
+        Hardened flow (production):
+        1. Tool call phase (if tools bound)
+        2. Structured output attempt (provider-enforced schema)
+        3. If parse fails: 1 targeted retry with error context
+        4. If still fails: soft-fallback turn (never raises, degraded flag)
         """
+        turn_index: int = state.get("turn_index", 0)
         system_prompt = self._build_system_prompt(state)
         history_context = self._build_history_context(state.get('history', []))
-        
+
         user_prompt = f"""{history_context}
 
 It's your turn to speak. Consider:
@@ -205,38 +279,50 @@ It's your turn to speak. Consider:
 - What action type best describes your move?
 
 Respond with your statement."""
-        
+
         messages = [
             SystemMessage(content=system_prompt),
-            HumanMessage(content=user_prompt)
+            HumanMessage(content=user_prompt),
         ]
-        
-        tool_results = []
-        
+
+        # ── Phase 1: optional tool calls ──────────────────────────────────
+        tool_results: List[Dict[str, Any]] = []
+
         if self.llm_with_tools:
-            tool_response = self.llm_with_tools.invoke(messages)
-            
-            if hasattr(tool_response, 'tool_calls') and tool_response.tool_calls:
-                for tool_call in tool_response.tool_calls:
-                    tool_name = tool_call['name']
-                    tool_args = tool_call['args']
-                    
-                    matching_tool = next((t for t in self.tools if t.name == tool_name), None)
-                    if matching_tool:
-                        result = matching_tool.func(**tool_args)
-                        tool_results.append({
-                            "tool": tool_name,
-                            "args": tool_args,
-                            "result": result
-                        })
-                
-                if tool_results:
-                    tool_context = "\n\n**Tool Results:**\n" + "\n".join(
-                        f"- {tr['tool']}{tr['args']}: {tr['result']}"
-                        for tr in tool_results
-                    )
-                    messages.append(HumanMessage(content=tool_context))
-        
+            try:
+                tool_response = self.llm_with_tools.invoke(messages)
+                if hasattr(tool_response, "tool_calls") and tool_response.tool_calls:
+                    for tool_call in tool_response.tool_calls:
+                        tool_name = tool_call["name"]
+                        tool_args = tool_call["args"]
+                        matching_tool = next(
+                            (t for t in self.tools if t.name == tool_name), None
+                        )
+                        if matching_tool:
+                            try:
+                                result = matching_tool.func(**tool_args)
+                                tool_results.append({"tool": tool_name, "args": tool_args, "result": result})
+                            except Exception as tool_exc:
+                                logger.warning("TOOL_ERR tool=%s err=%s", tool_name, tool_exc)
+
+                    if tool_results:
+                        tool_context = "\n\n**Tool Results:**\n" + "\n".join(
+                            f"- {tr['tool']}{tr['args']}: {tr['result']}"
+                            for tr in tool_results
+                        )
+                        messages.append(HumanMessage(content=tool_context))
+            except Exception as tool_phase_exc:
+                logger.warning(
+                    "TOOL_PHASE_ERR stakeholder=%s err=%s",
+                    self.stakeholder.id,
+                    tool_phase_exc,
+                )
+
+        # ── Phase 2: primary structured-output call ───────────────────────
+        response: AgentResponse | None = None
+        last_exc: Exception | None = None
+        last_raw: str = ""
+
         try:
             raw_response = self.llm.invoke(messages)
             if isinstance(raw_response, AgentResponse):
@@ -244,39 +330,70 @@ Respond with your statement."""
             elif isinstance(raw_response, dict):
                 response = AgentResponse.model_validate(raw_response)
             else:
-                content_text = raw_response if isinstance(raw_response, str) else str(raw_response)
-                parsed = None
-                if isinstance(content_text, str):
-                    stripped = content_text.strip()
-                    if stripped.startswith("{") and stripped.endswith("}"):
-                        try:
-                            parsed = json.loads(stripped)
-                        except json.JSONDecodeError:
-                            parsed = None
-                if isinstance(parsed, dict):
-                    response = AgentResponse.model_validate(parsed)
+                last_raw = raw_response if isinstance(raw_response, str) else str(raw_response)
+                extracted = self._extract_json_from_text(last_raw)
+                if extracted:
+                    response = AgentResponse.model_validate(extracted)
                 else:
+                    # Treat as prose content directly
                     response = AgentResponse(
-                        content=content_text,
+                        content=last_raw[:1500],
                         internal_reasoning="",
                         action_type="statement",
                         emotional_tone="neutral",
                     )
-        except Exception as e:
-            # structured output failed — fall back to plain LLM call
-            plain_response = self.llm_base.invoke(messages)
-            content_text = plain_response.content if hasattr(plain_response, 'content') else str(plain_response)
-            response = AgentResponse(
-                content=content_text,
-                internal_reasoning="",
-                action_type="statement",
-                emotional_tone="neutral",
+        except Exception as exc:
+            last_exc = exc
+            last_raw = str(exc)
+            logger.warning(
+                "STRUCTURED_OUT_FAIL_1 stakeholder=%s turn=%d err=%s",
+                self.stakeholder.id,
+                turn_index,
+                type(exc).__name__,
             )
 
+        # ── Phase 3: 1 targeted retry with error context ──────────────────
+        if response is None:
+            repair_prompt = (
+                "Your previous response could not be parsed as valid JSON. "
+                f"The error was: {type(last_exc).__name__}. "
+                "Return ONLY a valid JSON object matching the required schema. "
+                "No prose, no markdown fences, no explanation."
+            )
+            retry_messages = messages + [HumanMessage(content=repair_prompt)]
+            try:
+                raw_retry = self.llm.invoke(retry_messages)
+                if isinstance(raw_retry, AgentResponse):
+                    response = raw_retry
+                elif isinstance(raw_retry, dict):
+                    response = AgentResponse.model_validate(raw_retry)
+                else:
+                    raw_text = raw_retry if isinstance(raw_retry, str) else str(raw_retry)
+                    extracted = self._extract_json_from_text(raw_text)
+                    if extracted:
+                        response = AgentResponse.model_validate(extracted)
+                    else:
+                        last_raw = raw_text
+                logger.info(
+                    "STRUCTURED_OUT_RETRY_OK stakeholder=%s turn=%d",
+                    self.stakeholder.id,
+                    turn_index,
+                )
+            except Exception as retry_exc:
+                last_exc = retry_exc
+                logger.warning(
+                    "STRUCTURED_OUT_FAIL_2 stakeholder=%s turn=%d err=%s — using soft fallback",
+                    self.stakeholder.id,
+                    turn_index,
+                    type(retry_exc).__name__,
+                )
+
+        # ── Phase 4: soft-fallback (never raises) ─────────────────────────
+        if response is None:
+            response = self._safe_fallback_response(last_raw, last_exc or Exception("parse"), turn_index)
+
         response.tool_calls = tool_results
-
         self.positions.append(response.content[:100])
-
         return response
 
 
@@ -302,7 +419,8 @@ def create_agent_for_stakeholder(
         model=model,
         api_key=openrouter_api_key,
         base_url="https://openrouter.ai/api/v1",
-        temperature=0.7
+        temperature=0.7,
+        max_tokens=config.MAX_OUTPUT_TOKENS,
     )
 
     profile = (stakeholder.tool_profile or "none").lower()

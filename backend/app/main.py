@@ -2,12 +2,23 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import os
+import time
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel, Field
+
+try:
+    from langsmith import traceable as langsmith_traceable
+except Exception:  # pragma: no cover
+    def langsmith_traceable(**_kw):  # type: ignore[misc]
+        def _noop(fn):
+            return fn
+        return _noop
 
 from . import config, store
 from .database import initialize_database, close_database
@@ -26,6 +37,17 @@ from .models import (
     TopologyNode,
 )
 from .seeds import run as run_seeds
+from .graph.driver import get_driver, close_driver, neo4j_enabled
+from .graph.schema import init_schema
+from .graph.queries import GraphQueries
+from .budget import BudgetGuard
+
+LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("boardroom.api")
 
 app = FastAPI(title="Boardroom Simulator API")
 
@@ -38,6 +60,45 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    request_id = request.headers.get("x-request-id", str(uuid4()))
+    started = time.perf_counter()
+    client_host = request.client.host if request.client else "unknown"
+    logger.info(
+        "REQ id=%s method=%s path=%s query=%s client=%s",
+        request_id,
+        request.method,
+        request.url.path,
+        request.url.query,
+        client_host,
+    )
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.perf_counter() - started) * 1000
+        logger.exception(
+            "REQ_ERR id=%s method=%s path=%s elapsed_ms=%.2f",
+            request_id,
+            request.method,
+            request.url.path,
+            elapsed_ms,
+        )
+        raise
+
+    elapsed_ms = (time.perf_counter() - started) * 1000
+    response.headers["X-Request-ID"] = request_id
+    logger.info(
+        "RES id=%s method=%s path=%s status=%s elapsed_ms=%.2f",
+        request_id,
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
+
+
 @app.on_event("startup")
 async def startup_event() -> None:
     await initialize_database()
@@ -46,11 +107,20 @@ async def startup_event() -> None:
     except Exception as exc:
         print(f"⚠ Error during seed loading: {exc}")
         raise
+    # Neo4j — optional; silent if disabled
+    if neo4j_enabled():
+        driver = get_driver()
+        if driver is not None:
+            init_schema(driver)
+            print("✓ Neo4j connected and schema initialised.")
+        else:
+            print("⚠ NEO4J_URI set but connection failed — graph analytics disabled.")
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     await close_database()
+    close_driver()
 
 
 
@@ -332,12 +402,20 @@ async def delete_stakeholder(stakeholder_id: str) -> Response:
 
 @app.post("/simulations", response_model=SimulationState)
 async def create_simulation(payload: SimulationCreate) -> SimulationState:
+    simulation_id = str(uuid4())
     state = SimulationState(
-        simulation_id=str(uuid4()),
+        simulation_id=simulation_id,
         config=payload,
         mocked=False,
     )
-    return await store.put(state)
+    saved = await store.put(state)
+    logger.info(
+        "SIM_CREATE simulation_id=%s stakeholders=%d voltage=%d",
+        simulation_id,
+        len(payload.stakeholders),
+        payload.voltage,
+    )
+    return saved
 
 
 @app.get("/simulations", response_model=list[SimulationState])
@@ -370,6 +448,26 @@ async def get_simulation_jobs(simulation_id: str) -> dict:
     return {"jobs": [j.to_dict() for j in jobs]}
 
 
+@app.get("/simulations/{simulation_id}/budget")
+async def get_simulation_budget(simulation_id: str) -> dict:
+    """
+    Returns live budget/circuit-breaker status for a simulation.
+    Useful for frontend status indicators and operational debugging.
+    """
+    await _get_state_or_404(simulation_id)
+    guard = BudgetGuard.for_simulation(simulation_id)
+    status = guard.status_dict()
+    logger.info(
+        "SIM_BUDGET_STATUS simulation_id=%s used=%d remaining=%d tripped=%s reason=%s",
+        simulation_id,
+        status["used_tokens"],
+        status["remaining_tokens"],
+        status["is_tripped"],
+        status["trip_reason"],
+    )
+    return status
+
+
 @app.post("/jobs/{job_id}/retry")
 def retry_existing_job(job_id: str) -> dict:
     retried = retry_job(job_id)
@@ -378,26 +476,72 @@ def retry_existing_job(job_id: str) -> dict:
     return {"job": retried.to_dict()}
 
 
+@langsmith_traceable(
+    name="simulation_session",
+    run_type="chain",
+    metadata={"mode": "stream"},
+)
+async def _run_simulation_turns(
+    state: SimulationState,
+    limit: int,
+    simulation_id: str,
+) -> SimulationState:
+    """
+    Traceable turn-loop: runs all turns under one LangSmith parent trace.
+    `advance_turn` (also @traceable) becomes a child run in the waterfall.
+    Returns the final state with all turns populated.
+    """
+    stagnation_count = 0
+    last_heat_signature = None
+
+    while len(state.turns) < limit:
+        prev_count = len(state.turns)
+        state = await advance_turn(state)
+        await store.put(state)
+
+        if len(state.turns) == prev_count:
+            break
+
+        last_turn = state.turns[-1]
+        heat_signature = (
+            state.heatmap.commercial_gain,
+            state.heatmap.tech_integrity,
+            state.heatmap.legal_safety,
+            last_turn.action_type,
+        )
+        if heat_signature == last_heat_signature:
+            stagnation_count += 1
+        else:
+            stagnation_count = 0
+        last_heat_signature = heat_signature
+
+        if stagnation_count >= 3:
+            state.event_log.append("Early-stop: stagnation guard triggered")
+            logger.info("SIM_STREAM_EARLY_STOP simulation_id=%s reason=stagnation", simulation_id)
+            break
+
+    return state
+
+
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation(simulation_id: str, max_turns: int = 20) -> StreamingResponse:
     state = await _get_state_or_404(simulation_id)
+    limit = min(max_turns, config.MAX_TURNS)
+    logger.info("SIM_STREAM_START simulation_id=%s max_turns=%d", simulation_id, limit)
 
     async def _generate():
-        nonlocal state
-        limit = min(max_turns, config.MAX_TURNS)
         current_state = state.model_copy(deep=True)
         current_state.status = "running"
+        prior_turn_count = len(current_state.turns)
 
         try:
-            while len(current_state.turns) < limit:
-                prev_count = len(current_state.turns)
-                current_state = await advance_turn(current_state)
-                await store.put(current_state)
+            # All advance_turn calls happen inside _run_simulation_turns which is
+            # decorated @traceable → single parent trace, each turn is a child.
+            current_state = await _run_simulation_turns(current_state, limit, simulation_id)
 
-                if len(current_state.turns) == prev_count:
-                    break
-
-                last_turn = current_state.turns[-1]
+            # Stream each new turn as SSE events
+            new_turns = current_state.turns[prior_turn_count:]
+            for last_turn in new_turns:
                 event = {
                     "type": "turn",
                     "turn": last_turn.model_dump(),
@@ -419,12 +563,23 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
 
             current_state.status = "complete"
             await store.put(current_state)
+            logger.info(
+                "SIM_STREAM_DONE simulation_id=%s turns=%d",
+                simulation_id,
+                len(current_state.turns),
+            )
             done_event = {"type": "done", "state": current_state.model_dump()}
             yield f"data: {json.dumps(done_event)}\n\n"
 
+        except asyncio.CancelledError:
+            current_state.status = "complete"
+            current_state.event_log.append("Stream cancelled by client")
+            await store.put(current_state)
+            logger.info("SIM_STREAM_CANCELLED simulation_id=%s", simulation_id)
+            yield f"data: {json.dumps({'type': 'cancelled', 'message': 'Stream cancelled by client'})}\n\n"
         except Exception as exc:
-            error_event = {"type": "error", "message": str(exc)}
-            yield f"data: {json.dumps(error_event)}\n\n"
+            logger.exception("SIM_STREAM_ERR simulation_id=%s error=%s", simulation_id, exc)
+            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 
     return StreamingResponse(
         _generate(),
@@ -446,6 +601,18 @@ async def create_postmortem(simulation_id: str) -> Postmortem:
         simulation_id=simulation_id,
     )
     try:
-        return _postmortem_from_payload(simulation_id, parse_json_object(raw), mocked)
+        postmortem = _postmortem_from_payload(simulation_id, parse_json_object(raw), mocked)
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=f"Postmortem parsing failed: {exc}")
+
+    # Enrich with Neo4j graph analytics (fire-and-forget safe — never raises)
+    if neo4j_enabled():
+        try:
+            driver = get_driver()
+            queries = GraphQueries(driver)
+            postmortem.graph_analytics = queries.build_graph_analytics(simulation_id)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Graph analytics enrichment failed: %s", exc)
+
+    return postmortem

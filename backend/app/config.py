@@ -19,6 +19,13 @@ OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Boardroom Simulator").
 
 MAX_TURNS = int(os.getenv("MAX_TURNS", "20"))
 
+# Reliability controls
+TURN_TIMEOUT_SECONDS = float(os.getenv("TURN_TIMEOUT_SECONDS", "45"))
+MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "700"))
+MIN_OUTPUT_TOKENS = int(os.getenv("MIN_OUTPUT_TOKENS", "180"))
+SIMULATION_BUDGET_TOKENS = int(os.getenv("SIMULATION_BUDGET_TOKENS", "120000"))
+ENABLE_SOFT_FALLBACK = os.getenv("ENABLE_SOFT_FALLBACK", "true").lower() in ("1", "true", "yes")
+
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").strip()
 RQ_QUEUE_SIMULATION = os.getenv("RQ_QUEUE_SIMULATION", "simulation").strip()
 RQ_QUEUE_POSTMORTEM = os.getenv("RQ_QUEUE_POSTMORTEM", "postmortem").strip()
