@@ -178,16 +178,31 @@ export function streamSimulation(
   onDone: () => void
 ): AbortController {
   const controller = new AbortController();
+  let retryCount = 0;
+  const maxRetries = 3;
+  let lastSuccessfulTurn = 0;
 
-  const run = async () => {
+  const getBackoffDelay = (attempt: number) => {
+    return Math.min(1000 * Math.pow(2, attempt), 10000);
+  };
+
+  const run = async (): Promise<void> => {
+    if (controller.signal.aborted) return;
+
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 60000);
+
     try {
       const response = await fetch(
-        `${API_URL}/simulations/${simulationId}/stream?max_turns=${maxTurns}`,
+        `${API_URL}/simulations/${simulationId}/stream?max_turns=${maxTurns}&from_turn=${lastSuccessfulTurn}`,
         { signal: controller.signal }
       );
       if (!response.ok || !response.body) {
         throw new Error(`Stream failed with ${response.status}`);
       }
+      
+      retryCount = 0;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
@@ -197,30 +212,45 @@ export function streamSimulation(
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 
-        // SSE lines: "data: <json>\n\n"
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() ?? "";
-        for (const part of parts) {
-          const line = part.trim();
-          if (line.startsWith("data: ")) {
-            const jsonStr = line.slice(6);
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            const jsonStr = trimmed.slice(6);
             try {
               const event = JSON.parse(jsonStr) as StreamEvent;
               onEvent(event);
+              if (event.type === "turn") {
+                lastSuccessfulTurn = event.turn.turn_index + 1;
+              }
               if (event.type === "done") {
+                clearTimeout(timeoutId);
                 onDone();
                 return;
               }
             } catch {
-              // malformed JSON, skip
+              throw new Error(`Failed to parse SSE event: ${jsonStr}`);
             }
           }
         }
       }
+      clearTimeout(timeoutId);
       onDone();
     } catch (err) {
-      if ((err as Error).name === "AbortError") return;
-      onError(err instanceof Error ? err : new Error(String(err)));
+      clearTimeout(timeoutId);
+      if ((err as Error).name === "AbortError") {
+        return;
+      }
+
+      if (retryCount < maxRetries) {
+        retryCount++;
+        const delay = getBackoffDelay(retryCount - 1);
+        setTimeout(run, delay);
+      } else {
+        onError(err instanceof Error ? err : new Error(String(err)));
+      }
     }
   };
 
