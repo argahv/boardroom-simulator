@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
 import type {
   Turn,
   Stakeholder,
@@ -220,8 +221,27 @@ function TranscriptStream({
                     T{String(t.turn_index).padStart(2, "0")}
                   </span>
                 </div>
-                <div style={{ fontSize: 15, lineHeight: 1.5, color: "var(--color-ink)" }}>
-                  {t.content}
+                <div className="text-[15px] leading-relaxed text-[var(--color-ink)]">
+                  <ReactMarkdown
+                    components={{
+                      p: ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                      ul: ({ children }) => <ul className="list-disc list-inside my-1 space-y-0.5">{children}</ul>,
+                      ol: ({ children }) => <ol className="list-decimal list-inside my-1 space-y-0.5">{children}</ol>,
+                      li: ({ children }) => <li className="text-sm">{children}</li>,
+                      strong: ({ children }) => <strong className="font-semibold text-[var(--color-ink)]">{children}</strong>,
+                      em: ({ children }) => <em className="italic text-[var(--color-ink)]/70">{children}</em>,
+                      code: ({ children }) => <code className="bg-[var(--color-ink)]/20 px-1 py-0.5 rounded text-xs font-mono">{children}</code>,
+                      pre: ({ children }) => <pre className="bg-[var(--color-ink)]/10 p-2 rounded my-1 overflow-x-auto text-xs">{children}</pre>,
+                      blockquote: ({ children }) => <blockquote className="border-l-2 border-[var(--color-primary)]/40 pl-2 italic text-[var(--color-ink)]/70 my-1">{children}</blockquote>,
+                      a: ({ children, href }) => <a href={href} className="text-[var(--color-accent-teal)] underline hover:opacity-70" target="_blank" rel="noopener noreferrer">{children}</a>,
+                      h1: ({ children }) => <h1 className="text-base font-bold mt-2 mb-1">{children}</h1>,
+                      h2: ({ children }) => <h2 className="text-sm font-bold mt-2 mb-1">{children}</h2>,
+                      h3: ({ children }) => <h3 className="text-xs font-semibold mt-1.5 mb-0.5">{children}</h3>,
+                      hr: ({ children }) => <hr className="border-[var(--color-hairline)] my-2">{children}</hr>,
+                    }}
+                  >
+                    {t.content}
+                  </ReactMarkdown>
                 </div>
               </div>
             </div>
