@@ -1,54 +1,118 @@
 # Boardroom Simulator
 
-Multi-agent negotiation prototype: **FastAPI + OpenRouter** backend and **Next.js** frontend (war room + wizard). Default scenario is a startup versus enterprise partnership term sheet.
+Multi-agent negotiation simulator — **FastAPI + LangGraph** backend and **Next.js 16** frontend. Models enterprise deal-room dynamics: agents with conflicting incentives debate term sheets, form coalitions, escalate, and compromise. Default scenario is a startup vs. enterprise partnership negotiation.
 
-NOTE: This is an early prototype with significant capability gaps. See "Capability gaps" below and [ROADMAP.md](docs/ROADMAP.md) for planned features.
-Also recent push broke features, will be fixing in the next few days.
+## Architecture
+
+**v2 Multi-Agent Architecture** — replaces the original single-orchestrator with a **LangGraph StateGraph** workflow:
+
+```
+select_speaker → generate_turn (role-tooled agent) → update_heatmap → should_continue → END
+```
+
+- **Specialized agents** per stakeholder (CFO, Legal, CTO) with domain-specific tool bindings
+- **Speaker selection**: 4 algorithms — random, coalition-based, directed-at, weighted-random by incentive × voltage
+- **Memory**: Chroma vector store with per-agent semantic retrieval (OpenAI `text-embedding-3-small`)
+- **Structured outputs**: Pydantic models for every turn, heatmap, conflict timeline
+- **Guardrails**: Input content filter + jailbreak detector, output hallucination/contradiction validators
+- **Scoring**: Confidence trends, consensus rating, objection topology analysis
+- **State persistence**: Checkpoint system (disk-serialized after each turn, resume-capable)
+- **Cost tracking**: Per-turn token counts + cost estimation streamed via SSE
+- **Optional graph analytics**: Neo4j 5 (docker-compose) for relationship mining
 
 ## Prerequisites
 
 - Python 3.11+
-- Node.js 20+ (recommended)
-- OpenRouter API key (`OPENROUTER_API_KEY`). Without it, the backend serves deterministic **mock** turns.
+- Node.js 20+
+- OpenRouter API key (`OPENROUTER_API_KEY`)
 
-## Backend
+## Quick start
 
 ```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
+# Backend
+cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # fill OPENROUTER_API_KEY
-uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
-```
+cp .env.example .env   # add OPENROUTER_API_KEY
+uvicorn app.main:app --reload --port 8000
 
-Open `http://127.0.0.1:8000/docs` for the interactive API.
-
-## Frontend
-
-```bash
-cd frontend
-npm install
+# Frontend
+cd frontend && npm install
 echo 'NEXT_PUBLIC_API_URL=http://127.0.0.1:8000' >> .env.local
 npm run dev
 ```
 
-Visit `http://localhost:3000`.
+API docs at `http://127.0.0.1:8000/docs` · App at `http://localhost:3000`
 
-## Typical flow
+## Docs
 
-1. **Wizard** (`/simulate/new`) — background, stakeholder library (partnership + default personas), tension / env flags.
-2. **War room** (`/simulate/[id]`) — **Launch Simulation** (`POST /simulations/{id}/run`), optional **Generate Postmortem** (`POST /simulations/{id}/postmortem`).
-3. `GET /scenario/partnership` returns a canned `SimulationCreate` for tooling or QA.
+| Doc | What's inside |
+|---|---|
+| [`SETUP.md`](SETUP.md) | Full setup guide including Redis/RQ workers, env vars, architecture deep-dive, migration notes |
+| [`docs/MVP.md`](docs/MVP.md) | MVP scope, target user, success metrics |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased roadmap with success gates |
+| [`docs/tech-stack.md`](docs/tech-stack.md) | Technology decisions and rationale |
+| [`.sisyphus/plans/agentic-architecture.md`](.sisyphus/plans/agentic-architecture.md) | v2 architecture design |
+| [`.sisyphus/plans/implementation-plan.md`](.sisyphus/plans/implementation-plan.md) | Implementation plan |
 
-See [docs/MVP.md](docs/MVP.md), [docs/ROADMAP.md](docs/ROADMAP.md), and [docs/tech-stack.md](docs/tech-stack.md) for product and stack notes.
+## Frontend
 
-## Capability gaps
+- **War Room** (`/simulate/[id]`) — real-time SSE streaming with 3 layout modes:
+  - **Roster** — avatar grid with speech bubbles, heatmap, conflict timeline
+  - **Graph** — force-directed stakeholder graph with coalition edges
+  - **Table** — chronological event log
+- **Wizard** (`/simulate/new`) — 3-step simulation creation (background → stakeholders → env flags)
+- **Persona Library** (`/personas`) — CRUD for stakeholders with archetype filter, search, incentive tuning, hidden agendas
+- **Postmortem** — confidence scoring, objection topology, consensus rating
 
-| Capability                                  | Status               | Notes                                                                                                           |
-| ------------------------------------------- | -------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Interrupt / coalition / escalation dynamics | ❌ Missing           | Agents take sequential turns; no interruption, pushback, or mid-turn coalition signaling                        |
-| Agent memory graphs                         | ⚠️ Partial           | `memory.py` exists but stores flat per-session state; agents don't reference prior statements from other agents |
-| Dynamic objectives                          | ❌ Missing           | Persona goals are static; no mechanism for objectives to shift after a concession or coalition forms            |
-| Trust / leverage scoring                    | ❌ Missing           | No inter-agent trust score, leverage indicator, or agreement/conflict metric updated during simulation          |
-| Visual meeting room                         | 🗓 Roadmap (Phase 5) | Tile-based room view with live transcript, highlight reel, and user injection                                   |
-| Rehearsal mode                              | 🗓 Roadmap (Phase 4) | User joins mid-simulation and responds to predicted objections; agents push back in character                   |
+### Components
+
+`Avatar` · `ActionGlyph` · `ControlBar` · `SimBadge` · `Voltage` · `TurnDisplay` · `AppShell`
+
+## Backend
+
+### Agent tool bindings
+
+| Agent | Tools | Purpose |
+|---|---|---|
+| **CFO** | `calculate_roi` · `check_financials` · `calculate_burn_rate` | NPV/IRR, financial health ratios, runway projections |
+| **Legal** | `query_clause` · `compliance_check` | 33-clause DB, GDPR/HIPAA/SOC2 scoring |
+| **CTO** | `assess_tech_stack` · `check_integration` | Architecture scoring, API compatibility |
+
+### Key endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| POST | `/v2/simulations` | Create simulation |
+| GET | `/v2/simulations/{id}` | Get config + turns |
+| POST | `/v2/simulations/{id}/run` | Execute (LangGraph workflow) |
+| GET | `/v2/simulations/{id}/stream` | SSE stream |
+| POST | `/v2/simulations/{id}/turns` | Inject human turn |
+| GET | `/v2/simulations/{id}/postmortem` | Generate analysis |
+| GET | `/api/stakeholders` | List personas |
+| POST | `/api/stakeholders` | Create persona |
+| GET | `/library` | Default persona library |
+| GET | `/scenario/partnership` | Canned scenario for QA |
+
+### Optional services
+
+```bash
+# Neo4j (graph analytics)
+docker compose up -d neo4j     # http://localhost:7474
+
+# Redis + RQ workers (async job queue)
+docker run --name boardroom-redis -p 6379:6379 -d redis:7
+python -m app.workers.simulation_worker
+python -m app.workers.postmortem_worker
+```
+
+## Verification
+
+```bash
+./test-application.sh
+```
+
+Tests: backend health, frontend reachable, stakeholder CRUD, simulation creation, env config.
+
+---
+
+*See [`SETUP.md`](SETUP.md) for detailed installation, environment variables, production checklist, and troubleshooting.*

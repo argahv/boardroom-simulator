@@ -69,9 +69,33 @@ class SQLiteBackend(DatabaseBackend):
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS v2_simulations (
+                simulation_id TEXT PRIMARY KEY,
+                config_json TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'idle',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS v2_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                simulation_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                turn_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
+            )
+        """)
+
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_simulations_status ON simulations(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_simulations_created ON simulations(created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_stakeholders_tag ON stakeholders(tag)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_simulations_status ON v2_simulations(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim ON v2_turns(simulation_id, turn_index)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim_created ON v2_turns(simulation_id, created_at)")
 
         self.conn.commit()
 
@@ -139,6 +163,51 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("DELETE FROM simulations WHERE simulation_id = ?", (simulation_id,))
         self.conn.commit()
         return cursor.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # v2 Simulations
+    # ------------------------------------------------------------------
+
+    async def create_v2_simulation(self, simulation_id: str, config_json: str) -> None:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO v2_simulations (simulation_id, config_json, status, created_at, updated_at) VALUES (?, ?, 'idle', ?, ?)",
+            (simulation_id, config_json, now, now),
+        )
+        self.conn.commit()
+
+    async def get_v2_simulation(self, simulation_id: str) -> Optional[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT config_json, status FROM v2_simulations WHERE simulation_id = ?", (simulation_id,))
+        row = cursor.fetchone()
+        return {"config": json.loads(row["config_json"]), "status": row["status"]} if row else None
+
+    async def update_v2_simulation_status(self, simulation_id: str, status: str) -> None:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "UPDATE v2_simulations SET status = ?, updated_at = ? WHERE simulation_id = ?",
+            (status, now, simulation_id),
+        )
+        self.conn.commit()
+
+    async def insert_v2_turn(self, simulation_id: str, turn_index: int, turn_json: str) -> None:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO v2_turns (simulation_id, turn_index, turn_json, created_at) VALUES (?, ?, ?, ?)",
+            (simulation_id, turn_index, turn_json, now),
+        )
+        self.conn.commit()
+
+    async def get_v2_turns(self, simulation_id: str, from_index: int = 0) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT turn_json, turn_index FROM v2_turns WHERE simulation_id = ? AND turn_index >= ? ORDER BY turn_index ASC",
+            (simulation_id, from_index),
+        )
+        return [json.loads(row["turn_json"]) for row in cursor.fetchall()]
 
     # ------------------------------------------------------------------
     # Stakeholders

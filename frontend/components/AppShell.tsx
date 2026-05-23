@@ -9,7 +9,11 @@ type AppShellProps = {
   activeTab?: string;
 };
 
-const NAV_TABS = ["War Room", "Personas", "Frameworks"];
+const NAV_TABS: { label: string; href: string }[] = [
+  { label: "War Room", href: "/simulate" },
+  { label: "Personas", href: "/personas" },
+  { label: "Frameworks", href: "/frameworks" },
+];
 
 type SideNavItem = {
   label: string;
@@ -44,10 +48,11 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
 
         <div className="flex-1 flex items-center justify-center gap-1" role="tablist">
           {NAV_TABS.map((tab) => {
-            const isActive = tab === activeTab;
+            const isActive = tab.label === activeTab || (tab.label === "War Room" && pathname.startsWith("/simulate"));
             return (
-              <button
-                key={tab}
+              <Link
+                key={tab.label}
+                href={tab.href}
                 role="tab"
                 aria-selected={isActive}
                 className={`relative px-5 py-2 text-sm font-medium transition-colors ${
@@ -56,11 +61,11 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
                     : "text-muted hover:text-ink"
                 }`}
               >
-                {tab}
+                {tab.label}
                 {isActive && (
                   <span className="absolute bottom-0 left-4 right-4 h-[2px] bg-primary rounded-full" />
                 )}
-              </button>
+              </Link>
             );
           })}
         </div>

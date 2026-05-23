@@ -3,6 +3,7 @@ import type {
   Postmortem,
   SimulationCreate,
   SimulationState,
+  SimulationV2Config,
   Stakeholder,
   StreamEvent,
 } from "@/lib/types";
@@ -86,22 +87,42 @@ export const fetchLibrary = async (): Promise<Stakeholder[]> => {
 };
 
 export const fetchStakeholders = () =>
-  request<Stakeholder[]>("/api/stakeholders");
+  request<Stakeholder[]>("/stakeholders");
 
 export const createStakeholder = (persona: Stakeholder) =>
-  request<Stakeholder>("/api/stakeholders", {
+  request<Stakeholder>("/stakeholders", {
     method: "POST",
     body: JSON.stringify(persona),
   });
 
 export const updateStakeholder = (id: string, persona: Stakeholder) =>
-  request<Stakeholder>(`/api/stakeholders/${id}`, {
+  request<Stakeholder>(`/stakeholders/${id}`, {
     method: "PUT",
     body: JSON.stringify(persona),
   });
 
 export const deleteStakeholder = (id: string) =>
-  request<void>(`/api/stakeholders/${id}`, {
+  request<void>(`/stakeholders/${id}`, {
+    method: "DELETE",
+  });
+
+export const fetchStakeholdersV2 = () =>
+  request<Record<string, unknown>[]>("/stakeholders");
+
+export const createStakeholderV2 = (payload: Record<string, unknown>) =>
+  request<Record<string, unknown>>("/stakeholders", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const updateStakeholderV2 = (id: string, payload: Record<string, unknown>) =>
+  request<Record<string, unknown>>(`/stakeholders/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
+export const deleteStakeholderV2 = (id: string) =>
+  request<void>(`/stakeholders/${id}`, {
     method: "DELETE",
   });
 
@@ -110,6 +131,71 @@ export const createSimulation = (payload: SimulationCreate) =>
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export const createSimulationV2 = (payload: SimulationV2Config) =>
+  request<{ simulation_id: string; config: SimulationV2Config; status: string }>("/simulations", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
+export const fetchSimulationsV2 = () =>
+  request<{ simulation_id: string; subject: { name: string }; status: string; stakeholder_count: number; voltage: number }[]>("/simulations");
+
+export const fetchSimulationV2 = (simulationId: string) =>
+  request<{ config: SimulationV2Config; status: string }>(`/simulations/${simulationId}`);
+
+export const postmortemV2 = (simulationId: string) =>
+  request<Record<string, unknown>>(`/simulations/${simulationId}/postmortem`, {
+    method: "POST",
+  });
+
+export const injectV2Turn = (simulationId: string, stakeholderId: string, content: string) =>
+  request<Record<string, unknown>>(`/simulations/${simulationId}/inject`, {
+    method: "POST",
+    body: JSON.stringify({ stakeholder_id: stakeholderId, content }),
+  });
+
+export const streamSimulationV2 = (
+  simulationId: string,
+  onEvent: (event: Record<string, unknown>) => void,
+  onError: (err: Error) => void,
+  onDone: () => void
+): AbortController => {
+  const controller = new AbortController();
+  const run = async () => {
+    try {
+      const response = await fetch(`${API_URL}/simulations/${simulationId}/stream`, {
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error(`Stream failed with ${response.status}`);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data: ")) {
+            try {
+              const event = JSON.parse(trimmed.slice(6));
+              onEvent(event);
+              if (event.type === "done") { onDone(); return; }
+            } catch { /* skip malformed */ }
+          }
+        }
+      }
+      onDone();
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") onError(err instanceof Error ? err : new Error(String(err)));
+    }
+  };
+  run();
+  return controller;
+};
 
 export const fetchSimulations = () =>
   request<SimulationState[]>("/simulations");

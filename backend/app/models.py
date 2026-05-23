@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field
 
 ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate"]
@@ -196,6 +196,100 @@ class SimulationState(BaseModel):
     inject_idempotency_keys: list[str] = Field(default_factory=list)
     leaderboard: list[LeaderboardEntry] = Field(default_factory=list)
     winning_context: str = ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# v2 — Agentic Architecture Models (user-defined config, engine has zero opinions)
+# ═══════════════════════════════════════════════════════════════════════
+
+class Subject(BaseModel):
+    """What the simulation is ABOUT — first-class entity."""
+    name: str
+    description: str = ""
+    attributes: dict[str, str | int | float] = Field(default_factory=dict)
+    evidence_items: list[str] = Field(default_factory=list)
+    stakes_description: str = ""
+
+
+AgentStance = Literal["champion", "detractor", "neutral", "moderator", "wildcard"]
+
+
+class PersonalityProfile(BaseModel):
+    aggressiveness: int = Field(default=50, ge=0, le=100)
+    empathy: int = Field(default=50, ge=0, le=100)
+    stubbornness: int = Field(default=50, ge=0, le=100)
+    verbosity: int = Field(default=50, ge=0, le=100)
+
+
+class CustomActionDef(BaseModel):
+    """An action type defined by the user for this simulation."""
+    name: str
+    description: str = ""
+    trust_delta: int = 0
+    leverage_delta: int = 0
+
+
+class ActionSpace(BaseModel):
+    actions: list[CustomActionDef] = Field(default_factory=list)
+    default_trust_deltas: dict[str, int] = Field(default_factory=dict)
+    default_leverage_deltas: dict[str, int] = Field(default_factory=dict)
+
+
+class SpeakerRules(BaseModel):
+    mode: Literal["moderator_led", "alternating", "freeform", "weighed_random"] = "weighed_random"
+
+
+class VoteCondition(BaseModel):
+    type: Literal["vote"] = "vote"
+    voters: list[str]
+    threshold: float = 0.5
+    max_turns: int = 10
+
+
+class TimeoutCondition(BaseModel):
+    type: Literal["timeout"] = "timeout"
+    max_normal_turns: int = 20
+
+
+class JudgeCondition(BaseModel):
+    type: Literal["judge"] = "judge"
+    judge_id: str
+    criteria: list[str] = Field(default_factory=list)
+
+
+EndCondition = Annotated[
+    VoteCondition | TimeoutCondition | JudgeCondition,
+    Field(discriminator="type"),
+]
+
+
+class StakeholderV2(BaseModel):
+    """A stakeholder with stance + personality. No hardcoded tags."""
+    id: str
+    name: str
+    role: str = ""
+    backstory: str = ""
+    stance: AgentStance = "neutral"
+    personality: PersonalityProfile = Field(default_factory=PersonalityProfile)
+    hidden_agenda: str = ""
+    tools: list[str] = Field(default_factory=list)
+
+
+class SimulationV2Config(BaseModel):
+    """Full user-defined simulation config — engine has zero domain opinions."""
+    subject: Subject
+    stakeholders: list[StakeholderV2]
+    action_space: ActionSpace
+    speaker_rules: SpeakerRules = Field(default_factory=SpeakerRules)
+    end_condition: EndCondition = Field(default_factory=lambda: TimeoutCondition())
+    system_prompt_template: str = ""
+    voltage: int = Field(default=50, ge=0, le=100)
+    player_mode: bool = False
+    env_flags: dict[str, bool] = Field(default_factory=lambda: {
+        "hidden_motives": True, "time_pressure": False,
+        "external_leaks": False, "deadlock_risk": False,
+    })
+    model_temperature: str = "volatile"
 
 
 class StrategyCard(BaseModel):

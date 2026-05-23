@@ -195,3 +195,85 @@ export type AsyncJob = {
 export type JobResponse = {
   job: AsyncJob;
 };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// v2 — Agentic Architecture Types (user-defined config, engine has zero opinions)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type AgentStance = "champion" | "detractor" | "neutral" | "moderator" | "wildcard";
+
+export type Subject = {
+  name: string;
+  description: string;
+  attributes: Record<string, string | number>;
+  evidence_items: string[];
+  stakes_description: string;
+};
+
+export type PersonalityProfile = {
+  aggressiveness: number;
+  empathy: number;
+  stubbornness: number;
+  verbosity: number;
+};
+
+export type CustomActionDef = {
+  name: string;
+  description: string;
+  trust_delta: number;
+  leverage_delta: number;
+};
+
+export type ActionSpace = {
+  actions: CustomActionDef[];
+  default_trust_deltas: Record<string, number>;
+  default_leverage_deltas: Record<string, number>;
+};
+
+export type SpeakerRules = {
+  mode: "moderator_led" | "alternating" | "freeform" | "weighed_random";
+};
+
+export type VoteCondition = {
+  type: "vote";
+  voters: string[];
+  threshold: number;
+  max_turns: number;
+};
+
+export type TimeoutCondition = {
+  type: "timeout";
+  max_normal_turns: number;
+};
+
+export type JudgeCondition = {
+  type: "judge";
+  judge_id: string;
+  criteria: string[];
+};
+
+export type EndCondition = VoteCondition | TimeoutCondition | JudgeCondition;
+
+export type StakeholderV2 = {
+  id: string;
+  name: string;
+  role: string;
+  backstory: string;
+  stance: AgentStance;
+  personality: PersonalityProfile;
+  hidden_agenda: string;
+  tools: string[];
+};
+
+export type SimulationV2Config = {
+  subject: Subject;
+  stakeholders: StakeholderV2[];
+  action_space: ActionSpace;
+  speaker_rules: SpeakerRules;
+  end_condition: EndCondition;
+  system_prompt_template: string;
+  voltage: number;
+  player_mode: boolean;
+  env_flags: Record<string, boolean>;
+  model_temperature: string;
+};

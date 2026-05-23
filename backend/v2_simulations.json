@@ -1,0 +1,120 @@
+{
+  "a8313dd6-83cd-44ac-9b37-cc9791cbe235": {
+    "config": {
+      "subject": {
+        "name": "Persistence",
+        "description": "",
+        "attributes": {},
+        "evidence_items": [],
+        "stakes_description": ""
+      },
+      "stakeholders": [
+        {
+          "id": "p1",
+          "name": "A",
+          "role": "",
+          "backstory": "",
+          "stance": "champion",
+          "personality": {
+            "aggressiveness": 50,
+            "empathy": 50,
+            "stubbornness": 50,
+            "verbosity": 50
+          },
+          "hidden_agenda": "",
+          "tools": []
+        },
+        {
+          "id": "p2",
+          "name": "B",
+          "role": "",
+          "backstory": "",
+          "stance": "detractor",
+          "personality": {
+            "aggressiveness": 50,
+            "empathy": 50,
+            "stubbornness": 50,
+            "verbosity": 50
+          },
+          "hidden_agenda": "",
+          "tools": []
+        }
+      ],
+      "action_space": {
+        "actions": [],
+        "default_trust_deltas": {},
+        "default_leverage_deltas": {}
+      },
+      "speaker_rules": {
+        "mode": "alternating"
+      },
+      "end_condition": {
+        "type": "timeout",
+        "max_normal_turns": 2
+      },
+      "system_prompt_template": "",
+      "voltage": 50,
+      "player_mode": false
+    },
+    "status": "idle"
+  },
+  "43d7feba-8ddc-4463-a154-6d8b764cc0cc": {
+    "config": {
+      "subject": {
+        "name": "Fields",
+        "description": "",
+        "attributes": {},
+        "evidence_items": [],
+        "stakes_description": ""
+      },
+      "stakeholders": [
+        {
+          "id": "p1",
+          "name": "Alice",
+          "role": "Supporter",
+          "backstory": "",
+          "stance": "champion",
+          "personality": {
+            "aggressiveness": 50,
+            "empathy": 50,
+            "stubbornness": 50,
+            "verbosity": 50
+          },
+          "hidden_agenda": "",
+          "tools": []
+        },
+        {
+          "id": "p2",
+          "name": "Bob",
+          "role": "Skeptic",
+          "backstory": "",
+          "stance": "detractor",
+          "personality": {
+            "aggressiveness": 50,
+            "empathy": 50,
+            "stubbornness": 50,
+            "verbosity": 50
+          },
+          "hidden_agenda": "",
+          "tools": []
+        }
+      ],
+      "action_space": {
+        "actions": [],
+        "default_trust_deltas": {},
+        "default_leverage_deltas": {}
+      },
+      "speaker_rules": {
+        "mode": "alternating"
+      },
+      "end_condition": {
+        "type": "timeout",
+        "max_normal_turns": 2
+      },
+      "system_prompt_template": "",
+      "voltage": 50,
+      "player_mode": false
+    },
+    "status": "running"
+  }
+}

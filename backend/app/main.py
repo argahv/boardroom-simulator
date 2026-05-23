@@ -10,37 +10,18 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-try:
-    from langsmith import traceable as langsmith_traceable
-except Exception:  # pragma: no cover
-    def langsmith_traceable(**_kw):  # type: ignore[misc]
-        def _noop(fn):
-            return fn
-        return _noop
-
-from . import config, store
-from .database import initialize_database, close_database
-from .engine import advance_turn, run_simulation
-from .llm import openrouter_completion, parse_json_object
-from .infrastructure.queue.enqueue import enqueue_postmortem, enqueue_simulation, retry_job
-from .infrastructure.queue import jobs_repo
+from . import config
+from .database import initialize_database, close_database, get_database
 from .models import (
-    AlignmentDelta,
-    Postmortem,
-    ScenarioTemplate,
-    SimulationCreate,
-    SimulationState,
-    Stakeholder,
-    StrategyCard,
-    TopologyNode,
+    SimulationV2Config,
+    StakeholderV2,
+    PersonalityProfile,
 )
-from .seeds import run as run_seeds
-from .graph.driver import get_driver, close_driver, neo4j_enabled
+from .runtime import run_simulation_v2
+from .graph.driver import get_driver, close_driver
 from .graph.schema import init_schema
-from .graph.queries import GraphQueries
-from .budget import BudgetGuard
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
@@ -102,16 +83,11 @@ async def request_logging_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event() -> None:
     await initialize_database()
-    try:
-        await run_seeds()
-    except Exception as exc:
-        print(f"⚠ Error during seed loading: {exc}")
-        raise
-    # Neo4j — optional; silent if disabled
     if neo4j_enabled():
         driver = get_driver()
         if driver is not None:
             init_schema(driver)
+
             print("✓ Neo4j connected and schema initialised.")
         else:
             print("⚠ NEO4J_URI set but connection failed — graph analytics disabled.")
@@ -123,27 +99,8 @@ async def shutdown_event() -> None:
     close_driver()
 
 
-
 class RunRequest(BaseModel):
     max_turns: int | None = Field(default=None, gt=0)
-
-class CreateStakeholderRequest(BaseModel):
-    name: str = Field(..., min_length=1)
-    role: str = Field(..., min_length=1)
-    focus: str = Field(..., min_length=1)
-    incentive_tuning: int = Field(default=50, ge=0, le=100)
-    hidden_agenda: str = ""
-    tag: str | None = None
-    tool_profile: str = "none"
-
-class UpdateStakeholderRequest(BaseModel):
-    name: str | None = None
-    role: str | None = None
-    focus: str | None = None
-    incentive_tuning: int | None = Field(default=None, ge=0, le=100)
-    hidden_agenda: str | None = None
-    tag: str | None = None
-    tool_profile: str | None = None
 
 
 class HumanTurnRequest(BaseModel):
@@ -323,356 +280,147 @@ def _postmortem_from_payload(
 
 @app.get("/health")
 def health() -> dict[str, str | bool]:
-    return {"ok": True, "mode": "production"}
+    return {"status": "ok", "v2": True}
 
 
-# ---------------------------------------------------------------------------
-# Scenario templates
-# ---------------------------------------------------------------------------
+# ── v2 Stakeholders (replaces v1 /api/stakeholders) ────────────────────────
 
-@app.get("/templates", response_model=list[ScenarioTemplate])
-async def list_templates() -> list[ScenarioTemplate]:
-    return await store.list_templates()
+_v2_stakeholders: dict[str, dict] = {}
+from .models import PersonalityProfile
 
+@app.get("/stakeholders", response_model=list[StakeholderV2])
+async def list_v2_stakeholders() -> list[StakeholderV2]:
+    return [StakeholderV2(**s) for s in _v2_stakeholders.values()]
 
-@app.get("/templates/{template_id}", response_model=ScenarioTemplate)
-async def get_template(template_id: str) -> ScenarioTemplate:
-    template = await store.get_template(template_id)
-    if template is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return template
+@app.post("/stakeholders", response_model=StakeholderV2, status_code=201)
+async def create_v2_stakeholder(payload: StakeholderV2) -> StakeholderV2:
+    sid = str(uuid4())
+    s = payload.model_copy(update={"id": sid})
+    _v2_stakeholders[sid] = s.model_dump()
+    return s
 
-
-@app.get("/templates/{template_id}/personas", response_model=list[Stakeholder])
-async def get_template_personas(template_id: str) -> list[Stakeholder]:
-    template = await store.get_template(template_id)
-    if template is None:
-        raise HTTPException(status_code=404, detail="Template not found")
-    return await store.get_template_personas(template_id)
-
-
-@app.get("/library")
-async def library_compat() -> dict:
-    """
-    Backwards-compat shim for frontend fetchLibrary().
-    Returns all stakeholders in the old {default_library, partnership_defaults} shape.
-    partnership_defaults = suggested personas for the partnership_negotiation template.
-    default_library = everything else.
-    """
-    all_personas = await store.get_all_stakeholders()
-    partnership_personas = await store.get_template_personas("partnership_negotiation")
-    partnership_ids = {p.id for p in partnership_personas}
-    return {
-        "partnership_defaults": [p.model_dump() for p in partnership_personas],
-        "default_library": [p.model_dump() for p in all_personas if p.id not in partnership_ids],
-    }
-
-@app.get("/api/stakeholders", response_model=list[Stakeholder])
-async def list_stakeholders() -> list[Stakeholder]:
-    return await store.get_all_stakeholders()
-
-@app.post("/api/stakeholders", response_model=Stakeholder, status_code=201)
-async def create_stakeholder(payload: CreateStakeholderRequest) -> Stakeholder:
-    stakeholder = Stakeholder(
-        id=str(uuid4()),
-        name=payload.name,
-        role=payload.role,
-        focus=payload.focus,
-        incentive_tuning=payload.incentive_tuning,
-        hidden_agenda=payload.hidden_agenda,
-        tag=payload.tag,
-        tool_profile=payload.tool_profile,
-    )
-    return await store.add_stakeholder(stakeholder)
-
-@app.put("/api/stakeholders/{stakeholder_id}", response_model=Stakeholder)
-async def update_stakeholder(
-    stakeholder_id: str, payload: UpdateStakeholderRequest
-) -> Stakeholder:
-    existing = await store.get_stakeholder(stakeholder_id)
-    if existing is None:
+@app.put("/stakeholders/{stakeholder_id}", response_model=StakeholderV2)
+async def update_v2_stakeholder(stakeholder_id: str, payload: StakeholderV2) -> StakeholderV2:
+    if stakeholder_id not in _v2_stakeholders:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+    s = payload.model_copy(update={"id": stakeholder_id})
+    _v2_stakeholders[stakeholder_id] = s.model_dump()
+    return s
 
-    updated = Stakeholder(
-        id=stakeholder_id,
-        name=payload.name if payload.name is not None else existing.name,
-        role=payload.role if payload.role is not None else existing.role,
-        focus=payload.focus if payload.focus is not None else existing.focus,
-        incentive_tuning=payload.incentive_tuning if payload.incentive_tuning is not None else existing.incentive_tuning,
-        hidden_agenda=payload.hidden_agenda if payload.hidden_agenda is not None else existing.hidden_agenda,
-        tag=payload.tag if payload.tag is not None else existing.tag,
-        tool_profile=payload.tool_profile if payload.tool_profile is not None else existing.tool_profile,
-    )
-    return await store.update_stakeholder(stakeholder_id, updated)
-
-@app.delete("/api/stakeholders/{stakeholder_id}")
-async def delete_stakeholder(stakeholder_id: str) -> Response:
-    if not await store.delete_stakeholder(stakeholder_id):
+@app.delete("/stakeholders/{stakeholder_id}")
+async def delete_v2_stakeholder(stakeholder_id: str) -> Response:
+    if stakeholder_id not in _v2_stakeholders:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
+    del _v2_stakeholders[stakeholder_id]
     return Response(status_code=204)
 
-@app.post("/simulations", response_model=SimulationState)
-async def create_simulation(payload: SimulationCreate) -> SimulationState:
+# ── v2 Agentic Simulation endpoints ─────────────────────────────────────────
+
+from .database import get_database
+
+_v2_simulations: dict[str, dict] = {}
+_v2_active_streams: set[str] = set()
+
+async def _load_v2_sims() -> None:
+    global _v2_simulations
+    pass
+
+async def _save_v2_sim(simulation_id: str, config_json: str) -> None:
+    db = get_database()
+    try:
+        await db.create_v2_simulation(simulation_id, config_json)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("V2_DB_SAVE_ERR %s: %s", simulation_id, exc)
+
+async def _update_v2_status(simulation_id: str, status: str) -> None:
+    db = get_database()
+    try:
+        await db.update_v2_simulation_status(simulation_id, status)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("V2_DB_STATUS_ERR %s: %s", simulation_id, exc)
+
+async def _save_v2_turn(simulation_id: str, turn_index: int, turn_json: str) -> None:
+    db = get_database()
+    try:
+        await db.insert_v2_turn(simulation_id, turn_index, turn_json)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("V2_DB_TURN_ERR %s: %s", simulation_id, exc)
+
+
+@app.get("/simulations")
+async def list_simulations_v2() -> list[dict]:
+    return [
+        {"simulation_id": sid, "subject": entry["config"].get("subject", {}), "status": entry["status"], "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50)}
+        for sid, entry in _v2_simulations.items()
+    ]
+
+
+@app.post("/simulations")
+async def create_simulation_v2(payload: SimulationV2Config) -> dict:
     simulation_id = str(uuid4())
-    state = SimulationState(
-        simulation_id=simulation_id,
-        config=payload,
-        mocked=False,
-        player_mode=payload.player_mode,
-        runtime_status="idle",
-    )
-    saved = await store.put(state)
+    config_json = payload.model_dump(mode="json")
+    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle"}
     logger.info(
-        "SIM_CREATE simulation_id=%s stakeholders=%d voltage=%d player_mode=%s",
+        "V2_SIM_CREATE simulation_id=%s stakeholders=%d subject=%s",
         simulation_id,
         len(payload.stakeholders),
-        payload.voltage,
-        payload.player_mode,
+        payload.subject.name,
     )
-    return saved
-
-
-@app.get("/simulations", response_model=list[SimulationState])
-async def list_simulations() -> list[SimulationState]:
-    return await store.list_simulations()
-
-
-@app.get("/simulations/{simulation_id}", response_model=SimulationState)
-async def get_simulation(simulation_id: str) -> SimulationState:
-    return await _get_state_or_404(simulation_id)
-
-
-@app.post("/simulations/{simulation_id}/inject", response_model=SimulationState)
-async def inject_human_turn(simulation_id: str, payload: HumanTurnRequest, request: Request) -> SimulationState:
-    state = await _get_state_or_404(simulation_id)
-
-    if state.player_mode and state.runtime_status != "awaiting_human":
-        raise HTTPException(status_code=409, detail=f"Cannot inject: state is {state.runtime_status}, expected awaiting_human")
-
-    idempotency_key = request.headers.get("X-Idempotency-Key")
-    if idempotency_key and idempotency_key in state.inject_idempotency_keys:
-        return state
-
-    stakeholder = next((s for s in state.config.stakeholders if s.id == payload.stakeholder_id), None)
-    if stakeholder is None:
-        raise HTTPException(status_code=400, detail="stakeholder_id not found in simulation")
-
-    turn = {
-        "turn_index": len(state.turns),
-        "stakeholder_id": stakeholder.id,
-        "stakeholder_name": stakeholder.name,
-        "role": stakeholder.role,
-        "content": payload.content,
-        "internal_reasoning": "[HUMAN_INJECTED]",
-        "action_type": payload.action_type,
-        "directed_at": payload.directed_at,
-        "coalition_with": payload.coalition_with,
-        "emotional_tone": "neutral",
-        "interrupt_bid": 0.0,
-        "position_delta": {},
-        "leverage_delta": {},
-        "is_human": True,
+    await _save_v2_sim(simulation_id, json.dumps(config_json))
+    return {
+        "simulation_id": simulation_id,
+        "config": config_json,
+        "status": "idle",
     }
-
-    from .models import Turn
-    state.turns.append(Turn(**turn))
-    state.active_speaker_id = stakeholder.id
-    state.event_log.append(f"Human turn injected: {stakeholder.name}")
-    state.state_version += 1
-    if idempotency_key:
-        state.inject_idempotency_keys.append(idempotency_key)
-
-    if state.player_mode:
-        state.runtime_status = "ai_turn"
-
-    await store.put(state)
-    return state
-
-@app.post("/simulations/{simulation_id}/resume", response_model=SimulationState)
-async def resume_simulation(simulation_id: str) -> SimulationState:
-    state = await _get_state_or_404(simulation_id)
-
-    if state.runtime_status != "awaiting_human":
-        raise HTTPException(status_code=409, detail=f"Cannot resume: state is {state.runtime_status}, expected awaiting_human")
-
-    state.runtime_status = "ai_turn"
-    state.state_version += 1
-    await store.put(state)
-    return state
-
-
-@app.get("/simulations/{simulation_id}/checkpoint")
-async def get_checkpoint_info(simulation_id: str) -> dict:
-    from .persistence import get_checkpoint_manager
-    
-    checkpoint_manager = get_checkpoint_manager()
-    metadata = checkpoint_manager.get_checkpoint_metadata(simulation_id)
-    
-    if metadata is None:
-        raise HTTPException(status_code=404, detail="No checkpoint found for this simulation")
-    
-    return metadata
-
-
-@app.get("/simulations/{simulation_id}/jobs")
-async def get_simulation_jobs(simulation_id: str) -> dict:
-    await _get_state_or_404(simulation_id)
-    jobs = jobs_repo.list_for_simulation(simulation_id)
-    return {"jobs": [j.to_dict() for j in jobs]}
-
-
-@app.get("/simulations/{simulation_id}/budget")
-async def get_simulation_budget(simulation_id: str) -> dict:
-    """
-    Returns live budget/circuit-breaker status for a simulation.
-    Useful for frontend status indicators and operational debugging.
-    """
-    await _get_state_or_404(simulation_id)
-    guard = BudgetGuard.for_simulation(simulation_id)
-    status = guard.status_dict()
-    logger.info(
-        "SIM_BUDGET_STATUS simulation_id=%s used=%d remaining=%d tripped=%s reason=%s",
-        simulation_id,
-        status["used_tokens"],
-        status["remaining_tokens"],
-        status["is_tripped"],
-        status["trip_reason"],
-    )
-    return status
-
-
-@app.post("/jobs/{job_id}/retry")
-def retry_existing_job(job_id: str) -> dict:
-    retried = retry_job(job_id)
-    if retried is None:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return {"job": retried.to_dict()}
-
-
-@langsmith_traceable(
-    name="simulation_session",
-    run_type="chain",
-    metadata={"mode": "stream"},
-)
-async def _run_simulation_turns(
-    state: SimulationState,
-    limit: int,
-    simulation_id: str,
-) -> SimulationState:
-    """
-    Traceable turn-loop: runs all turns under one LangSmith parent trace.
-    `advance_turn` (also @traceable) becomes a child run in the waterfall.
-    Returns the final state with all turns populated.
-    """
-    stagnation_count = 0
-    last_heat_signature = None
-
-    while len(state.turns) < limit:
-        if state.player_mode and state.runtime_status == "awaiting_human":
-            break
-
-        prev_count = len(state.turns)
-        state = await advance_turn(state)
-        await store.put(state)
-
-        if len(state.turns) == prev_count:
-            break
-
-        last_turn = state.turns[-1]
-        heat_signature = (
-            state.heatmap.commercial_gain,
-            state.heatmap.tech_integrity,
-            state.heatmap.legal_safety,
-            last_turn.action_type,
-        )
-        if heat_signature == last_heat_signature:
-            stagnation_count += 1
-        else:
-            stagnation_count = 0
-        last_heat_signature = heat_signature
-
-        if stagnation_count >= 3:
-            state.event_log.append("Early-stop: stagnation guard triggered")
-            logger.info("SIM_STREAM_EARLY_STOP simulation_id=%s reason=stagnation", simulation_id)
-            break
-
-        if state.player_mode:
-            state.runtime_status = "awaiting_human"
-            state.state_version += 1
-            await store.put(state)
-            break
-
-    return state
 
 
 @app.get("/simulations/{simulation_id}/stream")
-async def stream_simulation(simulation_id: str, max_turns: int = 20) -> StreamingResponse:
-    state = await _get_state_or_404(simulation_id)
-    limit = min(max_turns, config.MAX_TURNS)
-    logger.info("SIM_STREAM_START simulation_id=%s max_turns=%d", simulation_id, limit)
+async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
+    entry = _v2_simulations.get(simulation_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
 
-    async def _generate():
-        current_state = state.model_copy(deep=True)
-        current_state.status = "running"
-        current_state.runtime_status = "ai_turn"
-        current_state.state_version += 1
-        prior_turn_count = len(current_state.turns)
+    already_complete = entry["status"] == "complete"
+    config = SimulationV2Config(**entry["config"])
 
+    if not already_complete:
+        entry["status"] = "running"
+        await _update_v2_status(simulation_id, "running")
+
+    async def event_stream():
         try:
-            # All advance_turn calls happen inside _run_simulation_turns which is
-            # decorated @traceable → single parent trace, each turn is a child.
-            current_state = await _run_simulation_turns(current_state, limit, simulation_id)
+            if already_complete:
+                db = get_database()
+                try:
+                    turns = await db.get_v2_turns(simulation_id)
+                except Exception:
+                    turns = []
+                for turn in turns:
+                    yield f"data: {json.dumps(turn)}\n\n"
+                yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
+                return
 
-            # Stream each new turn as SSE events
-            new_turns = current_state.turns[prior_turn_count:]
-            for last_turn in new_turns:
-                event = {
-                    "type": "turn",
-                    "turn": last_turn.model_dump(),
-                    "state_summary": {
-                        "heatmap": current_state.heatmap.model_dump(),
-                        "active_speaker_id": current_state.active_speaker_id,
-                        "deadlock_risk_score": current_state.deadlock_risk_score,
-                        "coalitions": [c.model_dump() for c in current_state.coalitions],
-                        "leverage_shifts": [ls.model_dump() for ls in current_state.leverage_shifts],
-                        "event_log": current_state.event_log[-5:],
-                        "sentiment": current_state.sentiment,
-                        "turn_count": len(current_state.turns),
-                        "trust_matrix": current_state.trust_matrix,
-                        "leverage_scores": current_state.leverage_scores,
-                        "leaderboard": current_state.leaderboard,
-                        "winning_context": current_state.winning_context,
-                    },
-                }
+            async for event in run_simulation_v2(config, simulation_id):
                 yield f"data: {json.dumps(event)}\n\n"
-                await asyncio.sleep(0)
-
-            if current_state.runtime_status != "awaiting_human":
-                current_state.runtime_status = "complete"
-            current_state.status = "complete"
-            current_state.state_version += 1
-            await store.put(current_state)
-            logger.info(
-                "SIM_STREAM_DONE simulation_id=%s turns=%d",
-                simulation_id,
-                len(current_state.turns),
-            )
-            done_event = {"type": "done", "state": current_state.model_dump()}
-            yield f"data: {json.dumps(done_event)}\n\n"
-
+                if event.get("type") == "turn" and event.get("turn_index") is not None:
+                    asyncio.ensure_future(_save_v2_turn(simulation_id, event["turn_index"], json.dumps(event)))
+                if event.get("type") == "done":
+                    break
         except asyncio.CancelledError:
-            current_state.runtime_status = "complete"
-            current_state.status = "complete"
-            current_state.event_log.append("Stream cancelled by client")
-            await store.put(current_state)
-            logger.info("SIM_STREAM_CANCELLED simulation_id=%s", simulation_id)
-            yield f"data: {json.dumps({'type': 'cancelled', 'message': 'Stream cancelled by client'})}\n\n"
+            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
         except Exception as exc:
-            logger.exception("SIM_STREAM_ERR simulation_id=%s error=%s", simulation_id, exc)
+            logger.exception("V2_SIM_STREAM_ERR simulation_id=%s", simulation_id)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            if not already_complete:
+                entry["status"] = "complete"
+                await _update_v2_status(simulation_id, "complete")
 
     return StreamingResponse(
-        _generate(),
+        event_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -681,28 +429,85 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
     )
 
 
-@app.post("/simulations/{simulation_id}/postmortem", response_model=Postmortem)
-async def create_postmortem(simulation_id: str) -> Postmortem:
-    state = await _get_state_or_404(simulation_id)
-
-    raw, mocked, _meta = await openrouter_completion(
-        _postmortem_messages(state),
-        temperature=0.3,
-        simulation_id=simulation_id,
-    )
+@app.get("/simulations/{simulation_id}")
+async def get_simulation_v2(simulation_id: str) -> dict:
+    entry = _v2_simulations.get(simulation_id)
+    if entry is not None:
+        return {"config": entry["config"], "status": entry["status"]}
+    db = get_database()
     try:
-        postmortem = _postmortem_from_payload(simulation_id, parse_json_object(raw), mocked)
-    except (json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=f"Postmortem parsing failed: {exc}")
+        row = await db.get_v2_simulation(simulation_id)
+        if row is not None:
+            return row
+    except Exception:
+        pass
+    raise HTTPException(status_code=404, detail="Simulation not found")
 
-    # Enrich with Neo4j graph analytics (fire-and-forget safe — never raises)
-    if neo4j_enabled():
-        try:
-            driver = get_driver()
-            queries = GraphQueries(driver)
-            postmortem.graph_analytics = queries.build_graph_analytics(simulation_id)
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).warning("Graph analytics enrichment failed: %s", exc)
 
-    return postmortem
+@app.post("/simulations/{simulation_id}/postmortem")
+async def postmortem_v2(simulation_id: str) -> dict:
+    entry = _v2_simulations.get(simulation_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    db = get_database()
+    try:
+        turns = await db.get_v2_turns(simulation_id)
+    except Exception:
+        turns = []
+
+    config = entry["config"]
+    stakeholders = config.get("stakeholders", [])
+    subject = config.get("subject", {})
+
+    speaker_turns: dict[str, int] = {}
+    stance_counts: dict[str, int] = {}
+    for t in turns:
+        speaker = t.get("speaker", t.get("agent_name", "unknown"))
+        speaker_turns[speaker] = speaker_turns.get(speaker, 0) + 1
+        stance = t.get("stance", "neutral")
+        stance_counts[stance] = stance_counts.get(stance, 0) + 1
+
+    leaderboard = [
+        {"name": s.get("name", ""), "stance": s.get("stance", ""), "turns": speaker_turns.get(s.get("name", ""), 0)}
+        for s in stakeholders
+    ]
+    leaderboard.sort(key=lambda x: x["turns"], reverse=True)
+
+    return {
+        "simulation_id": simulation_id,
+        "subject": subject.get("name", ""),
+        "total_turns": len(turns),
+        "stakeholder_count": len(stakeholders),
+        "speaker_turns": speaker_turns,
+        "stances": stance_counts,
+        "leaderboard": leaderboard,
+        "voltage": config.get("voltage", 50),
+        "status": entry["status"],
+    }
+
+
+@app.post("/simulations/{simulation_id}/inject")
+async def inject_v2_turn(simulation_id: str, payload: dict) -> dict:
+    from app.runtime.space import SharedSpace
+
+    entry = _v2_simulations.get(simulation_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    speaker_id = payload.get("stakeholder_id", "")
+    content = payload.get("content", "")
+    if not speaker_id or not content:
+        raise HTTPException(status_code=422, detail="stakeholder_id and content required")
+
+    config = SimulationV2Config(**entry["config"])
+    stakeholder = next((s for s in config.stakeholders if s.id == speaker_id), None)
+    if not stakeholder:
+        raise HTTPException(status_code=422, detail=f"Stakeholder {speaker_id} not found")
+
+    space = SharedSpace(config)
+    turn = await space.inject_turn(stakeholder.name, content)
+    await _save_v2_turn(simulation_id, turn.get("turn_index", 0), json.dumps(turn))
+    return {"status": "ok", "turn": turn}
+
+

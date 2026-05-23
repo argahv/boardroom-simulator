@@ -34,6 +34,11 @@ export default function PersonasPage() {
     tag: "",
     incentive_tuning: 50,
     hidden_agenda: "",
+    stance: "neutral" as string,
+    aggressiveness: 50,
+    empathy: 50,
+    stubbornness: 50,
+    verbosity: 50,
   });
 
   const loadPersonas = async () => {
@@ -80,12 +85,8 @@ export default function PersonasPage() {
   const openCreateModal = () => {
     setEditingPersona(null);
     setFormData({
-      name: "",
-      role: "",
-      focus: "",
-      tag: "",
-      incentive_tuning: 50,
-      hidden_agenda: "",
+      name: "", role: "", focus: "", tag: "", incentive_tuning: 50, hidden_agenda: "",
+      stance: "neutral", aggressiveness: 50, empathy: 50, stubbornness: 50, verbosity: 50,
     });
     setShowModal(true);
   };
@@ -93,12 +94,9 @@ export default function PersonasPage() {
   const openEditModal = (persona: Stakeholder) => {
     setEditingPersona(persona);
     setFormData({
-      name: persona.name,
-      role: persona.role,
-      focus: persona.focus,
-      tag: persona.tag || "",
-      incentive_tuning: persona.incentive_tuning,
-      hidden_agenda: persona.hidden_agenda,
+      name: persona.name, role: persona.role, focus: persona.focus, tag: persona.tag || "",
+      incentive_tuning: persona.incentive_tuning, hidden_agenda: persona.hidden_agenda,
+      stance: "neutral", aggressiveness: 50, empathy: 50, stubbornness: 50, verbosity: 50,
     });
     setShowModal(true);
   };
@@ -315,6 +313,29 @@ export default function PersonasPage() {
                   className="accent-primary"
                 />
               </label>
+
+              <div className="grid gap-2">
+                <span className="text-sm font-semibold text-muted">Stance</span>
+                <div className="flex gap-1.5 flex-wrap">
+                  {["champion","detractor","neutral","moderator","wildcard"].map((s) => (
+                    <button key={s} type="button" onClick={() => setFormData({ ...formData, stance: s })}
+                      className={`rounded-full px-3 py-1 text-xs capitalize transition font-medium ${
+                        formData.stance === s ? "bg-primary text-on-dark" : "bg-white/50 text-muted hover:text-ink border border-ink/10"
+                      }`}>{s}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                {(["aggressiveness","empathy","stubbornness","verbosity"] as const).map((trait) => (
+                  <label key={trait} className="grid gap-1">
+                    <span className="text-xs text-muted">{trait}: {formData[trait]}</span>
+                    <input type="range" min="0" max="100" value={formData[trait]}
+                      onChange={(e) => setFormData({ ...formData, [trait]: Number(e.target.value) })}
+                      className="accent-primary h-1" />
+                  </label>
+                ))}
+              </div>
 
               <label className="grid gap-2">
                 <span className="text-sm font-semibold text-muted">Hidden Agenda (optional)</span>

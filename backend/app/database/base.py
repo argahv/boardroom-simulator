@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from app.models import ScenarioTemplate, SimulationState, Stakeholder
+from ..models import ScenarioTemplate, SimulationState, Stakeholder
 
 
 class DatabaseBackend(ABC):
