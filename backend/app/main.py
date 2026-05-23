@@ -146,6 +146,17 @@ class UpdateStakeholderRequest(BaseModel):
     tool_profile: str | None = None
 
 
+class HumanTurnRequest(BaseModel):
+    stakeholder_id: str
+    content: str = Field(..., min_length=1)
+    action_type: str = "statement"
+    directed_at: str | None = None
+    coalition_with: str | None = None
+
+class ResumeRequest(BaseModel):
+    pass  # no payload needed
+
+
 async def _get_state_or_404(simulation_id: str) -> SimulationState:
     state = await store.get(simulation_id)
     if state is None:
@@ -407,13 +418,16 @@ async def create_simulation(payload: SimulationCreate) -> SimulationState:
         simulation_id=simulation_id,
         config=payload,
         mocked=False,
+        player_mode=payload.player_mode,
+        runtime_status="idle",
     )
     saved = await store.put(state)
     logger.info(
-        "SIM_CREATE simulation_id=%s stakeholders=%d voltage=%d",
+        "SIM_CREATE simulation_id=%s stakeholders=%d voltage=%d player_mode=%s",
         simulation_id,
         len(payload.stakeholders),
         payload.voltage,
+        payload.player_mode,
     )
     return saved
 
@@ -426,6 +440,65 @@ async def list_simulations() -> list[SimulationState]:
 @app.get("/simulations/{simulation_id}", response_model=SimulationState)
 async def get_simulation(simulation_id: str) -> SimulationState:
     return await _get_state_or_404(simulation_id)
+
+
+@app.post("/simulations/{simulation_id}/inject", response_model=SimulationState)
+async def inject_human_turn(simulation_id: str, payload: HumanTurnRequest, request: Request) -> SimulationState:
+    state = await _get_state_or_404(simulation_id)
+
+    if state.player_mode and state.runtime_status != "awaiting_human":
+        raise HTTPException(status_code=409, detail=f"Cannot inject: state is {state.runtime_status}, expected awaiting_human")
+
+    idempotency_key = request.headers.get("X-Idempotency-Key")
+    if idempotency_key and idempotency_key in state.inject_idempotency_keys:
+        return state
+
+    stakeholder = next((s for s in state.config.stakeholders if s.id == payload.stakeholder_id), None)
+    if stakeholder is None:
+        raise HTTPException(status_code=400, detail="stakeholder_id not found in simulation")
+
+    turn = {
+        "turn_index": len(state.turns),
+        "stakeholder_id": stakeholder.id,
+        "stakeholder_name": stakeholder.name,
+        "role": stakeholder.role,
+        "content": payload.content,
+        "internal_reasoning": "[HUMAN_INJECTED]",
+        "action_type": payload.action_type,
+        "directed_at": payload.directed_at,
+        "coalition_with": payload.coalition_with,
+        "emotional_tone": "neutral",
+        "interrupt_bid": 0.0,
+        "position_delta": {},
+        "leverage_delta": {},
+        "is_human": True,
+    }
+
+    from .models import Turn
+    state.turns.append(Turn(**turn))
+    state.active_speaker_id = stakeholder.id
+    state.event_log.append(f"Human turn injected: {stakeholder.name}")
+    state.state_version += 1
+    if idempotency_key:
+        state.inject_idempotency_keys.append(idempotency_key)
+
+    if state.player_mode:
+        state.runtime_status = "ai_turn"
+
+    await store.put(state)
+    return state
+
+@app.post("/simulations/{simulation_id}/resume", response_model=SimulationState)
+async def resume_simulation(simulation_id: str) -> SimulationState:
+    state = await _get_state_or_404(simulation_id)
+
+    if state.runtime_status != "awaiting_human":
+        raise HTTPException(status_code=409, detail=f"Cannot resume: state is {state.runtime_status}, expected awaiting_human")
+
+    state.runtime_status = "ai_turn"
+    state.state_version += 1
+    await store.put(state)
+    return state
 
 
 @app.get("/simulations/{simulation_id}/checkpoint")
@@ -495,6 +568,9 @@ async def _run_simulation_turns(
     last_heat_signature = None
 
     while len(state.turns) < limit:
+        if state.player_mode and state.runtime_status == "awaiting_human":
+            break
+
         prev_count = len(state.turns)
         state = await advance_turn(state)
         await store.put(state)
@@ -520,6 +596,12 @@ async def _run_simulation_turns(
             logger.info("SIM_STREAM_EARLY_STOP simulation_id=%s reason=stagnation", simulation_id)
             break
 
+        if state.player_mode:
+            state.runtime_status = "awaiting_human"
+            state.state_version += 1
+            await store.put(state)
+            break
+
     return state
 
 
@@ -532,6 +614,8 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
     async def _generate():
         current_state = state.model_copy(deep=True)
         current_state.status = "running"
+        current_state.runtime_status = "ai_turn"
+        current_state.state_version += 1
         prior_turn_count = len(current_state.turns)
 
         try:
@@ -556,12 +640,17 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
                         "turn_count": len(current_state.turns),
                         "trust_matrix": current_state.trust_matrix,
                         "leverage_scores": current_state.leverage_scores,
+                        "leaderboard": current_state.leaderboard,
+                        "winning_context": current_state.winning_context,
                     },
                 }
                 yield f"data: {json.dumps(event)}\n\n"
                 await asyncio.sleep(0)
 
+            if current_state.runtime_status != "awaiting_human":
+                current_state.runtime_status = "complete"
             current_state.status = "complete"
+            current_state.state_version += 1
             await store.put(current_state)
             logger.info(
                 "SIM_STREAM_DONE simulation_id=%s turns=%d",
@@ -572,6 +661,7 @@ async def stream_simulation(simulation_id: str, max_turns: int = 20) -> Streamin
             yield f"data: {json.dumps(done_event)}\n\n"
 
         except asyncio.CancelledError:
+            current_state.runtime_status = "complete"
             current_state.status = "complete"
             current_state.event_log.append("Stream cancelled by client")
             await store.put(current_state)

@@ -50,6 +50,7 @@ export type Turn = {
   coalition_with?: string | null;
   leverage_gained?: boolean;
   emotional_tone?: string | null;
+  is_human?: boolean;
 };
 
 export type HeatmapState = {
@@ -78,6 +79,15 @@ export type ConflictPoint = {
   type: "intro" | "clash" | "closure" | "neutral";
 };
 
+export type LeaderboardEntry = {
+  agent_id: string;
+  name: string;
+  score: number;
+  delta: number;
+  delta_reason: string;
+  rank: number;
+};
+
 export type SimulationState = {
   simulation_id: string;
   config: SimulationCreate;
@@ -93,6 +103,11 @@ export type SimulationState = {
   leverage_shifts: LeverageShift[];
   deadlock_risk_score: number;
   current_agenda_item: number;
+  runtime_status?: "idle" | "ai_turn" | "awaiting_human" | "complete";
+  player_mode?: boolean;
+  state_version?: number;
+  leaderboard?: LeaderboardEntry[];
+  winning_context?: string;
 };
 
 export type StrategyCard = {
@@ -142,6 +157,11 @@ export type StreamTurnEvent = {
     event_log: string[];
     sentiment: number[];
     turn_count: number;
+    leaderboard?: LeaderboardEntry[];
+    winning_context?: string;
+    trust_matrix?: Record<string, Record<string, number>>;
+    leverage_scores?: Record<string, number>;
+    runtime_status?: "idle" | "ai_turn" | "awaiting_human" | "complete";
   };
 };
 

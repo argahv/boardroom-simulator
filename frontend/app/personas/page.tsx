@@ -36,14 +36,6 @@ export default function PersonasPage() {
     hidden_agenda: "",
   });
 
-  useEffect(() => {
-    loadPersonas();
-  }, []);
-
-  useEffect(() => {
-    filterPersonas();
-  }, [personas, searchQuery, archetypeFilter]);
-
   const loadPersonas = async () => {
     setLoading(true);
     setError("");
@@ -76,6 +68,14 @@ export default function PersonasPage() {
 
     setFilteredPersonas(filtered);
   };
+
+  useEffect(() => {
+    loadPersonas();
+  }, []);
+
+  useEffect(() => {
+    filterPersonas();
+  }, [personas, searchQuery, archetypeFilter]);
 
   const openCreateModal = () => {
     setEditingPersona(null);

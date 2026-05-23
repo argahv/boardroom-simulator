@@ -8,6 +8,7 @@ import {
   fetchJob,
   fetchPostmortem,
   fetchSimulation,
+  injectHumanTurn,
   runSimulationAsync,
   streamSimulation,
 } from "@/lib/api";
@@ -87,6 +88,11 @@ export default function WarRoomPage({ params }: PageProps) {
   const [jobStatus, setJobStatus] = useState<
     "queued" | "running" | "succeeded" | "failed" | null
   >(null);
+  const [humanStakeholderId, setHumanStakeholderId] = useState("");
+  const [humanContent, setHumanContent] = useState("");
+  const [leaderboard, setLeaderboard] = useState<SimulationState["leaderboard"]>([]);
+  const [winningContext, setWinningContext] = useState("");
+  const [runtimeStatus, setRuntimeStatus] = useState<string>("idle");
 
   const transcriptRef = useRef<HTMLDivElement>(null);
   const streamControllerRef = useRef<AbortController | null>(null);
@@ -106,6 +112,9 @@ export default function WarRoomPage({ params }: PageProps) {
         setConflictTimeline(data.conflict_timeline ?? []);
         setStatus(data.status);
         setDeadlockScore(data.deadlock_risk_score ?? 0);
+        setLeaderboard(data.leaderboard ?? []);
+        setWinningContext(data.winning_context ?? "");
+        setRuntimeStatus(data.runtime_status ?? "idle");
       })
       .catch((err: unknown) => {
         if (alive) setError(err instanceof Error ? err.message : "Unable to load simulation.");
@@ -141,6 +150,11 @@ export default function WarRoomPage({ params }: PageProps) {
           setCoalitions(event.state_summary.coalitions);
           setLeverageShifts(event.state_summary.leverage_shifts);
           setDeadlockScore(event.state_summary.deadlock_risk_score);
+          setLeaderboard(event.state_summary.leaderboard ?? []);
+          setWinningContext(event.state_summary.winning_context ?? "");
+          if (event.state_summary.runtime_status) {
+            setRuntimeStatus(event.state_summary.runtime_status);
+          }
           const t = event.turn;
           setConflictTimeline((prev) => [
             ...prev,
@@ -157,6 +171,9 @@ export default function WarRoomPage({ params }: PageProps) {
           setLeverageShifts(s.leverage_shifts ?? []);
           setConflictTimeline(s.conflict_timeline ?? []);
           setDeadlockScore(s.deadlock_risk_score ?? 0);
+          setLeaderboard(s.leaderboard ?? []);
+          setWinningContext(s.winning_context ?? "");
+          setRuntimeStatus(s.runtime_status ?? "idle");
           setStatus("complete");
         } else if (event.type === "error") {
           setError(event.message);
@@ -175,6 +192,23 @@ export default function WarRoomPage({ params }: PageProps) {
   const stopStream = () => {
     streamControllerRef.current?.abort();
     setStatus("idle");
+  };
+
+  const submitHumanTurn = async () => {
+    if (!humanContent.trim() || !humanStakeholderId) return;
+    setError("");
+    try {
+      const updated = await injectHumanTurn(id, {
+        stakeholder_id: humanStakeholderId,
+        content: humanContent.trim(),
+        action_type: "statement",
+      });
+      setTurns(updated.turns);
+      setEventLog(updated.event_log);
+      setHumanContent("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to inject turn.");
+    }
   };
 
   const loadPostmortem = async () => {
@@ -274,6 +308,16 @@ export default function WarRoomPage({ params }: PageProps) {
                 status === "running" ? "bg-primary animate-pulse" : "bg-primary/40"
               }`}
             />
+            {simulation?.player_mode && (
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+                runtimeStatus === "awaiting_human"
+                  ? "bg-accent-amber/20 border-accent-amber/60 text-accent-amber"
+                  : "bg-primary/20 border-primary/40 text-primary"
+              }`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${runtimeStatus === "awaiting_human" ? "bg-accent-amber animate-pulse" : "bg-primary"}`} />
+                {runtimeStatus === "awaiting_human" ? "Awaiting Your Turn" : "AI Turn"}
+              </span>
+            )}
           </div>
           <h1 className="font-serif-title text-[56px] font-bold text-ink leading-tight mb-3">
             {simulation?.config.background?.slice(0, 55) ?? "Negotiation"}
@@ -523,6 +567,48 @@ export default function WarRoomPage({ params }: PageProps) {
               </div>
             )}
 
+            {leaderboard && leaderboard.length > 0 && (
+              <div className="bg-surface-card rounded-lg border border-hairline p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-body-strong">Who's Winning</h3>
+                </div>
+                {winningContext && (
+                  <p className="text-xs text-muted italic mb-3 leading-relaxed">{winningContext}</p>
+                )}
+                <div className="space-y-2">
+                  {leaderboard.map((entry) => (
+                    <div key={entry.agent_id} className="flex items-center gap-2">
+                      <span className={`text-[10px] font-bold w-4 shrink-0 ${entry.rank === 1 ? "text-accent-amber" : "text-muted"}`}>
+                        #{entry.rank}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-semibold text-body-strong truncate">{entry.name}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <span className="font-code text-xs font-bold text-body-strong">{entry.score.toFixed(1)}</span>
+                            {entry.delta !== 0 && (
+                              <span className={`text-[10px] font-bold ${entry.delta > 0 ? "text-secondary" : "text-error"}`}>
+                                {entry.delta > 0 ? "▲" : "▼"}{Math.abs(entry.delta).toFixed(1)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="h-1 rounded-full bg-hairline mt-1 overflow-hidden">
+                          <div
+                            className={`h-1 rounded-full transition-all duration-500 ${entry.rank === 1 ? "bg-accent-amber" : "bg-primary/50"}`}
+                            style={{ width: `${Math.min(100, entry.score)}%` }}
+                          />
+                        </div>
+                        {entry.delta_reason && entry.delta_reason !== "stable" && (
+                          <p className="text-[10px] text-muted mt-0.5 truncate">{entry.delta_reason}</p>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {leverageShifts.length > 0 && (
               <div className="bg-surface-card rounded-lg border border-hairline p-4">
                 <h3 className="text-xs font-bold uppercase tracking-[0.18em] text-body-strong mb-3">Leverage Shifts</h3>
@@ -579,6 +665,40 @@ export default function WarRoomPage({ params }: PageProps) {
         </div>
 
         {postmortem && <PostmortemPanel postmortem={postmortem} />}
+
+        <div className="mx-8 mb-4 rounded-lg bg-surface-card border border-hairline p-4">
+          <p className="text-xs font-semibold uppercase tracking-wider text-body-strong mb-2">Player Mode</p>
+          {(!simulation?.player_mode || runtimeStatus === "awaiting_human") ? (
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              <select
+                value={humanStakeholderId}
+                onChange={(e) => setHumanStakeholderId(e.target.value)}
+                className="md:col-span-1 rounded-md border border-hairline bg-white px-3 py-2 text-sm"
+              >
+                <option value="">Select stakeholder</option>
+                {stakeholders.map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+              <input
+                value={humanContent}
+                onChange={(e) => setHumanContent(e.target.value)}
+                placeholder="Type your turn..."
+                className="md:col-span-2 rounded-md border border-hairline bg-white px-3 py-2 text-sm"
+              />
+              <button
+                onClick={submitHumanTurn}
+                className="md:col-span-1 rounded-md bg-primary hover:bg-primary-active text-on-dark px-3 py-2 text-sm font-semibold"
+              >
+                Inject Turn
+              </button>
+            </div>
+          ) : (
+            <div className="rounded-md border border-hairline bg-hairline/20 px-3 py-2 text-sm text-muted">
+              Waiting for AI...
+            </div>
+          )}
+        </div>
 
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-full bg-ink/90 backdrop-blur-md border border-white/10 shadow-2xl">
           {status === "running" ? (

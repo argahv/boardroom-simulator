@@ -84,6 +84,14 @@ class SQLiteBackend(DatabaseBackend):
             cursor.execute("ALTER TABLE stakeholders ADD COLUMN tool_profile TEXT NOT NULL DEFAULT 'none'")
             self.conn.commit()
 
+        cursor.execute("PRAGMA table_info(simulations)")
+        sim_cols = {row["name"] for row in cursor.fetchall()}
+        if "runtime_status" not in sim_cols:
+            cursor.execute("ALTER TABLE simulations ADD COLUMN runtime_status TEXT NOT NULL DEFAULT 'idle'")
+        if "state_version" not in sim_cols:
+            cursor.execute("ALTER TABLE simulations ADD COLUMN state_version INTEGER NOT NULL DEFAULT 0")
+        self.conn.commit()
+
     # ------------------------------------------------------------------
     # Simulations
     # ------------------------------------------------------------------

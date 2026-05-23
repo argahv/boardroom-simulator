@@ -27,7 +27,11 @@ export function TurnDisplay({ turn, isActive }: TurnDisplayProps) {
   return (
     <article
       className={`rounded-xl border p-4 transition-all ${
-        isActive ? "border-primary bg-canvas/8" : "border-canvas/8 bg-canvas/4"
+        turn.is_human
+          ? "border-l-4 border-accent-amber"
+          : isActive
+            ? "border-primary bg-canvas/8"
+            : "border-canvas/8 bg-canvas/4"
       }`}
     >
       <div className="mb-2 flex flex-wrap items-center gap-2">
@@ -38,6 +42,11 @@ export function TurnDisplay({ turn, isActive }: TurnDisplayProps) {
         )}
         <p className="font-semibold text-sm">{turn.stakeholder_name}</p>
         <span className="text-xs text-canvas/45">{turn.role}</span>
+        {turn.is_human && (
+          <span className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-accent-amber/20 text-accent-amber border border-accent-amber/50">
+            YOU
+          </span>
+        )}
         <span
           className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider min-h-touch inline-flex items-center ${
             ACTION_COLORS[turn.action_type] ?? "bg-canvas/10 text-canvas/70"

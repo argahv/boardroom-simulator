@@ -16,7 +16,7 @@ from app.tools import (
     assess_tech_stack, check_integration,
     TOOL_REGISTRY
 )
-from app.models import Stakeholder, ActionType
+from app.models import Stakeholder, ActionType, ObjectiveStore
 
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,10 @@ class AgentState(TypedDict, total=False):
     agent_memories: Dict[str, Any]
     heatmap: Dict[str, int]
     event_log: List[str]
+    _trust_matrix: Dict[str, Dict[str, int]]
+    _leverage_scores: Dict[str, int]
+    _agent_objectives: Dict[str, List[str]]
+    objective_stores: Dict[str, Any]
 
 
 def convert_tools_to_langchain(agent_type: str) -> List:
@@ -113,23 +117,55 @@ class BoardroomAgent:
         agent_id = self.stakeholder.id
         memories = state.get("agent_memories", {})
 
-        # Own semantic memory: what I've said on similar topics before
-        own_ctx = memories.get(agent_id, [])
-        own_ctx_text = (
-            "\n".join(f"  [{i+1}] {m['content'][:200]}" for i, m in enumerate(own_ctx))
-            if own_ctx else "  (none yet)"
+        recent = memories.get("recent_window", [])
+        recent_text = "\n".join(
+            f"  {t.get('stakeholder_name','?')}: {t.get('content','')[:150]}"
+            for t in recent[-5:]
+        ) or "  (none yet)"
+
+        commitments = memories.get("commitment_hits", [])
+        commit_text = "\n".join(f"  [{i+1}] {m['content'][:180]}" for i,m in enumerate(commitments)) or "  (none yet)"
+
+        contradictions = memories.get("contradiction_hits", [])
+        contra_text = "\n".join(f"  [{i+1}] {m['content'][:180]}" for i,m in enumerate(contradictions)) or "  (none found)"
+
+        opponent_hits = memories.get("opponent_hits", [])
+        opp_text = "\n".join(
+            f"  [{i+1}] {m['metadata'].get('stakeholder_name','?')}: {m['content'][:180]}"
+            for i,m in enumerate(opponent_hits)
+        ) or "  (none yet)"
+
+        dyn_objectives = state.get("_agent_objectives", {}).get(agent_id, [])
+        dyn_objectives_text = (
+            "\n".join(f"- {o}" for o in dyn_objectives[-8:]) if dyn_objectives else "  (none yet)"
         )
 
-        # Cross-agent memory: what OTHERS said on this topic
-        cross_ctx = memories.get("_cross_agent", [])
-        cross_ctx_text = (
-            "\n".join(
-                f"  [{i+1}] {m['metadata'].get('stakeholder_name','?')} "
-                f"({m['metadata'].get('role','?')}): {m['content'][:200]}"
-                for i, m in enumerate(cross_ctx)
-            )
-            if cross_ctx else "  (none yet)"
-        )
+        obj_stores = state.get("objective_stores", {})
+        store_data = obj_stores.get(agent_id, {})
+        if store_data:
+            obj_store = ObjectiveStore(**store_data)
+            top_objs = obj_store.top(5)
+            weighted_obj_text = "\n".join(
+                f"  [P{o.priority:.1f}] {o.text}"
+                for o in top_objs
+            ) or "  (none yet)"
+        else:
+            weighted_obj_text = "  (none yet)"
+
+        trust_matrix = state.get("_trust_matrix", {})
+        trust_from_others = []
+        for other_id, edges in trust_matrix.items():
+            if other_id == agent_id:
+                continue
+            if agent_id in edges:
+                trust_from_others.append((other_id, edges[agent_id]))
+        trust_from_others.sort(key=lambda x: x[1])
+        trust_text = ", ".join(f"{oid}:{score}" for oid, score in trust_from_others[:5]) if trust_from_others else "n/a"
+
+        leverage_scores = state.get("_leverage_scores", {})
+        my_leverage = leverage_scores.get(agent_id, self.stakeholder.incentive_tuning)
+        top_leverage = sorted(leverage_scores.items(), key=lambda kv: kv[1], reverse=True)[:3]
+        top_lev_text = ", ".join(f"{aid}:{score}" for aid, score in top_leverage) if top_leverage else "n/a"
 
         return f"""You are {self.stakeholder.name}, {self.stakeholder.role} in a high-stakes boardroom negotiation.
 
@@ -145,8 +181,17 @@ Background: {state.get('background', '')}
 Primary Goal: {state.get('primary_goal', '')}
 Current Voltage (tension level): {state.get('voltage', 50)}/100
 
-**Your Memory (positions you've taken on similar topics):**
-{own_ctx_text}
+**Recent conversation (last 5 turns):**
+{recent_text}
+
+**Your prior commitments on this topic:**
+{commit_text}
+
+**Claims you could contradict or exploit:**
+{contra_text}
+
+**What opponents said about this topic:**
+{opp_text}
 
 **Your Concessions So Far:**
 {chr(10).join(f"- {conc}" for conc in self.concessions) if self.concessions else "  No concessions made"}
@@ -154,8 +199,16 @@ Current Voltage (tension level): {state.get('voltage', 50)}/100
 **Your Red Lines:**
 {chr(10).join(f"- {red}" for red in self.red_lines) if self.red_lines else "  No hard boundaries stated"}
 
-**What Others Have Said On This Topic:**
-{cross_ctx_text}
+**Dynamic Objective Shifts (update your strategy based on these):**
+{dyn_objectives_text}
+
+**Ranked Strategic Objectives (act on highest priority first):**
+{weighted_obj_text}
+
+**Current Negotiation Dynamics:**
+- Your leverage score: {my_leverage}/100
+- Top leverage holders: {top_lev_text}
+- Trust toward you (lower means more adversarial): {trust_text}
 
 **Available Tools:**
 {chr(10).join(f"- {tool.name}: {tool.description}" for tool in self.tools) if self.tools else "No tools available"}
@@ -278,7 +331,19 @@ It's your turn to speak. Consider:
 - Who are you primarily addressing?
 - What action type best describes your move?
 
-Respond with your statement."""
+CRITICAL: You MUST respond with ONLY a valid JSON object. No prose, no markdown, no explanation.
+Required JSON schema:
+{{
+  "content": "<your spoken statement>",
+  "internal_reasoning": "<private reasoning>",
+  "action_type": "<one of: statement|question|challenge|compromise|coalition_signal|interrupt|escalate>",
+  "directed_at": "<stakeholder_id or null>",
+  "coalition_with": "<stakeholder_id or null>",
+  "emotional_tone": "<one of: tense|neutral|heated|conciliatory>",
+  "interrupt_bid": <float 0.0-1.0>,
+  "position_delta": {{}},
+  "leverage_delta": {{}}
+}}"""
 
         messages = [
             SystemMessage(content=system_prompt),
@@ -321,7 +386,7 @@ Respond with your statement."""
         # ── Phase 2: primary structured-output call ───────────────────────
         response: AgentResponse | None = None
         last_exc: Exception | None = None
-        last_raw: str = ""
+        last_raw: str = ""       # always the model's raw TEXT, never an exception string
 
         try:
             raw_response = self.llm.invoke(messages)
@@ -335,7 +400,7 @@ Respond with your statement."""
                 if extracted:
                     response = AgentResponse.model_validate(extracted)
                 else:
-                    # Treat as prose content directly
+                    # Treat as prose content directly (model returned prose, not JSON)
                     response = AgentResponse(
                         content=last_raw[:1500],
                         internal_reasoning="",
@@ -344,15 +409,22 @@ Respond with your statement."""
                     )
         except Exception as exc:
             last_exc = exc
-            last_raw = str(exc)
+            # Capture the model's actual prose by falling back to plain llm_base call.
+            # with_structured_output raised on parse, but we want the raw text for retry.
+            try:
+                plain = self.llm_base.invoke(messages)
+                last_raw = plain.content if hasattr(plain, "content") else str(plain)
+            except Exception:
+                last_raw = ""   # give up on raw capture; retry will re-call model
             logger.warning(
-                "STRUCTURED_OUT_FAIL_1 stakeholder=%s turn=%d err=%s",
+                "STRUCTURED_OUT_FAIL_1 stakeholder=%s turn=%d err=%s raw_preview=%r",
                 self.stakeholder.id,
                 turn_index,
                 type(exc).__name__,
+                last_raw[:120],
             )
 
-        # ── Phase 3: 1 targeted retry with error context ──────────────────
+        # ── Phase 3: 1 targeted retry with JSON-repair prompt ─────────────
         if response is None:
             repair_prompt = (
                 "Your previous response could not be parsed as valid JSON. "

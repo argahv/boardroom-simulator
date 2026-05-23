@@ -33,10 +33,11 @@ from langgraph.checkpoint.memory import MemorySaver
 import asyncio
 import random
 import math
+import hashlib
 
 from app.agents import BoardroomAgent, AgentState, create_agent_for_stakeholder
 from app.memory import NegotiationMemory, get_memory
-from app.models import Stakeholder
+from app.models import Stakeholder, Objective, ObjectiveStore
 from app import config
 from app.graph.driver import get_driver, neo4j_enabled
 from app.graph.writer import GraphWriter
@@ -95,6 +96,10 @@ class WorkflowState(TypedDict):
     # interrupt sentinel — set by pre_interrupt_check node, read by interrupt_check edge
     _interrupt_bidder: Any                       # Optional[str]
     _interrupt_bid: float
+
+    # leaderboard and winning context
+    leaderboard: List[Dict[str, Any]]
+    winning_context: str
 
 
 # ---------------------------------------------------------------------------
@@ -196,17 +201,13 @@ async def generate_turn(state: WorkflowState) -> WorkflowState:
 
     memory = _get_sim_memory(state["simulation_id"])
 
-    own_context = memory.retrieve_relevant_context(
+    last_turn_content = state["history"][-1].get("content", "") if state["history"] else ""
+    memory_bundle = memory.retrieve_memory_bundle(
         simulation_id=state["simulation_id"],
         agent_id=agent_id,
-        query=f"My position on: {state['primary_goal']}",
-        n_results=3,
-    )
-    cross_context = memory.retrieve_cross_agent_context(
-        simulation_id=state["simulation_id"],
-        query=f"Objections and positions on: {state['primary_goal']}",
-        exclude_agent_id=agent_id,
-        n_results=3,
+        current_content=last_turn_content,
+        primary_goal=state["primary_goal"],
+        history=state["history"],
     )
 
     agent_state: AgentState = {
@@ -218,16 +219,13 @@ async def generate_turn(state: WorkflowState) -> WorkflowState:
         "voltage": state["voltage"],
         "active_speaker_id": agent_id,
         "history": state["history"],
-        "agent_memories": {
-            agent_id: own_context,
-            "_cross_agent": cross_context,
-        },
+        "agent_memories": memory_bundle,
         "heatmap": state["heatmap"],
         "event_log": state["event_log"],
-        # production context injected into AgentState
         "_trust_matrix": state.get("trust_matrix", {}),
         "_leverage_scores": state.get("leverage_scores", {}),
         "_agent_objectives": state.get("agent_objectives", {}),
+        "objective_stores": state.get("objective_stores", {}),
     }
 
     # Budget preflight + dynamic token control
@@ -484,6 +482,109 @@ def update_dynamics(state: WorkflowState) -> WorkflowState:
             objectives[aid] = objs
 
     state["agent_objectives"] = objectives
+
+    import hashlib
+    
+    turn_idx = state.get("turn_index", 0)
+    obj_stores = state.get("objective_stores", {})
+
+    for agent_id_key in [s["id"] for s in state["stakeholders"]]:
+        if agent_id_key not in obj_stores:
+            obj_stores[agent_id_key] = ObjectiveStore().model_dump()
+
+    store_data = obj_stores.get(speaker_id, {})
+    obj_store = ObjectiveStore(**store_data) if store_data else ObjectiveStore()
+
+    if action == "compromise":
+        for topic, stance in current_turn.get("position_delta", {}).items():
+            obj_id = hashlib.md5(f"conceded_{speaker_id}_{topic}".encode()).hexdigest()[:8]
+            obj_store.add(Objective(
+                id=obj_id,
+                text=f"[CONCEDED] {topic}: {stance}",
+                source="concession",
+                priority=2.0,
+                topic=topic,
+                created_at_turn=turn_idx,
+                last_reinforced_turn=turn_idx,
+            ))
+            for s in state["stakeholders"]:
+                if s["id"] != speaker_id:
+                    opp_store_data = obj_stores.get(s["id"], {})
+                    opp_store = ObjectiveStore(**opp_store_data) if opp_store_data else ObjectiveStore()
+                    opp_id = hashlib.md5(f"opportunity_{s['id']}_{topic}".encode()).hexdigest()[:8]
+                    opp_store.add(Objective(
+                        id=opp_id,
+                        text=f"[OPPORTUNITY] {current_turn.get('stakeholder_name','')} conceded on {topic}",
+                        source="opportunity",
+                        priority=2.5,
+                        topic=topic,
+                        created_at_turn=turn_idx,
+                        last_reinforced_turn=turn_idx,
+                    ))
+                    obj_stores[s["id"]] = opp_store.model_dump()
+
+    if action == "coalition_signal" and coalition_target:
+        for aid in (speaker_id, coalition_target):
+            cs_store_data = obj_stores.get(aid, {})
+            cs_store = ObjectiveStore(**cs_store_data) if cs_store_data else ObjectiveStore()
+            c_id = hashlib.md5(f"coalition_{aid}_{coalition_target if aid == speaker_id else speaker_id}".encode()).hexdigest()[:8]
+            cs_store.add(Objective(
+                id=c_id,
+                text=f"[COALITION] Maintain alignment with {coalition_target if aid == speaker_id else speaker_id}",
+                source="coalition",
+                priority=1.8,
+                created_at_turn=turn_idx,
+                last_reinforced_turn=turn_idx,
+            ))
+            obj_stores[aid] = cs_store.model_dump()
+
+    obj_store.decay(turn_idx)
+    obj_stores[speaker_id] = obj_store.model_dump()
+    state["objective_stores"] = obj_stores
+
+    if action in ("challenge", "escalate", "interrupt"):
+        state["deadlock_risk_score"] = _clamp(state.get("deadlock_risk_score", 0) + 6)
+    elif action in ("compromise", "coalition_signal"):
+        state["deadlock_risk_score"] = _clamp(state.get("deadlock_risk_score", 0) - 8)
+
+    if action == "coalition_signal" and coalition_target:
+        state.setdefault("coalitions", [])
+        pair_exists = any(
+            {c.get("agent_a"), c.get("agent_b")} == {speaker_id, coalition_target}
+            for c in state["coalitions"]
+        )
+        if not pair_exists:
+            state["coalitions"].append({
+                "agent_a": speaker_id,
+                "agent_b": coalition_target,
+                "issue": next(iter(current_turn.get("position_delta", {}) or {"coordination": ""})),
+            })
+
+    from app.scoring import compute_scores, detect_win_context
+
+    prev_scores = {entry.get("agent_id", ""): entry.get("score", 50) for entry in state.get("leaderboard", [])}
+    new_scores = compute_scores(
+        stakeholders=state["stakeholders"],
+        trust_matrix=state.get("trust_matrix", {}),
+        leverage_scores=state.get("leverage_scores", {}),
+        history=state.get("history", []),
+        objective_stores=state.get("objective_stores", {}),
+        coalitions=state.get("coalitions", []),
+        prev_scores=prev_scores,
+    )
+    state["leaderboard"] = [
+        {
+            "agent_id": sc.agent_id,
+            "name": sc.name,
+            "score": sc.score,
+            "delta": sc.delta,
+            "delta_reason": sc.delta_reason,
+            "rank": sc.rank,
+            "dimensions": sc.dimensions,
+        }
+        for sc in new_scores
+    ]
+    state["winning_context"] = detect_win_context(new_scores, state.get("deadlock_risk_score", 0))
 
     # ── Neo4j fire-and-forget write ────────────────────────────────────────
     # Build a minimal sim-like proxy (avoids importing SimulationState to

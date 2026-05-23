@@ -159,6 +159,70 @@ class NegotiationMemory:
         return filtered[:n_results]
 
     # ------------------------------------------------------------------
+    # Read: multi-slice bundle (Phase 2)
+    # ------------------------------------------------------------------
+
+    def retrieve_memory_bundle(
+        self,
+        simulation_id: str,
+        agent_id: str,
+        current_content: str,
+        primary_goal: str,
+        history: list,
+        n_per_slice: int = 3,
+    ) -> dict:
+        """
+        Returns {
+          "recent_window": [...],       # last 5 raw turns (not current)
+          "commitment_hits": [...],     # semantic: agent's own prior commitments
+          "contradiction_hits": [...],  # semantic: claims that contradict current stance
+          "opponent_hits": [...],       # semantic: what opponents said relevant to this turn
+        }
+        """
+        empty = {
+            "recent_window": [],
+            "commitment_hits": [],
+            "contradiction_hits": [],
+            "opponent_hits": [],
+        }
+        try:
+            recent_window = list(history[-5:]) if history else []
+
+            commitment_hits = self.retrieve_relevant_context(
+                simulation_id=simulation_id,
+                agent_id=agent_id,
+                query="commitment position stance: " + current_content,
+                n_results=n_per_slice,
+            )
+
+            contradiction_candidates = self.retrieve_relevant_context(
+                simulation_id=simulation_id,
+                agent_id=agent_id,
+                query="opposing contradicting disagreeing: " + current_content,
+                n_results=n_per_slice,
+            )
+            contradiction_hits = [
+                r for r in contradiction_candidates
+                if r.get("distance") is None or r.get("distance", 0.0) > 0.6
+            ]
+
+            opponent_hits = self.retrieve_cross_agent_context(
+                simulation_id=simulation_id,
+                query=primary_goal + " " + current_content[:200],
+                exclude_agent_id=agent_id,
+                n_results=n_per_slice,
+            )
+
+            return {
+                "recent_window": recent_window,
+                "commitment_hits": commitment_hits,
+                "contradiction_hits": contradiction_hits,
+                "opponent_hits": opponent_hits,
+            }
+        except Exception:
+            return empty
+
+    # ------------------------------------------------------------------
     # Read: timeline
     # ------------------------------------------------------------------
 

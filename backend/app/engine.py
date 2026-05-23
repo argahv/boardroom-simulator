@@ -8,7 +8,7 @@ from langsmith import traceable
 
 from . import config
 from .workflow import create_workflow, WorkflowState, _graph_registry, _checkpointer_registry
-from .models import ConflictPoint, SimulationState, Turn
+from .models import ConflictPoint, SimulationState, Turn, LeaderboardEntry
 from .memory import get_memory
 
 
@@ -94,6 +94,13 @@ def _apply_new_turns(
         state.leverage_scores = final_workflow_state["leverage_scores"]
     if final_workflow_state.get("agent_objectives"):
         state.agent_objectives = final_workflow_state["agent_objectives"]
+    if final_workflow_state.get("leaderboard"):
+        state.leaderboard = [
+            LeaderboardEntry(**entry) if isinstance(entry, dict) else entry
+            for entry in final_workflow_state["leaderboard"]
+        ]
+    if final_workflow_state.get("winning_context"):
+        state.winning_context = final_workflow_state["winning_context"]
 
     # Sync interrupt_type back onto Turn objects where applicable
     for td in new_history:

@@ -117,6 +117,21 @@ export const fetchSimulations = () =>
 export const fetchSimulation = (simulationId: string) =>
   request<SimulationState>(`/simulations/${simulationId}`);
 
+export const injectHumanTurn = (
+  simulationId: string,
+  payload: {
+    stakeholder_id: string;
+    content: string;
+    action_type?: string;
+    directed_at?: string | null;
+    coalition_with?: string | null;
+  }
+) =>
+  request<SimulationState>(`/simulations/${simulationId}/inject`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+
 export const runSimulation = (simulationId: string, maxTurns?: number) =>
   request<SimulationState>(`/simulations/${simulationId}/run`, {
     method: "POST",

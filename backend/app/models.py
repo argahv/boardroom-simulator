@@ -6,11 +6,59 @@ from pydantic import BaseModel, Field
 ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate"]
 ModelTemperature = Literal["stable", "volatile"]
 SimulationStatus = Literal["idle", "running", "complete"]
+RuntimeStatus = Literal["idle", "ai_turn", "awaiting_human", "complete"]
 InterruptType = Literal["cut_off", "reframe", "pile_on", "deflect"]
 
 
 ToolProfile = Literal["financial", "legal", "technical", "comms", "none"]
 
+class Objective(BaseModel):
+    id: str
+    text: str
+    source: Literal["initial","concession","opportunity","coalition","pressure"]
+    priority: float = Field(default=1.0, ge=0.0, le=5.0)
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    topic: str = ""
+    created_at_turn: int = 0
+    last_reinforced_turn: int = 0
+    decay_rate: float = Field(default=0.05, ge=0.0, le=1.0)
+    ttl_turns: int = 50
+    is_active: bool = True
+
+class ObjectiveStore(BaseModel):
+    objectives: list[Objective] = Field(default_factory=list)
+    max_active: int = 8
+
+    def top(self, n: int = 5) -> list[Objective]:
+        active = [o for o in self.objectives if o.is_active]
+        return sorted(active, key=lambda o: o.priority * o.confidence, reverse=True)[:n]
+
+    def add(self, obj: Objective) -> None:
+        existing = next((o for o in self.objectives if o.id == obj.id), None)
+        if existing:
+            existing.priority = min(5.0, existing.priority + 0.5)
+            existing.confidence = min(1.0, existing.confidence + 0.1)
+            existing.last_reinforced_turn = obj.created_at_turn
+        else:
+            self.objectives.append(obj)
+        self._enforce_cap()
+
+    def decay(self, current_turn: int) -> None:
+        for o in self.objectives:
+            if not o.is_active:
+                continue
+            age = current_turn - o.last_reinforced_turn
+            if age > o.ttl_turns:
+                o.is_active = False
+            else:
+                o.priority = max(0.1, o.priority - o.decay_rate)
+
+    def _enforce_cap(self) -> None:
+        active = [o for o in self.objectives if o.is_active]
+        if len(active) > self.max_active:
+            active.sort(key=lambda o: o.priority * o.confidence)
+            for o in active[:len(active) - self.max_active]:
+                o.is_active = False
 
 class Stakeholder(BaseModel):
     id: str
@@ -49,6 +97,7 @@ class SimulationCreate(BaseModel):
     voltage: int = Field(default=50, ge=0, le=100)
     env_flags: EnvFlags = Field(default_factory=EnvFlags)
     model_temperature: ModelTemperature = "stable"
+    player_mode: bool = False
 
 
 class CoalitionSignal(BaseModel):
@@ -75,6 +124,7 @@ class AgentMemory(BaseModel):
 
 
 class Turn(BaseModel):
+    is_human: bool = False
     turn_index: int
     stakeholder_id: str
     stakeholder_name: str
@@ -107,6 +157,14 @@ class ConflictPoint(BaseModel):
     type: Literal["intro", "clash", "closure", "neutral"] = "neutral"
 
 
+class LeaderboardEntry(BaseModel):
+    agent_id: str
+    name: str
+    score: float
+    delta: float
+    delta_reason: str
+    rank: int
+
 class SimulationState(BaseModel):
     simulation_id: str
     config: SimulationCreate
@@ -129,6 +187,15 @@ class SimulationState(BaseModel):
     trust_matrix: dict[str, dict[str, int]] = Field(default_factory=dict)
     leverage_scores: dict[str, int] = Field(default_factory=dict)
     agent_objectives: dict[str, list[str]] = Field(default_factory=dict)
+    objective_stores: dict[str, dict] = Field(default_factory=dict)
+
+    # player-mode runtime state
+    runtime_status: RuntimeStatus = "idle"
+    player_mode: bool = False
+    state_version: int = 0
+    inject_idempotency_keys: list[str] = Field(default_factory=list)
+    leaderboard: list[LeaderboardEntry] = Field(default_factory=list)
+    winning_context: str = ""
 
 
 class StrategyCard(BaseModel):
