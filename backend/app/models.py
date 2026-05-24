@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field
 
-ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate"]
+ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
 ModelTemperature = Literal["stable", "volatile"]
 SimulationStatus = Literal["idle", "running", "complete"]
 RuntimeStatus = Literal["idle", "ai_turn", "awaiting_human", "complete"]
@@ -257,8 +257,24 @@ class JudgeCondition(BaseModel):
     criteria: list[str] = Field(default_factory=list)
 
 
+class ConsensusCondition(BaseModel):
+    """Social-physics-based termination. Detects agreement or deadlock from
+    trust/tension dynamics. Sensitivity maps to internal thresholds."""
+    type: Literal["consensus"] = "consensus"
+    sensitivity: Literal["diplomatic", "balanced", "sensitive"] = "balanced"
+    detection_mode: Literal["both", "agreement_only", "deadlock_only"] = "both"
+    max_turns: int = 30
+
+
+class HybridCondition(BaseModel):
+    """Multiple conditions active — first to trigger wins."""
+    type: Literal["hybrid"] = "hybrid"
+    conditions: list[VoteCondition | ConsensusCondition | JudgeCondition]
+    max_turns: int = 30
+
+
 EndCondition = Annotated[
-    VoteCondition | TimeoutCondition | JudgeCondition,
+    VoteCondition | TimeoutCondition | JudgeCondition | ConsensusCondition | HybridCondition,
     Field(discriminator="type"),
 ]
 
@@ -313,18 +329,137 @@ class TopologyNode(BaseModel):
     parents: list[str] = Field(default_factory=list)
 
 
+class TopicSummary(BaseModel):
+    """An agenda item or topic discussed during the simulation."""
+    topic: str
+    first_raised_turn: int = 0
+    last_discussed_turn: int = 0
+    mention_count: int = 0
+    proposers: list[str] = Field(default_factory=list)
+    positions: dict[str, str] = Field(default_factory=dict)
+    resolved: bool = False
+    resolution: str = ""
+
+
+class KeyMoment(BaseModel):
+    """A significant event in the negotiation arc."""
+    turn: int
+    kind: Literal["proposal", "coalition", "challenge", "compromise",
+                   "vote", "escalation", "walkaway", "judge_ruling",
+                   "turning_point"] = "turning_point"
+    description: str = ""
+    actors: list[str] = Field(default_factory=list)
+    impact: str = ""
+
+
+class StakeholderReport(BaseModel):
+    """Per-stakeholder report card in the postmortem."""
+    agent_id: str
+    name: str
+    role: str = ""
+    stance: str = "neutral"
+    initial_position: str = ""
+    final_position: str = ""
+    position_shifts: int = 0
+    total_turns: int = 0
+    dominant_action: str = "statement"
+    alignment_delta: int = 0
+    leverage_trajectory: str = "stable"
+    key_statements: list[str] = Field(default_factory=list)
+    goals_achieved: list[str] = Field(default_factory=list)
+    goals_unmet: list[str] = Field(default_factory=list)
+
+
+class TVector(BaseModel):
+    turn: int
+    value: float
+
+
+class SocialDynamicsSummary(BaseModel):
+    """Aggregate social physics across the simulation."""
+    trust_arc: list[TVector] = Field(default_factory=list)
+    tension_arc: list[TVector] = Field(default_factory=list)
+    leverage_arc: list[TVector] = Field(default_factory=list)
+    avg_trust: float = 0.0
+    avg_tension: float = 0.0
+    peak_tension: float = 0.0
+    peak_tension_turn: int = 0
+    coalition_count: int = 0
+    deadlock_episodes: int = 0
+    dominant_agent: str = ""
+
+
+class VoteEvent(BaseModel):
+    turn: int = 0
+    agent_id: str = ""
+    position: str = ""
+    rationale: str = ""
+
+
+class JudgeEvent(BaseModel):
+    turn: int = 0
+    verdict: str = ""
+    reasoning: str = ""
+    criteria_evaluations: dict[str, str] = Field(default_factory=dict)
+
+
+class TerminationResult(BaseModel):
+    """Structured outcome from whichever checker triggered termination."""
+    reason: str = "timeout"
+    outcome_type: str = "no_decision"
+    summary: str = ""
+    confidence: float = 0.0
+    total_turns: int = 0
+    vote_breakdown: dict[str, int] = Field(default_factory=dict)
+    agreed_issues: list[dict] = Field(default_factory=list)
+    judge_notes: str = ""
+    walkaway_party: str | None = None
+
+
 class Postmortem(BaseModel):
     simulation_id: str
-    confidence_score: int  # 0..100
-    confidence_trend: int  # +/- delta
-    unanticipated_objections: int
-    unanticipated_note: str
-    consensus_rating: int  # 0..100
-    objection_topology: list[TopologyNode]
-    alignment_deltas: list[AlignmentDelta]
-    strategy_cards: list[StrategyCard]
+
+    # I. Existing fields
+    confidence_score: int = 0
+    confidence_trend: int = 0
+    unanticipated_objections: int = 0
+    unanticipated_note: str = ""
+    consensus_rating: int = 0
+    objection_topology: list[TopologyNode] = Field(default_factory=list)
+    alignment_deltas: list[AlignmentDelta] = Field(default_factory=list)
+    strategy_cards: list[StrategyCard] = Field(default_factory=list)
     mocked: bool = False
-    graph_analytics: Optional["GraphAnalytics"] = None  # enriched when Neo4j is available
+    graph_analytics: Optional["GraphAnalytics"] = None
+
+    # II. Executive Summary
+    summary: str = ""
+    verdict: str = ""
+
+    # III. Conclusion Details
+    end_reason: str = ""
+    termination: TerminationResult = Field(default_factory=TerminationResult)
+
+    # IV. Topics
+    topics: list[TopicSummary] = Field(default_factory=list)
+    topic_agreement_rate: float = 0.0
+
+    # V. Stakeholder Reports
+    stakeholder_reports: list[StakeholderReport] = Field(default_factory=list)
+
+    # VI. Key Moments
+    key_moments: list[KeyMoment] = Field(default_factory=list)
+    narrative_arc: list[str] = Field(default_factory=list)
+
+    # VII. Social Dynamics
+    social_dynamics: SocialDynamicsSummary = Field(default_factory=SocialDynamicsSummary)
+
+    # VIII. Lessons
+    lessons_learned: list[str] = Field(default_factory=list)
+    what_could_have_changed: list[str] = Field(default_factory=list)
+
+    # IX. Vote/Judge events
+    vote_events: list[VoteEvent] = Field(default_factory=list)
+    judge_events: list[JudgeEvent] = Field(default_factory=list)
 
 
 # ── Neo4j Graph Analytics Models ────────────────────────────────────────────

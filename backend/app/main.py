@@ -201,149 +201,7 @@ def _transcript(state: SimulationState, max_turns: int = 30) -> str:
     )
 
 
-def _mock_postmortem(state: SimulationState) -> Postmortem:
-    objections = [turn for turn in state.turns if turn.action_type in ("challenge", "escalate")]
-    avg_sentiment = (
-        sum(state.sentiment) / len(state.sentiment) if state.sentiment else 0.0
-    )
-    consensus = max(0, min(100, int(55 + avg_sentiment * 30 + len(state.turns))))
-    return Postmortem(
-        simulation_id=state.simulation_id,
-        confidence_score=max(0, min(100, consensus - 5)),
-        confidence_trend=int(avg_sentiment * 20),
-        unanticipated_objections=len(objections),
-        unanticipated_note=(
-            "Mock summary: finance and legal pressure created the main negotiation drag. "
-            f"Detected {len(state.coalitions)} coalition(s) and {len(state.leverage_shifts)} leverage shift(s)."
-        ),
-        consensus_rating=consensus,
-        objection_topology=[
-            TopologyNode(id="root", label="Partnership term sheet", kind="root"),
-            TopologyNode(
-                id="commercial-risk",
-                label="Commercial risk and clawbacks",
-                kind="objection",
-                parents=["root"],
-            ),
-            TopologyNode(
-                id="phased-pilot",
-                label="Phased pilot with clearer carve-outs",
-                kind="resolution",
-                parents=["commercial-risk"],
-            ),
-        ],
-        alignment_deltas=[
-            AlignmentDelta(
-                stakeholder_id=s.id,
-                name=s.name,
-                role=s.role,
-                delta=10 if s.tag in {"AGREEABLE", "VISIONARY"} else -5,
-                quote=state.turns[-1].content if state.turns else "No transcript available.",
-            )
-            for s in state.config.stakeholders
-        ],
-        strategy_cards=[
-            StrategyCard(
-                objection="Revenue share and clawback ambiguity",
-                counter="Offer a phased pilot with explicit downside caps and milestone gates.",
-                risk="MEDIUM",
-            ),
-            StrategyCard(
-                objection="Compliance and data ownership uncertainty",
-                counter="Attach a compliance pack with data boundaries and SLA remedies.",
-                risk="HIGH",
-            ),
-        ],
-        mocked=True,
-    )
-
-
-def _postmortem_messages(state: SimulationState) -> list[dict[str, str]]:
-    return [
-        {
-            "role": "system",
-            "content": (
-                "Create a detailed postmortem for a simulated boardroom partnership negotiation. "
-                "Analyze the transcript for real tensions, coalition dynamics, leverage shifts, and unresolved issues. "
-                "Return only valid JSON matching the requested fields."
-            ),
-        },
-        {
-            "role": "user",
-            "content": json.dumps(
-                {
-                    "schema": {
-                        "confidence_score": "integer 0-100",
-                        "confidence_trend": "integer delta, can be negative",
-                        "unanticipated_objections": "integer",
-                        "unanticipated_note": "brief analytical summary of unexpected dynamics",
-                        "consensus_rating": "integer 0-100",
-                        "objection_topology": [
-                            {
-                                "id": "string",
-                                "label": "string",
-                                "kind": "root | objection | resolution",
-                                "parents": ["parent ids"],
-                            }
-                        ],
-                        "alignment_deltas": [
-                            {
-                                "stakeholder_id": "string",
-                                "name": "string",
-                                "role": "string",
-                                "delta": "integer -100..100",
-                                "quote": "short quote from transcript",
-                            }
-                        ],
-                        "strategy_cards": [
-                            {
-                                "objection": "string — specific objection raised",
-                                "counter": "string — tactical counter move",
-                                "risk": "LOW | MEDIUM | HIGH",
-                            }
-                        ],
-                    },
-                    "stakeholders": [s.model_dump() for s in state.config.stakeholders],
-                    "transcript": _transcript(state),
-                    "event_log": state.event_log[-20:],
-                    "heatmap": state.heatmap.model_dump(),
-                    "sentiment": state.sentiment,
-                    "coalitions": [c.model_dump() for c in state.coalitions],
-                    "leverage_shifts": [ls.model_dump() for ls in state.leverage_shifts],
-                    "deadlock_risk_score": state.deadlock_risk_score,
-                }
-            ),
-        },
-    ]
-
-
-def _postmortem_from_payload(
-    simulation_id: str, payload: dict[str, object], mocked: bool
-) -> Postmortem:
-    return Postmortem(
-        simulation_id=simulation_id,
-        confidence_score=int(payload.get("confidence_score", 60)),
-        confidence_trend=int(payload.get("confidence_trend", 0)),
-        unanticipated_objections=int(payload.get("unanticipated_objections", 0)),
-        unanticipated_note=str(payload.get("unanticipated_note", "")),
-        consensus_rating=int(payload.get("consensus_rating", 60)),
-        objection_topology=[
-            TopologyNode(**item)
-            for item in payload.get("objection_topology", [])
-            if isinstance(item, dict)
-        ],
-        alignment_deltas=[
-            AlignmentDelta(**item)
-            for item in payload.get("alignment_deltas", [])
-            if isinstance(item, dict)
-        ],
-        strategy_cards=[
-            StrategyCard(**item)
-            for item in payload.get("strategy_cards", [])
-            if isinstance(item, dict)
-        ],
-        mocked=mocked,
-    )
+# (mock postmortem functions removed — replaced by PostmortemGenerator)
 
 
 # ---------------------------------------------------------------------------
@@ -754,64 +612,19 @@ async def export_simulation_v2(simulation_id: str) -> Response:
     )
 
 
-def _mock_postmortem_from_raw(
-    simulation_id: str, turns: list[dict], cfg: dict
-) -> dict:
-    """Generate mock postmortem from raw v2 data (no LLM)."""
-    stakeholders = cfg.get("stakeholders", [])
-    objections = [t for t in turns if t.get("action_type") in ("challenge", "escalate")]
-    total_turns = len(turns)
-    sentiment_values = [t.get("sentiment", 0) for t in turns if isinstance(t.get("sentiment"), (int, float))]
-    avg_sentiment = sum(sentiment_values) / len(sentiment_values) if sentiment_values else 0.0
-    consensus = max(0, min(100, int(55 + avg_sentiment * 30 + total_turns)))
-
-    alignment_deltas = []
-    for s in stakeholders:
-        s_name = s.get("name", "")
-        alignment_deltas.append({
-            "stakeholder_id": s.get("id", s_name),
-            "name": s_name,
-            "role": s.get("role", ""),
-            "delta": 10 if s.get("tag") in ("AGREEABLE", "VISIONARY") else -5,
-            "quote": turns[-1].get("content", "No transcript available.") if turns else "No transcript available.",
-        })
-
-    speaker_turns: dict[str, int] = {}
-    for t in turns:
-        speaker = t.get("speaker", t.get("agent_name", "unknown"))
-        speaker_turns[speaker] = speaker_turns.get(speaker, 0) + 1
-    leaderboard = [
-        {"name": s.get("name", ""), "turns": speaker_turns.get(s.get("name", ""), 0)}
-        for s in stakeholders
-    ]
-    leaderboard.sort(key=lambda x: x["turns"], reverse=True)
-
-    return {
-        "simulation_id": simulation_id,
-        "confidence_score": max(0, min(100, consensus - 5)),
-        "confidence_trend": int(avg_sentiment * 20),
-        "unanticipated_objections": len(objections),
-        "unanticipated_note": (
-            f"Mock summary: finance and legal pressure created the main negotiation drag. "
-            f"Detected {len(leaderboard)} stakeholder(s) and {total_turns} turn(s)."
-        ),
-        "consensus_rating": consensus,
-        "objection_topology": [
-            {"id": "root", "label": "Partnership term sheet", "kind": "root", "parents": []},
-            {"id": "commercial-risk", "label": "Commercial risk and clawbacks", "kind": "objection", "parents": ["root"]},
-            {"id": "phased-pilot", "label": "Phased pilot with clearer carve-outs", "kind": "resolution", "parents": ["commercial-risk"]},
-        ],
-        "alignment_deltas": alignment_deltas,
-        "strategy_cards": [
-            {"objection": "Revenue share and clawback ambiguity", "counter": "Offer a phased pilot with explicit downside caps and milestone gates.", "risk": "MEDIUM"},
-            {"objection": "Compliance and data ownership uncertainty", "counter": "Attach a compliance pack with data boundaries and SLA remedies.", "risk": "HIGH"},
-        ],
-        "mocked": True,
-    }
-
-
 @app.post("/simulations/{simulation_id}/postmortem")
 async def postmortem_v2(simulation_id: str) -> dict:
+    """Get the comprehensive simulation postmortem report.
+
+    Auto-generated on simulation end. Includes:
+    - Executive summary with verdict
+    - Termination details (vote breakdown, judge notes, etc.)
+    - Topics discussed with positions
+    - Stakeholder reports with position shifts
+    - Key moments timeline
+    - Social dynamics (trust/tension arcs)
+    - Strategy cards and lessons learned
+    """
     entry = _v2_simulations.get(simulation_id)
     if entry is None:
         db = get_database()
@@ -830,88 +643,122 @@ async def postmortem_v2(simulation_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Simulation not found")
 
     db = get_database()
-    try:
-        if hasattr(db, 'get_turns_by_simulation'):
-            turns = await db.get_turns_by_simulation(simulation_id)
-        else:
-            turns = []
-    except Exception:
-        turns = []
-
-    cfg = entry["config"]
 
     # Check DB cache first
-    db = get_database()
     if hasattr(db, 'get_postmortem'):
         cached = await db.get_postmortem(simulation_id)
         if cached:
             cached_d = json.loads(cached) if isinstance(cached, str) else cached
             return cached_d
 
-    # Generate postmortem (try LLM, fall back to mock)
-    result = None
-    if config.OPENROUTER_API_KEY and turns:
-        try:
-            transcript = "\n".join(
-                f"{t.get('turn_index', i)}. {t.get('speaker', t.get('agent_name', 'unknown'))}: {t.get('content', '')}"
-                for i, t in enumerate(turns)
-            )
+    cfg = entry["config"]
+    config_obj = _cfg_to_v2_config(cfg) if not isinstance(cfg.get("subject"), dict) else cfg
 
-            messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Create a detailed postmortem for a simulated boardroom partnership negotiation. "
-                        "Analyze the transcript for real tensions, coalition dynamics, leverage shifts, and unresolved issues. "
-                        "Return only valid JSON matching the requested fields."
-                    ),
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps({
-                        "schema": {
-                            "confidence_score": "integer 0-100",
-                            "confidence_trend": "integer delta, can be negative",
-                            "unanticipated_objections": "integer",
-                            "unanticipated_note": "brief analytical summary of unexpected dynamics",
-                            "consensus_rating": "integer 0-100",
-                            "objection_topology": [
-                                {"id": "string", "label": "string", "kind": "root | objection | resolution", "parents": ["parent ids"]}
-                            ],
-                            "alignment_deltas": [
-                                {"stakeholder_id": "string", "name": "string", "role": "string", "delta": "integer -100..100", "quote": "short quote from transcript"}
-                            ],
-                            "strategy_cards": [
-                                {"objection": "string — specific objection raised", "counter": "string — tactical counter move", "risk": "LOW | MEDIUM | HIGH"}
-                            ],
-                        },
-                        "stakeholders": cfg.get("stakeholders", []),
-                        "transcript": transcript,
-                        "num_turns": len(turns),
-                    }),
-                },
-            ]
+    # Build SharedSpace from persisted turns if available
+    from app.runtime.space import SharedSpace
+    space = SharedSpace(None)  # type: ignore
+    try:
+        if hasattr(db, 'get_turns_by_simulation'):
+            turns = await db.get_turns_by_simulation(simulation_id)
+            for t in turns:
+                space.events.append({
+                    "type": "turn",
+                    "turn_index": t.get("turn_index", 0),
+                    "agent_id": t.get("agent_id", t.get("stakeholder_id", "")),
+                    "speaker": t.get("speaker", t.get("stakeholder_name", "")),
+                    "content": t.get("content", ""),
+                    "action_type": t.get("action_type", "statement"),
+                })
+    except Exception:
+        pass
 
-            text, _mocked, _metadata = await openrouter_completion(
-                messages,
-                temperature=0.4,
-                simulation_id=simulation_id,
-            )
-            if text and text != "{}":
-                payload = parse_json_object(text)
-                pm = _postmortem_from_payload(simulation_id, payload, mocked=False)
-                result = pm.model_dump()
-        except Exception as exc:
-            logger.warning("LLM postmortem failed, falling back to mock: %s", exc)
+    # Generate postmortem using PostmortemGenerator
+    from app.runtime.postmortem_generator import PostmortemGenerator
+    from app.models import SimulationV2Config, TerminationResult
 
-    if result is None:
-        result = _mock_postmortem_from_raw(simulation_id, turns, cfg)
+    subject_name = ""
+    if isinstance(config_obj, dict):
+        subject_name = config_obj.get("subject", {}).get("name", "Simulation")
+    elif hasattr(config_obj, "subject"):
+        subject_name = getattr(config_obj.subject, "name", "Simulation")
+
+    # Build minimal config for generator
+    gen_config = _ensure_v2_config(config_obj, subject_name)
+    gen = PostmortemGenerator(space, gen_config, behavior_engine=None)
+    tr = TerminationResult(
+        reason=entry.get("status", "complete") if isinstance(entry, dict) else "complete",
+        outcome_type="no_decision",
+        total_turns=len(space.events) if hasattr(space, "events") else 0,
+    )
+
+    try:
+        pm = await gen.generate(simulation_id, tr)
+        result = pm.model_dump(mode="json")
+    except Exception as exc:
+        logger.warning("Postmortem generation failed, returning basic: %s", exc)
+        result = _basic_postmortem(simulation_id, cfg, str(exc))
 
     # Save to DB cache
     if hasattr(db, 'save_postmortem'):
         await db.save_postmortem(simulation_id, json.dumps(result))
 
     return result
+
+
+def _basic_postmortem(simulation_id: str, cfg: dict, error: str) -> dict:
+    """Fallback when full generation fails."""
+    return {
+        "simulation_id": simulation_id,
+        "confidence_score": 50,
+        "consensus_rating": 50,
+        "confidence_trend": 0,
+        "unanticipated_objections": 0,
+        "unanticipated_note": f"Postmortem generation encountered an issue: {error}",
+        "objection_topology": [],
+        "alignment_deltas": [],
+        "strategy_cards": [],
+        "summary": "Postmortem generation incomplete.",
+        "verdict": "Unknown",
+        "end_reason": "unknown",
+        "termination": {"reason": "unknown", "outcome_type": "no_decision", "total_turns": 0},
+        "topics": [],
+        "stakeholder_reports": [],
+        "key_moments": [],
+        "social_dynamics": {},
+        "lessons_learned": [],
+        "vote_events": [],
+        "judge_events": [],
+        "mocked": True,
+    }
+
+
+def _ensure_v2_config(raw: dict | Any, subject_name: str) -> Any:
+    """Ensure we have a SimulationV2Config or compatible object."""
+    from app.models import SimulationV2Config, Subject, StakeholderV2, ActionSpace, SpeakerRules
+    if isinstance(raw, SimulationV2Config):
+        return raw
+    if isinstance(raw, dict):
+        stakeholders_raw = raw.get("stakeholders", [])
+        stakeholders = []
+        for s in stakeholders_raw:
+            if isinstance(s, dict):
+                stakeholders.append(StakeholderV2(
+                    id=s.get("id", "?"),
+                    name=s.get("name", "?"),
+                    role=s.get("role", ""),
+                    stance=s.get("stance", "neutral"),
+                ))
+        return SimulationV2Config(
+            subject=Subject(name=subject_name),
+            stakeholders=stakeholders,
+            action_space=ActionSpace(),
+        )
+    return raw
+
+
+def _cfg_to_v2_config(cfg: dict) -> dict:
+    """Normalize config dict to expected shape."""
+    return cfg
 
 
 @app.get("/agents/{name}/detail")

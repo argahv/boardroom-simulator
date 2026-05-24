@@ -167,15 +167,22 @@ async def test_scheduler_alternating():
 
 @pytest.mark.asyncio
 async def test_scheduler_end_condition():
-    cfg = make_config(max_turns=4)
-    space = SharedSpace(cfg)
-    scheduler = Scheduler(cfg, space, "test-sim")
+    from app.runtime.scheduler import TimeoutChecker, TerminationContext
 
-    assert scheduler._end_condition_met() is False
-    scheduler.turn_count = 3
-    assert scheduler._end_condition_met() is False
-    scheduler.turn_count = 4
-    assert scheduler._end_condition_met() is True
+    cfg = make_config(max_turns=4)
+    ctx = TerminationContext(config=cfg, space=SharedSpace(cfg), turn_count=0)
+
+    checker = TimeoutChecker(cfg.end_condition)  # type: ignore
+
+    ctx.turn_count = 3
+    r1 = await checker.check(ctx)
+    assert r1 is None, "Should not trigger at turn 3"
+
+    ctx.turn_count = 4
+    r2 = await checker.check(ctx)
+    assert r2 is not None, "Should trigger at turn 4"
+    assert r2.reason == "timeout"
+    assert r2.outcome_type == "no_decision"
 
 
 # ── Integration tests ──────────────────────────────────────────────────────

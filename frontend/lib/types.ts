@@ -170,7 +170,16 @@ export type StreamTurnEvent = {
 
 export type StreamDoneEvent = {
   type: "done";
-  state: SimulationState;
+  reason?: string;
+  outcome_type?: "agreement" | "impasse" | "walkaway" | "judge_ruling" | "no_decision";
+  summary?: string;
+  confidence?: number;
+  total_turns?: number;
+  vote_breakdown?: Record<string, number>;
+  agreed_issues?: Array<{issue?: string; value?: string; parties?: string[]}>;
+  judge_notes?: string;
+  walkaway_party?: string;
+  state?: SimulationState;
 };
 
 export type StreamErrorEvent = {
@@ -255,7 +264,21 @@ export type JudgeCondition = {
   criteria: string[];
 };
 
-export type EndCondition = VoteCondition | TimeoutCondition | JudgeCondition;
+export type ConsensusCondition = {
+  type: "consensus";
+  sensitivity: "diplomatic" | "balanced" | "sensitive";
+  detection_mode: "both" | "agreement_only" | "deadlock_only";
+  max_turns: number;
+};
+
+export type HybridCondition = {
+  type: "hybrid";
+  conditions: (VoteCondition | ConsensusCondition | JudgeCondition)[];
+  max_turns: number;
+};
+
+export type EndCondition = VoteCondition | TimeoutCondition | JudgeCondition
+  | ConsensusCondition | HybridCondition;
 
 export type StakeholderV2 = {
   id: string;

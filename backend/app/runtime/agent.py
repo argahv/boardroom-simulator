@@ -325,7 +325,8 @@ class AgentRuntime:
             })
 
         allowed = [a.name for a in self.space.config.action_space.actions] or [
-            "statement", "question", "challenge", "compromise"
+            "statement", "question", "challenge", "compromise",
+            "vote", "walkaway", "coalition_signal", "escalate",
         ]
         messages.append({
             "role": "user",

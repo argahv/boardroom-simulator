@@ -38,6 +38,15 @@ export default function WarRoomPage({ params }: PageProps) {
   const [loadingPostmortem, setLoadingPostmortem] = useState(false);
   const [stateSnapshots, setStateSnapshots] = useState<Record<string, unknown>[]>([]);
   const [isReplay, setIsReplay] = useState(false);
+  const [outcome, setOutcome] = useState<{
+    reason?: string;
+    outcome_type?: string;
+    summary?: string;
+    confidence?: number;
+    vote_breakdown?: Record<string, number>;
+    judge_notes?: string;
+    walkaway_party?: string;
+  } | null>(null);
 
   const streamCtrl = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -152,6 +161,16 @@ export default function WarRoomPage({ params }: PageProps) {
           });
         } else if (evt.type === "done") {
           setStatus("complete");
+          // Capture structured outcome data
+          setOutcome({
+            reason: evt.reason as string | undefined,
+            outcome_type: evt.outcome_type as string | undefined,
+            summary: evt.summary as string | undefined,
+            confidence: evt.confidence as number | undefined,
+            vote_breakdown: evt.vote_breakdown as Record<string, number> | undefined,
+            judge_notes: evt.judge_notes as string | undefined,
+            walkaway_party: evt.walkaway_party as string | undefined,
+          });
         } else if (evt.type === "state_snapshot") {
           setStateSnapshots((prev) => {
             // Deduplicate: if we already have a snapshot for this turn, replace it
@@ -338,6 +357,94 @@ export default function WarRoomPage({ params }: PageProps) {
             </div>
           )}
 
+          {/* Outcome Banner — shown when simulation completes */}
+          {outcome && (
+            <div style={{
+              padding: "16px 24px",
+              margin: "0 16px 16px",
+              borderRadius: 12,
+              background: outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.12)" 
+                         : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.12)"
+                         : "rgba(186,26,26,0.08)",
+              border: `1px solid ${
+                outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.3)"
+                : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.3)"
+                : "rgba(186,26,26,0.3)"
+              }`,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
+                <span style={{
+                  fontSize: 24,
+                  color: outcome.outcome_type === "agreement" ? "#22c55e"
+                         : outcome.outcome_type === "walkaway" ? "#eab308"
+                         : "#ba1a1a",
+                }}>
+                  {outcome.outcome_type === "agreement" ? "✅" : outcome.outcome_type === "walkaway" ? "⚠️" : "❌"}
+                </span>
+                <div>
+                  <span style={{
+                    display: "inline-block",
+                    padding: "2px 10px",
+                    borderRadius: 9999,
+                    fontSize: 11,
+                    fontWeight: 700,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    background: outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.2)"
+                               : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.2)"
+                               : "rgba(186,26,26,0.2)",
+                    color: outcome.outcome_type === "agreement" ? "#22c55e"
+                           : outcome.outcome_type === "walkaway" ? "#eab308"
+                           : "#ba1a1a",
+                    marginBottom: 2,
+                  }}>
+                    {outcome.outcome_type === "agreement" ? "Deal Reached"
+                     : outcome.outcome_type === "walkaway" ? "Walkaway"
+                     : outcome.outcome_type === "judge_ruling" ? "Judge Ruling"
+                     : "No Consensus"}
+                  </span>
+                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)", margin: 0 }}>
+                    {outcome.summary || `Simulation ended via ${outcome.reason || "unknown"}.`}
+                  </p>
+                </div>
+                {outcome.confidence !== undefined && (
+                  <div style={{ marginLeft: "auto", textAlign: "right" }}>
+                    <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Confidence</span>
+                    <p style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--font-mono)", margin: 0 }}>
+                      {Math.round(outcome.confidence * 100)}%
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              {/* Vote breakdown */}
+              {outcome.vote_breakdown && Object.keys(outcome.vote_breakdown).length > 0 && (
+                <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
+                  {Object.entries(outcome.vote_breakdown).map(([key, val]) => (
+                    <div key={key} style={{ textAlign: "center" }}>
+                      <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{String(val)}</span>
+                      <p style={{ fontSize: 10, color: "var(--color-muted)", textTransform: "capitalize", margin: 0 }}>{key}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Judge notes */}
+              {outcome.judge_notes && (
+                <p style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", marginTop: 8 }}>
+                  Judge: {outcome.judge_notes}
+                </p>
+              )}
+
+              {/* Walkaway party */}
+              {outcome.walkaway_party && (
+                <p style={{ fontSize: 12, color: "#eab308", marginTop: 4 }}>
+                  Party walked away: {outcome.walkaway_party}
+                </p>
+              )}
+            </div>
+          )}
+
           {postmortem && (
             <>
               <div style={{ padding: 16, maxWidth: 700, margin: "0 auto 0" }}>
@@ -362,20 +469,44 @@ export default function WarRoomPage({ params }: PageProps) {
               <div style={{ background: "#141312", borderRadius: 12, padding: 24, color: "#fff" }}>
                 <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.28em", textTransform: "uppercase", color: "var(--color-primary)", marginBottom: 4 }}>Post-Mortem</p>
                 <h3 style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 32, fontWeight: 700, marginBottom: 16 }}>{String(postmortem.subject || "Debate")}</h3>
+
+                {/* Show verdict if available */}
+                {!!postmortem.verdict && (
+                  <div style={{ marginBottom: 16, padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.05)" }}>
+                    <p style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", margin: 0 }}>
+                      <strong style={{ color: "#fff" }}>Verdict:</strong> {String(postmortem.verdict)}
+                    </p>
+                    {!!postmortem.end_reason && (
+                      <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", margin: "4px 0 0" }}>
+                        Ended via: {String(postmortem.end_reason)}
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
                   <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
                     <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Total turns</p>
-                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.total_turns || 0)}</p>
+                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.total_turns ?? 0)}</p>
                   </div>
                   <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
                     <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Participants</p>
-                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.stakeholder_count || 0)}</p>
+                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.stakeholder_count ?? 0)}</p>
                   </div>
                   <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
                     <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Voltage</p>
                     <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.voltage || 0)}</p>
                   </div>
                 </div>
+
+                {/* Summary if available */}
+                {!!postmortem.summary && (
+                  <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "rgba(255,255,255,0.03)" }}>
+                    <p style={{ fontSize: 12, color: "var(--color-primary)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Summary</p>
+                    <p style={{ fontSize: 13, lineHeight: 1.6, color: "rgba(255,255,255,0.85)", margin: 0 }}>{String(postmortem.summary)}</p>
+                  </div>
+                )}
+
                 {(postmortem.leaderboard as Array<{ name: string; stance: string; turns: number }>)?.map((entry, i) => (
                   <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: i === 0 ? "rgba(255,255,255,0.08)" : "transparent", borderRadius: 8, marginBottom: 4 }}>
                     <span style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 20, width: 24, color: i === 0 ? "#fff" : "rgba(255,255,255,0.4)" }}>#{i + 1}</span>

@@ -14,6 +14,9 @@ import type {
   CustomActionDef,
   SpeakerRules,
   EndCondition,
+  VoteCondition,
+  ConsensusCondition,
+  JudgeCondition,
   AgentStance,
   EnvFlags,
   Stakeholder,
@@ -22,7 +25,7 @@ import type {
 const EMPTY_PERSONALITY: PersonalityProfile = { aggressiveness: 50, empathy: 50, stubbornness: 50, verbosity: 50 };
 const STANCES: AgentStance[] = ["champion", "detractor", "neutral", "moderator", "wildcard"];
 const SPEAKER_MODES = ["moderator_led", "alternating", "freeform", "weighed_random"] as const;
-const END_TYPES = ["timeout", "vote", "judge"] as const;
+const END_TYPES = ["timeout", "vote", "judge", "consensus", "hybrid"] as const;
 
 const ENV_FLAGS: { key: keyof EnvFlags; label: string; icon: string; desc: string }[] = [
   { key: "hidden_motives", label: "Hidden Motives", icon: "visibility_off", desc: "Agents harbor undisclosed incentives that complicate resolution" },
@@ -68,8 +71,17 @@ export default function NewSimulationPage() {
 
   // Step 3 — Rules, Tension, Actions
   const [speakerMode, setSpeakerMode] = useState<SpeakerRules["mode"]>("alternating");
-  const [endConditionType, setEndConditionType] = useState<"timeout" | "vote" | "judge">("timeout");
+  const [endConditionType, setEndConditionType] = useState<"timeout" | "vote" | "judge" | "consensus" | "hybrid">("timeout");
   const [maxTurns, setMaxTurns] = useState(10);
+  const [thresholdPct, setThresholdPct] = useState(60);
+  const [judgePersonaId, setJudgePersonaId] = useState("");
+  const [judgeCriteria, setJudgeCriteria] = useState<string[]>(["Has a fair compromise been reached?"]);
+  const [judgeCriteriaInput, setJudgeCriteriaInput] = useState("");
+  const [consensusSensitivity, setConsensusSensitivity] = useState<"diplomatic" | "balanced" | "sensitive">("balanced");
+  const [consensusDetectionMode, setConsensusDetectionMode] = useState<"both" | "agreement_only" | "deadlock_only">("both");
+  const [hybridVote, setHybridVote] = useState(false);
+  const [hybridConsensus, setHybridConsensus] = useState(true);
+  const [hybridJudge, setHybridJudge] = useState(false);
   const [voltage, setVoltage] = useState(50);
   const [envFlags, setEnvFlags] = useState<EnvFlags>({ ...emptyEnvFlags });
   const [modelTemp, setModelTemp] = useState<"stable" | "volatile">("volatile");
@@ -117,8 +129,15 @@ export default function NewSimulationPage() {
 
   const buildEndCondition = (): EndCondition => {
     if (endConditionType === "timeout") return { type: "timeout", max_normal_turns: maxTurns };
-    if (endConditionType === "vote") return { type: "vote", voters: personas.map((p) => p.id), threshold: 0.5, max_turns: maxTurns };
-    return { type: "judge", judge_id: personas[0]?.id ?? "", criteria: [] };
+    if (endConditionType === "vote") return { type: "vote", voters: personas.map((p) => p.id), threshold: thresholdPct, max_turns: maxTurns };
+    if (endConditionType === "judge") return { type: "judge", judge_id: judgePersonaId || personas[0]?.id || "", criteria: judgeCriteria };
+    if (endConditionType === "consensus") return { type: "consensus", sensitivity: consensusSensitivity, detection_mode: consensusDetectionMode, max_turns: maxTurns };
+    // hybrid: enable selected sub-conditions
+    const subs: (VoteCondition | ConsensusCondition | JudgeCondition)[] = [];
+    if (hybridVote) subs.push({ type: "vote", voters: personas.map((p) => p.id), threshold: 0.5, max_turns: maxTurns });
+    if (hybridConsensus) subs.push({ type: "consensus", sensitivity: "balanced", detection_mode: "both", max_turns: maxTurns });
+    if (hybridJudge) subs.push({ type: "judge", judge_id: personas[0]?.id ?? "", criteria: [] });
+    return { type: "hybrid", conditions: subs, max_turns: maxTurns };
   };
 
   const buildConfig = (): SimulationV2Config => ({
@@ -361,7 +380,7 @@ export default function NewSimulationPage() {
             
             <div>
               <h3 className="font-display text-2xl font-semibold mb-1">End Condition</h3>
-              <p className="text-xs text-muted mb-4">When the simulation stops</p>
+              <p className="text-xs text-muted mb-4">When and how the simulation concludes</p>
               <div className="flex gap-2 rounded-xl bg-surface-card/50 p-1 border border-hairline mb-4">
                 {END_TYPES.map((type) => (
                   <button key={type} onClick={() => setEndConditionType(type)}
@@ -370,13 +389,145 @@ export default function NewSimulationPage() {
                     }`}>{type}</button>
                 ))}
               </div>
-              <div className="space-y-1">
-                <div className="flex justify-between text-sm">
-                  <span className="text-muted">Max turns</span>
-                  <span className="font-mono text-sm">{maxTurns}</span>
+
+              {/* ── Timeout config ── */}
+              {endConditionType === "timeout" && (
+                <div className="rounded-xl bg-surface-card border border-hairline p-5 space-y-3">
+                  <p className="text-xs text-muted">Simulation ends after a fixed number of turns. Simple and predictable.</p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Max turns</span>
+                      <span className="font-mono text-sm">{maxTurns}</span>
+                    </div>
+                    <input type="range" min="2" max="50" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
                 </div>
-                <input type="range" min="2" max="30" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
-              </div>
+              )}
+
+              {/* ── Vote config ── */}
+              {endConditionType === "vote" && (
+                <div className="rounded-xl bg-surface-card border border-hairline p-5 space-y-3">
+                  <p className="text-xs text-muted">Agents express vote positions. When threshold is met, simulation ends with consensus.</p>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Threshold</span>
+                      <span className="font-mono text-sm">{thresholdPct}%</span>
+                    </div>
+                    <input type="range" min="30" max="100" value={thresholdPct} onChange={(e) => setThresholdPct(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Max turns (hard cap)</span>
+                      <span className="font-mono text-sm">{maxTurns}</span>
+                    </div>
+                    <input type="range" min="3" max="50" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
+                  <p className="text-[11px] text-muted italic">Agents can use the &quot;vote&quot; action type to express positions. The system tallies votes automatically.</p>
+                </div>
+              )}
+
+              {/* ── Judge config ── */}
+              {endConditionType === "judge" && (
+                <div className="rounded-xl bg-surface-card border border-hairline p-5 space-y-3">
+                  <p className="text-xs text-muted">An LLM judge evaluates the debate periodically and declares when a conclusion is reached.</p>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted">Judge persona (stakeholder)</label>
+                    <select value={judgePersonaId} onChange={(e) => setJudgePersonaId(e.target.value)}
+                      className="w-full rounded-xl border border-hairline bg-canvas/60 px-4 py-2.5 text-sm outline-none focus:border-primary">
+                      <option value="">Auto-select first persona</option>
+                      {personas.filter(p => p.name).map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.stance})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Evaluate every</span>
+                      <span className="font-mono text-sm">{maxTurns} turns (max)</span>
+                    </div>
+                    <input type="range" min="3" max="50" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
+                  <div className="space-y-2">
+                    <label className="text-xs font-semibold text-muted">Evaluation criteria</label>
+                    {judgeCriteria.map((c, i) => (
+                      <div key={i} className="flex items-center gap-2">
+                        <span className="text-sm flex-1">{c}</span>
+                        <button onClick={() => setJudgeCriteria((prev) => prev.filter((_, j) => j !== i))} className="text-xs text-primary-active">×</button>
+                      </div>
+                    ))}
+                    <div className="flex gap-2">
+                      <input value={judgeCriteriaInput} onChange={(e) => setJudgeCriteriaInput(e.target.value)}
+                        className="flex-1 rounded-xl border border-hairline bg-canvas/60 px-4 py-2 text-sm outline-none focus:border-primary" placeholder="Add criterion..." />
+                      <button onClick={() => { if (judgeCriteriaInput.trim()) { setJudgeCriteria((prev) => [...prev, judgeCriteriaInput.trim()]); setJudgeCriteriaInput(""); } }}
+                        className="rounded-xl bg-ink text-on-dark px-4 py-2 text-sm font-medium">Add</button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Consensus config ── */}
+              {endConditionType === "consensus" && (
+                <div className="rounded-xl bg-surface-card border border-hairline p-5 space-y-3">
+                  <p className="text-xs text-muted">Monitors trust and tension dynamics. Detects when genuine agreement or deadlock occurs.</p>
+                  <div>
+                    <label className="text-xs font-semibold text-muted block mb-2">Sensitivity</label>
+                    <div className="flex gap-2">
+                      {(["diplomatic", "balanced", "sensitive"] as const).map((s) => (
+                        <button key={s} onClick={() => setConsensusSensitivity(s)}
+                          className={`flex-1 rounded-xl px-3 py-2 text-sm capitalize transition ${
+                            consensusSensitivity === s ? "bg-surface-dark text-canvas shadow-sm" : "bg-canvas/60 text-muted border border-hairline"
+                          }`}>{s}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-muted block mb-2">Detection mode</label>
+                    <div className="flex gap-2">
+                      {(["both", "agreement_only", "deadlock_only"] as const).map((m) => (
+                        <button key={m} onClick={() => setConsensusDetectionMode(m)}
+                          className={`flex-1 rounded-xl px-3 py-2 text-sm capitalize transition ${
+                            consensusDetectionMode === m ? "bg-surface-dark text-canvas shadow-sm" : "bg-canvas/60 text-muted border border-hairline"
+                          }`}>{m.replace("_", " ")}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Max turns (safety valve)</span>
+                      <span className="font-mono text-sm">{maxTurns}</span>
+                    </div>
+                    <input type="range" min="5" max="50" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
+                </div>
+              )}
+
+              {/* ── Hybrid config ── */}
+              {endConditionType === "hybrid" && (
+                <div className="rounded-xl bg-surface-card border border-hairline p-5 space-y-3">
+                  <p className="text-xs text-muted">Enable multiple conditions. First to trigger wins.</p>
+                  {([
+                    { key: hybridVote as boolean, set: setHybridVote, label: "Vote", desc: "Tally votes with 60% threshold" },
+                    { key: hybridConsensus as boolean, set: setHybridConsensus, label: "Consensus", desc: "Social physics detection (balanced)" },
+                    { key: hybridJudge as boolean, set: setHybridJudge, label: "Judge", desc: "LLM judge evaluation" },
+                  ] as const).map((opt) => (
+                    <label key={opt.label} className="flex items-start gap-3 p-3 rounded-xl border border-hairline bg-canvas/40 cursor-pointer hover:border-primary/40 transition">
+                      <input type="checkbox" checked={opt.key} onChange={() => (opt.set as (v: boolean) => void)(!opt.key)}
+                        className="rounded border-hairline text-primary focus:ring-primary h-4 w-4 mt-0.5" />
+                      <div>
+                        <span className="text-sm font-semibold text-ink">{opt.label}</span>
+                        <p className="text-xs text-muted">{opt.desc}</p>
+                      </div>
+                    </label>
+                  ))}
+                  <div className="space-y-1 pt-1">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-muted">Max turns (safety valve)</span>
+                      <span className="font-mono text-sm">{maxTurns}</span>
+                    </div>
+                    <input type="range" min="5" max="50" value={maxTurns} onChange={(e) => setMaxTurns(Number(e.target.value))} className="w-full accent-primary" />
+                  </div>
+                </div>
+              )}
             </div>
 
             
@@ -511,7 +662,13 @@ export default function NewSimulationPage() {
               <p className="text-xs font-semibold text-muted uppercase tracking-wider">Rules</p>
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <span className="text-muted">Speaker</span><span className="font-medium capitalize">{speakerMode.replace("_", " ")}</span>
-                <span className="text-muted">End</span><span className="font-medium capitalize">{endConditionType} ({maxTurns} turns)</span>
+                <span className="text-muted">End</span><span className="font-medium">
+                  {endConditionType === "timeout" && `Timeout (${maxTurns} turns)`}
+                  {endConditionType === "vote" && `Vote (${thresholdPct}% threshold, max ${maxTurns} turns)`}
+                  {endConditionType === "judge" && `Judge (${judgeCriteria.length} criteria, max ${maxTurns} turns)`}
+                  {endConditionType === "consensus" && `Consensus (${consensusSensitivity}, max ${maxTurns} turns)`}
+                  {endConditionType === "hybrid" && `Hybrid (${[hybridVote && "Vote", hybridConsensus && "Consensus", hybridJudge && "Judge"].filter(Boolean).join("+")}, max ${maxTurns} turns)`}
+                </span>
                 <span className="text-muted">Voltage</span><span className="font-medium">{voltage}%</span>
                 <span className="text-muted">Model</span><span className="font-medium capitalize">{modelTemp}</span>
               </div>
