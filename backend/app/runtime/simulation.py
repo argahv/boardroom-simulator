@@ -14,13 +14,20 @@ logger = logging.getLogger(__name__)
 
 
 async def run_simulation_v2(
-    config: SimulationV2Config, simulation_id: str
+    config: SimulationV2Config,
+    simulation_id: str,
+    behavior_engine: Any = None,
+    memory_system: Any = None,
+    private_thought: Any = None,
 ) -> AsyncIterator[dict]:
     """
     Spawn agent loops + scheduler, then STREAM events LIVE via SharedSpace.
 
     Yields every event (system announcements, agent turns, final result)
     as dicts as soon as they're published -- no buffering.
+
+    Optional: behavior_engine, memory_system, private_thought can be passed
+    to enable the new Behavior Engine stack.
     """
     space = SharedSpace(config)
 
@@ -31,10 +38,13 @@ async def run_simulation_v2(
             llm=openrouter_completion,
             system_prompt_template=config.system_prompt_template,
             simulation_id=simulation_id,
+            behavior_engine=behavior_engine,
+            memory_system=memory_system,
+            private_thought=private_thought,
         )
         for s in config.stakeholders
     ]
-    scheduler = Scheduler(config, space, simulation_id)
+    scheduler = Scheduler(config, space, simulation_id, behavior_engine=behavior_engine)
 
     agent_tasks = [asyncio.create_task(a.run()) for a in agents]
     scheduler_task = asyncio.create_task(scheduler.run())

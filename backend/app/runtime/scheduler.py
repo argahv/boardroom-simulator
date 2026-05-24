@@ -24,11 +24,14 @@ class Scheduler:
     - Publishes system events (turn start, end condition met, etc.)
     """
 
-    def __init__(self, config: SimulationV2Config, space: SharedSpace, simulation_id: str) -> None:
+    def __init__(self, config: SimulationV2Config, space: SharedSpace, simulation_id: str,
+                 behavior_engine: Any = None) -> None:
         self.config = config
         self.space = space
         self.simulation_id = simulation_id
         self.turn_count = 0
+        self.behavior_engine = behavior_engine
+        self.behavior_engine = behavior_engine
 
     async def run(self) -> None:
         await self.space.publish({
@@ -146,9 +149,17 @@ class Scheduler:
 
     def _update_dynamics(self, turn: dict) -> None:
         action_type = turn.get("action_type", "statement")
-        deltas = self.config.action_space.default_trust_deltas
-        if action_type in deltas:
-            pass  # trust tracking TBD
+
+        if self.behavior_engine is not None:
+            be_turn = {
+                "agent_id": turn.get("agent_id", ""),
+                "action_type": action_type,
+                "target_id": turn.get("directed_at", None),
+                "speaker_id": turn.get("agent_id", ""),
+                "target": turn.get("directed_at", ""),
+            }
+            self.behavior_engine.process_turn(be_turn)
+            self.behavior_engine.tick()
 
         try:
             if neo4j_enabled():

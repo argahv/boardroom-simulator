@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import type { V2Turn } from "./TranscriptStream";
 import { Avatar, initialsFromName } from "@/components/Avatar";
+import { RelationshipGraph } from "@/components/relationship-graph";
 import { ConflictTimeline } from "./ConflictTimeline";
 import { EventLog } from "./EventLog";
 import { Leaderboard } from "./Leaderboard";
@@ -32,6 +33,13 @@ interface GraphLayoutProps {
   eventLog: EventLogEntry[];
 }
 
+type GraphMode = "conversation" | "relationships";
+
+const TAB_CLS = (active: boolean) =>
+  `px-3 py-1.5 text-[11px] font-semibold rounded-lg transition-colors cursor-pointer ${
+    active ? "bg-ink text-canvas" : "text-muted hover:text-ink hover:bg-surface-card"
+  }`;
+
 export function GraphLayout({
   turn,
   current,
@@ -41,6 +49,9 @@ export function GraphLayout({
   totalTurns,
   eventLog,
 }: GraphLayoutProps) {
+  const [mode, setMode] = useState<GraphMode>("conversation");
+
+  /* ── Conversation-graph layout ── */
   const positions = useMemo(() => {
     const grid = [
       { x: 30, y: 28 }, { x: 70, y: 30 }, { x: 80, y: 65 },
@@ -67,111 +78,152 @@ export function GraphLayout({
 
   const coords = (id: string) => positions.find((p) => p.id === id) ?? { x: 50, y: 50 };
 
+  /* ── Relationship-graph data ── */
+  const relData = useMemo(() => {
+    return {
+      nodes: stakeholders.map((s) => ({ id: s.id, label: s.name, stance: s.stance })),
+      edges: stakeholders.flatMap((a, i) =>
+        stakeholders.slice(i + 1).map((b) => ({
+          from: a.id,
+          to: b.id,
+          // mock trust — will wire to real trust_matrix later
+          trust: Math.round((0.2 + Math.random() * 0.6) * 100) / 100,
+        })),
+      ),
+    };
+    // Stable mock: seed from stakeholder ids so it doesn't re-randomize every render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stakeholders]);
+
   return (
     <div
       className="grid min-h-[calc(100vh-220px)] gap-4 p-4"
       style={{ gridTemplateColumns: "1fr 360px" }}
     >
       <div className="flex flex-col gap-3">
-         <div className="relative aspect-[16/10] overflow-hidden rounded-xl border border-hairline bg-surface-card">
-          <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
-            <defs>
-              <pattern id="dtg" width="4" height="4" patternUnits="userSpaceOnUse">
-                <circle cx="2" cy="2" r="0.18" fill="var(--color-muted)" opacity="0.4" />
-              </pattern>
-            </defs>
-            <rect width="100" height="100" fill="url(#dtg)" />
-            {Object.entries(edges).map(([key, count]) => {
-              const [a, b] = key.split("-");
-              const pa = positions.find((p) => stakeholders.find((s) => s.name === a)?.id === p.id);
-              const pb = positions.find((p) => stakeholders.find((s) => s.name === b)?.id === p.id);
-              if (!pa || !pb) return null;
-              return (
-                <line
-                  key={key}
-                  x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y}
-                  stroke="var(--color-ink)"
-                  strokeWidth={Math.min(0.15 + count * 0.08, 0.45)}
-                  opacity={0.32}
+        {/* Mode toggle */}
+        <div className="flex items-center gap-1.5 self-start rounded-lg border border-hairline bg-canvas p-0.5">
+          <button className={TAB_CLS(mode === "conversation")} onClick={() => setMode("conversation")}>
+            Conversation
+          </button>
+          <button className={TAB_CLS(mode === "relationships")} onClick={() => setMode("relationships")}>
+            Relationships
+          </button>
+        </div>
+
+        {/* ── Conversation view ── */}
+        {mode === "conversation" && (
+          <div className="relative aspect-[16/10] overflow-hidden rounded-xl border border-hairline bg-surface-card">
+            <svg className="absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <defs>
+                <pattern id="dtg" width="4" height="4" patternUnits="userSpaceOnUse">
+                  <circle cx="2" cy="2" r="0.18" fill="var(--color-muted)" opacity="0.4" />
+                </pattern>
+              </defs>
+              <rect width="100" height="100" fill="url(#dtg)" />
+              {Object.entries(edges).map(([key, count]) => {
+                const [a, b] = key.split("-");
+                const pa = positions.find((p) => stakeholders.find((s) => s.name === a)?.id === p.id);
+                const pb = positions.find((p) => stakeholders.find((s) => s.name === b)?.id === p.id);
+                if (!pa || !pb) return null;
+                return (
+                  <line
+                    key={key}
+                    x1={pa.x} y1={pa.y} x2={pb.x} y2={pb.y}
+                    stroke="var(--color-ink)"
+                    strokeWidth={Math.min(0.15 + count * 0.08, 0.45)}
+                    opacity={0.32}
+                  />
+                );
+              })}
+              {speakerId && (
+                <circle
+                  cx={coords(speakerId).x}
+                  cy={coords(speakerId).y}
+                  r={3}
+                  fill="none"
+                  stroke="var(--color-primary)"
+                  strokeWidth={0.3}
+                  opacity={0.6}
                 />
+              )}
+            </svg>
+
+            {stakeholders.map((s) => {
+              const p = positions.find((pos) => pos.id === s.id);
+              if (!p) return null;
+              const speaking = s.name === speakerId;
+              return (
+                <div
+                  key={s.id}
+                  className="absolute text-center"
+                  style={{
+                    left: `${p.x}%`, top: `${p.y}%`,
+                    transform: `translate(-50%, -50%) scale(${speaking ? 1.15 : 1})`,
+                    transition: "transform 300ms",
+                  }}
+                >
+                  <Avatar
+                    initials={initialsFromName(s.name)}
+                    size={speaking ? 56 : 48}
+                    speaking={speaking}
+                  />
+                  <div className="mt-[6px] inline-block whitespace-nowrap rounded-full border border-hairline bg-canvas px-2 py-[3px] text-[12px] font-medium text-ink">
+                    {s.name.split(" ")[0]} ·{" "}
+                    <span className="text-muted">{s.role.split(" ")[0] || s.stance}</span>
+                  </div>
+                </div>
               );
             })}
-            {speakerId && (
-              <circle
-                cx={coords(speakerId).x}
-                cy={coords(speakerId).y}
-                r={3}
-                fill="none"
-                stroke="var(--color-primary)"
-                strokeWidth={0.3}
-                opacity={0.6}
-              />
-            )}
-          </svg>
 
-          {stakeholders.map((s) => {
-            const p = positions.find((pos) => pos.id === s.id);
-            if (!p) return null;
-            const speaking = s.name === speakerId;
-            return (
-              <div
-                key={s.id}
-                className="absolute text-center"
-                style={{
-                  left: `${p.x}%`, top: `${p.y}%`,
-                  transform: `translate(-50%, -50%) scale(${speaking ? 1.15 : 1})`,
-                  transition: "transform 300ms",
-                }}
-              >
-                <Avatar
-                  initials={initialsFromName(s.name)}
-                  size={speaking ? 56 : 48}
-                  speaking={speaking}
-                />
-                <div className="mt-[6px] inline-block whitespace-nowrap rounded-full border border-hairline bg-canvas px-2 py-[3px] text-[12px] font-medium text-ink">
-                  {s.name.split(" ")[0]} ·{" "}
-                  <span className="text-muted">{s.role.split(" ")[0] || s.stance}</span>
+            <div className="absolute bottom-3 left-3 flex gap-4 rounded-full border border-hairline bg-canvas px-[14px] py-2">
+              <span className="flex items-center gap-[6px] text-[11px] text-muted">
+                <span className="h-[2px] w-[18px] bg-ink" /> exchange
+              </span>
+              <span className="flex items-center gap-[6px] text-[11px] text-muted">
+                <span className="h-[2px] w-[18px] bg-primary" /> coalition
+              </span>
+              <span className="flex items-center gap-[6px] text-[11px] text-muted">
+                <span className="h-2 w-2 rounded-full bg-primary" /> speaking now
+              </span>
+            </div>
+
+            {current && speakerId && (() => {
+              const sp = coords(speakerId);
+              const right = sp.x < 50;
+              return (
+                <div
+                  className="pointer-events-none absolute rounded-xl border border-hairline bg-canvas px-[14px] py-3 shadow-sm"
+                  style={{
+                    left: right ? `calc(${sp.x}% + 50px)` : "auto",
+                    right: !right ? `calc(${100 - sp.x}% + 50px)` : "auto",
+                    top: `${sp.y}%`,
+                    transform: "translateY(-50%)",
+                    maxWidth: 260,
+                  }}
+                >
+                  <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
+                    Statement
+                  </div>
+                  <div className="font-newsreader text-[15px] leading-[1.35] tracking-[-0.2px] text-ink">
+                    &ldquo;{current.content.slice(0, 120)}{current.content.length > 120 ? "…" : ""}&rdquo;
+                  </div>
                 </div>
-              </div>
-            );
-          })}
-
-          <div className="absolute bottom-3 left-3 flex gap-4 rounded-full border border-hairline bg-canvas px-[14px] py-2">
-            <span className="flex items-center gap-[6px] text-[11px] text-muted">
-              <span className="h-[2px] w-[18px] bg-ink" /> exchange
-            </span>
-            <span className="flex items-center gap-[6px] text-[11px] text-muted">
-              <span className="h-[2px] w-[18px] bg-primary" /> coalition
-            </span>
-            <span className="flex items-center gap-[6px] text-[11px] text-muted">
-              <span className="h-2 w-2 rounded-full bg-primary" /> speaking now
-            </span>
+              );
+            })()}
           </div>
+        )}
 
-          {current && speakerId && (() => {
-            const sp = coords(speakerId);
-            const right = sp.x < 50;
-            return (
-              <div
-                className="pointer-events-none absolute rounded-xl border border-hairline bg-canvas px-[14px] py-3 shadow-sm"
-                style={{
-                  left: right ? `calc(${sp.x}% + 50px)` : "auto",
-                  right: !right ? `calc(${100 - sp.x}% + 50px)` : "auto",
-                  top: `${sp.y}%`,
-                  transform: "translateY(-50%)",
-                  maxWidth: 260,
-                }}
-              >
-                <div className="mb-1 text-[10px] font-bold uppercase tracking-[0.08em] text-muted">
-                  Statement
-                </div>
-                <div className="font-newsreader text-[15px] leading-[1.35] tracking-[-0.2px] text-ink">
-                  &ldquo;{current.content.slice(0, 120)}{current.content.length > 120 ? "…" : ""}&rdquo;
-                </div>
-              </div>
-            );
-          })()}
-        </div>
+        {/* ── Relationship view ── */}
+        {mode === "relationships" && (
+          <div className="aspect-[16/10]">
+            <RelationshipGraph
+              data={relData}
+              width={720}
+              height={450}
+            />
+          </div>
+        )}
 
         <ConflictTimeline turn={turn} totalTurns={totalTurns} />
         <EventLog events={eventLog} />

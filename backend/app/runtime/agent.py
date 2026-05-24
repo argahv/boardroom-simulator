@@ -32,6 +32,9 @@ class AgentRuntime:
         llm: LLMFunc,
         system_prompt_template: str,
         simulation_id: str,
+        behavior_engine: Any = None,
+        memory_system: Any = None,
+        private_thought: Any = None,
     ) -> None:
         self.agent_id = config.id
         self.config = config
@@ -39,6 +42,9 @@ class AgentRuntime:
         self.llm = llm
         self.system_prompt_template = system_prompt_template
         self.simulation_id = simulation_id
+        self.behavior_engine = behavior_engine
+        self.memory_system = memory_system
+        self.private_thought = private_thought
 
         self.memory: list[dict] = []
         self._last_event_index = -1
@@ -87,6 +93,13 @@ class AgentRuntime:
             base -= 10
         if self._consecutive_events_since_bid > 5:
             base += 20
+        if self.behavior_engine is not None:
+            state = self.behavior_engine.get_state_for_llm(self.agent_id)
+            sp = state.get("social_physics", {})
+            if sp.get("tension", 0) > 0.7:
+                base += 15
+            if sp.get("dominance", 0) > 0.7:
+                base += 10
         return max(0, min(100, base))
 
     def _trusted_allies(self) -> set[str]:
@@ -132,8 +145,31 @@ class AgentRuntime:
         )
 
     def _build_turn_prompt(self) -> list[dict[str, Any]]:
+        system_content = self._build_system_prompt()
+        if self.behavior_engine is not None:
+            state = self.behavior_engine.get_state_for_llm(self.agent_id)
+            if state.get("social_physics"):
+                system_content += (
+                    f"\n\nCurrent state — trust: {state['social_physics'].get('trust', 'N/A')}, "
+                    f"tension: {state['social_physics'].get('tension', 'N/A')}, "
+                    f"dominance: {state['social_physics'].get('dominance', 'N/A')}, "
+                    f"credibility: {state['social_physics'].get('credibility', 'N/A')}"
+                )
+            if state.get("cognitive_state"):
+                cs = state["cognitive_state"]
+                de = cs.get("emotion", {})
+                dom_emotion = max(de, key=de.get) if de else "neutral"
+                system_content += (
+                    f"\nYour emotional state — dominant: {dom_emotion}, "
+                    f"confidence: {cs.get('confidence', 'N/A')}, "
+                    f"certainty: {cs.get('certainty', 'N/A')}"
+                )
+            if state.get("allies"):
+                system_content += f"\nYour allies: {', '.join(state['allies'])}"
+            if state.get("rivals"):
+                system_content += f"\nYour rivals: {', '.join(state['rivals'])}"
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._build_system_prompt()},
+            {"role": "system", "content": system_content},
         ]
 
         recent = self.memory[-12:] if len(self.memory) > 12 else self.memory
@@ -200,6 +236,23 @@ class AgentRuntime:
             "reasoning": parsed.get("internal_reasoning", ""),
         }
         await self.space.publish(turn_event)
+        if self.behavior_engine is not None:
+            be_turn = {
+                "agent_id": self.agent_id,
+                "action_type": turn_event.get("action_type", "statement"),
+                "target_id": turn_event.get("directed_at", None),
+                "speaker_id": self.agent_id,
+            }
+            self.behavior_engine.process_turn(be_turn)
+        if self.memory_system is not None:
+            self.memory_system.record_event(
+                event_type="turn",
+                agent_id=self.agent_id,
+                content=turn_event.get("content", ""),
+                action_type=turn_event.get("action_type", "statement"),
+                turn=self._turn_count,
+            )
+            self.memory_system.compress(self.agent_id)
         logger.debug("Agent %s published turn %d", self.agent_id, self._turn_count)
         return turn_event
 

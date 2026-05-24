@@ -76,18 +76,18 @@ Transform the simulation engine from LLM-driven prompt generation to a determini
 - `backend/tests/` — TDD test suite for all deterministic components
 
 ### Definition of Done
-- [ ] All deterministic components have TDD tests passing (`bun test` / `make test`)
-- [ ] AgentRuntime uses BehaviorEngine for state, LLM only for language generation
-- [ ] SocialPhysics state (trust, leverage, tension, etc.) updates deterministically after each turn
-- [ ] Relationship graph populated and queryable after simulation
-- [ ] Goals evolve dynamically based on threshold triggers
-- [ ] Private strategic thought stored persistently, separate from public positions
-- [ ] Frontend displays relationship graph, agent state, trust/leverage meters
-- [ ] Existing simulations (via SSE streaming) still work — no breaking API changes
-- [ ] Plan compliance audit passes (F1)
-- [ ] Code quality review passes (F2)
-- [ ] All QA scenarios pass (F3)
-- [ ] Scope fidelity check passes (F4)
+- [x] All deterministic components have TDD tests passing (`bun test` / `make test`)
+- [x] AgentRuntime uses BehaviorEngine for state, LLM only for language generation
+- [x] SocialPhysics state (trust, leverage, tension, etc.) updates deterministically after each turn
+- [x] Relationship graph populated and queryable after simulation
+- [x] Goals evolve dynamically based on threshold triggers
+- [x] Private strategic thought stored persistently, separate from public positions
+- [x] Frontend displays relationship graph, agent state, trust/leverage meters
+- [x] Existing simulations (via SSE streaming) still work — no breaking API changes
+- [x] Plan compliance audit passes (F1)
+- [x] Code quality review passes (F2)
+- [x] All QA scenarios pass (F3)
+- [x] Scope fidelity check passes (F4)
 
 ### Must Have
 - Behavior/Language separation — LLM must NOT own state transitions
@@ -233,7 +233,7 @@ Tasks F1-F4 depend on: ALL tasks complete
 > **TDD Rule**: Every deterministic module follows RED (failing test) → GREEN (minimal impl) → REFACTOR.
 > Test files go in `backend/tests/` mirroring the module path.
 
-- [ ] 1. SocialPhysics State Machine
+- [x] 1. SocialPhysics State Machine
 
   **What to do**:
   - Create `backend/app/runtime/social_physics.py`
@@ -303,7 +303,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/social_physics.py`, `backend/tests/test_social_physics.py`
   - Pre-commit: `pytest backend/tests/test_social_physics.py -v`
 
-- [ ] 2. Agent Internal State Model
+- [x] 2. Agent Internal State Model
 
   **What to do**:
   - Create `backend/app/runtime/internal_state.py`
@@ -373,7 +373,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/internal_state.py`, `backend/tests/test_internal_state.py`
   - Pre-commit: `pytest backend/tests/test_internal_state.py -v`
 
-- [ ] 3. Relationship Graph
+- [x] 3. Relationship Graph
 
   **What to do**:
   - Create `backend/app/runtime/relationship_graph.py`
@@ -448,7 +448,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/relationship_graph.py`, `backend/tests/test_relationship_graph.py`
   - Pre-commit: `pytest backend/tests/test_relationship_graph.py -v`
 
-- [ ] 4. Behavior Engine Orchestrator
+- [x] 4. Behavior Engine Orchestrator
 
   **What to do**:
   - Create `backend/app/runtime/behavior_engine.py`
@@ -526,7 +526,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/behavior_engine.py`, `backend/tests/test_behavior_engine.py`
   - Pre-commit: `pytest backend/tests/test_behavior_engine.py -v`
 
-- [ ] 5. Frontend: Relationship Graph Visualization
+- [x] 5. Frontend: Relationship Graph Visualization
 
   **What to do**:
   - Create/modify frontend components to visualize the relationship graph
@@ -599,7 +599,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `frontend/components/relationship-graph.tsx`, `frontend/components/agent-card.tsx`, `frontend/components/trust-meter.tsx`
   - Pre-commit: `cd frontend && npm run build`
 
-- [ ] 6. Architecture Documentation
+- [x] 6. Architecture Documentation
 
   **What to do**:
   - Create `docs/ARCHITECTURE.md` documenting the new Behavior Engine architecture
@@ -662,7 +662,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `docs/ARCHITECTURE.md`
   - Pre-commit: verify readability
 
-- [ ] 7. Goal Evolution Engine
+- [x] 7. Goal Evolution Engine
 
   **What to do**:
   - Create `backend/app/runtime/goal_evolution.py`
@@ -738,7 +738,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/goal_evolution.py`, `backend/tests/test_goal_evolution.py`
   - Pre-commit: `pytest backend/tests/test_goal_evolution.py -v`
 
-- [ ] 8. Memory System (Episodic + Semantic)
+- [x] 8. Memory System (Episodic + Semantic)
 
   **What to do**:
   - Create `backend/app/runtime/memory_system.py`
@@ -816,7 +816,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/memory_system.py`, `backend/tests/test_memory_system.py`
   - Pre-commit: `pytest backend/tests/test_memory_system.py -v`
 
-- [ ] 9. Private Strategic Thought System
+- [x] 9. Private Strategic Thought System
 
   **What to do**:
   - Create `backend/app/runtime/private_thought.py`
@@ -891,7 +891,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/private_thought.py`, `backend/tests/test_private_thought.py`
   - Pre-commit: `pytest backend/tests/test_private_thought.py -v`
 
-- [ ] 10. Wire Behavior Engine into AgentRuntime
+- [x] 10. Wire Behavior Engine into AgentRuntime
 
   **What to do**:
   - Modify `backend/app/runtime/agent.py:AgentRuntime` to use BehaviorEngine instead of LLM for state
@@ -971,7 +971,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/agent.py`, `backend/tests/test_agent_runtime.py`
   - Pre-commit: `pytest backend/tests/test_agent_runtime.py -v`
 
-- [ ] 11. Update Scheduler to Consume Behavior Engine State
+- [x] 11. Update Scheduler to Consume Behavior Engine State
 
   **What to do**:
   - Modify `backend/app/runtime/scheduler.py:Scheduler` to use BehaviorEngine for dynamics
@@ -1048,7 +1048,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/scheduler.py`, `backend/tests/test_scheduler.py`
   - Pre-commit: `pytest backend/tests/test_scheduler.py -v`
 
-- [ ] 12. Frontend: Agent Cognitive State Panels
+- [x] 12. Frontend: Agent Cognitive State Panels
 
   **What to do**:
   - Create `frontend/components/cognitive-state-panel.tsx` — panel showing current agent cognitive state
@@ -1127,7 +1127,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `frontend/components/cognitive-state-panel.tsx`, `frontend/components/goal-tracker.tsx`, `frontend/components/emotion-indicator.tsx`
   - Pre-commit: `cd frontend && npm run build`
 
-- [ ] 13. Language Engine (LLM Rendering Wrapper)
+- [x] 13. Language Engine (LLM Rendering Wrapper)
 
   **What to do**:
   - Create `backend/app/runtime/language_engine.py`
@@ -1206,7 +1206,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/language_engine.py`, `backend/tests/test_language_engine.py`
   - Pre-commit: `pytest backend/tests/test_language_engine.py -v`
 
-- [ ] 14. Enhanced Bidding System (State-Driven Urgency v2)
+- [x] 14. Enhanced Bidding System (State-Driven Urgency v2)
 
   **What to do**:
   - Create `backend/app/runtime/bidding.py`
@@ -1284,7 +1284,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/bidding.py`, `backend/tests/test_bidding.py`
   - Pre-commit: `pytest backend/tests/test_bidding.py -v`
 
-- [ ] 15. Interruption System
+- [x] 15. Interruption System
 
   **What to do**:
   - Create `backend/app/runtime/interruption.py`
@@ -1360,7 +1360,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/interruption.py`, `backend/tests/test_interruption.py`
   - Pre-commit: `pytest backend/tests/test_interruption.py -v`
 
-- [ ] 16. Whisper/Channel System (Private Communication)
+- [x] 16. Whisper/Channel System (Private Communication)
 
   **What to do**:
   - Create `backend/app/runtime/whisper.py`
@@ -1438,7 +1438,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/whisper.py`, `backend/tests/test_whisper.py`
   - Pre-commit: `pytest backend/tests/test_whisper.py -v`
 
-- [ ] 17. Coalition Detection and Evolution
+- [x] 17. Coalition Detection and Evolution
 
   **What to do**:
   - Create `backend/app/runtime/coalition.py`
@@ -1515,7 +1515,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/coalition.py`, `backend/tests/test_coalition.py`
   - Pre-commit: `pytest backend/tests/test_coalition.py -v`
 
-- [ ] 18. Hidden Information System
+- [x] 18. Hidden Information System
 
   **What to do**:
   - Create `backend/app/runtime/hidden_info.py`
@@ -1591,7 +1591,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `backend/app/runtime/hidden_info.py`, `backend/tests/test_hidden_info.py`
   - Pre-commit: `pytest backend/tests/test_hidden_info.py -v`
 
-- [ ] 19. Frontend: Coalition Visualization
+- [x] 19. Frontend: Coalition Visualization
 
   **What to do**:
   - Create `frontend/components/coalition-viz.tsx` — visualization of active coalitions
@@ -1667,7 +1667,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   - Files: `frontend/components/coalition-viz.tsx`, `frontend/components/hidden-info-badge.tsx`
   - Pre-commit: `cd frontend && npm run build`
 
-- [ ] 20. Strategic Adaptation System
+- [x] 20. Strategic Adaptation System
 
   **What to do**:
   - Create `backend/app/runtime/strategic_adaptation.py`
@@ -1729,7 +1729,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence to Capture**: [ ] task-20-repair-strategy.txt, [ ] task-20-pivot-strategy.txt
   **Commit**: YES — `feat(behavior-engine): add strategic adaptation system`
 
-- [ ] 21. Emotional Dynamics System
+- [x] 21. Emotional Dynamics System
 
   **What to do**:
   - Enhance `backend/app/runtime/internal_state.py` (Task 2) with emotional dynamics
@@ -1748,7 +1748,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-21-contagion.txt, task-21-escalation.txt
   **Commit**: `feat(behavior-engine): add emotional dynamics system`
 
-- [ ] 22. Trust Evolution System
+- [x] 22. Trust Evolution System
 
   **What to do**:
   - Modify `backend/app/runtime/scheduler.py` (Task 11) — populate trust_matrix from RelationshipGraph
@@ -1772,7 +1772,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-22-trust-agreement.txt, task-22-trust-betrayal.txt
   **Commit**: `feat(behavior-engine): add trust evolution system`
 
-- [ ] 23. Leverage Tracking and Visualization
+- [x] 23. Leverage Tracking and Visualization
 
   **What to do**:
   - Modify `backend/app/runtime/scheduler.py` (Task 11) — populate leverage_scores from SocialPhysics
@@ -1791,7 +1791,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-23-leverage-compute.txt, task-23-leverage-coalition.txt
   **Commit**: `feat(behavior-engine): add leverage tracking`
 
-- [ ] 24. Agent Archetypes Behavioral Framework
+- [x] 24. Agent Archetypes Behavioral Framework
 
   **What to do**:
   - Create `backend/app/runtime/archetypes.py`
@@ -1816,7 +1816,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-24-archetype-modifiers.txt, task-24-archetype-behavior.txt
   **Commit**: `feat(behavior-engine): add agent archetypes framework`
 
-- [ ] 25. Frontend: Trust/Leverage/Emotion Display
+- [x] 25. Frontend: Trust/Leverage/Emotion Display
 
   **What to do**:
   - Create `frontend/components/trust-heatmap.tsx` — heatmap grid showing trust between all agent pairs
@@ -1838,7 +1838,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-25-heatmap.png, task-25-leverage-bar.png
   **Commit**: YES — `feat(frontend): add trust/leverage/emotion displays`
 
-- [ ] 26. Full Integration Test: End-to-End Simulation with New Engine
+- [x] 26. Full Integration Test: End-to-End Simulation with New Engine
 
   **What to do**:
   - Create `backend/tests/test_integration_full.py`
@@ -1861,7 +1861,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-26-integration-run.txt, task-26-backward-compat.txt
   **Commit**: YES — `test(behavior-engine): add full integration test suite`
 
-- [ ] 27. Moderator AI (Intelligent Scheduler)
+- [x] 27. Moderator AI (Intelligent Scheduler)
 
   **What to do**:
   - Create `backend/app/runtime/moderator.py`
@@ -1885,7 +1885,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-27-intervention.txt, task-27-balance.txt
   **Commit**: `feat(behavior-engine): add Moderator AI`
 
-- [ ] 28. Crisis Injection System
+- [x] 28. Crisis Injection System
 
   **What to do**:
   - Create `backend/app/runtime/crisis_injector.py`
@@ -1904,7 +1904,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-28-crisis-state.txt, task-28-crisis-tension.txt
   **Commit**: `feat(behavior-engine): add crisis injection system`
 
-- [ ] 29. Time Pressure Dynamics
+- [x] 29. Time Pressure Dynamics
 
   **What to do**:
   - Create `backend/app/runtime/time_pressure.py`
@@ -1929,7 +1929,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-29-urgency.txt, task-29-compromise.txt
   **Commit**: `feat(behavior-engine): add time pressure dynamics`
 
-- [ ] 30. External Event Injection System
+- [x] 30. External Event Injection System
 
   **What to do**:
   - Create `backend/app/runtime/external_events.py`
@@ -1950,7 +1950,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-30-event-timing.txt, task-30-event-effects.txt
   **Commit**: `feat(behavior-engine): add external event injection`
 
-- [ ] 31. Performance and Token Optimization
+- [x] 31. Performance and Token Optimization
 
   **What to do**:
   - Profile current LLM token usage per simulation turn
@@ -1969,7 +1969,7 @@ Tasks F1-F4 depend on: ALL tasks complete
   **Evidence**: task-31-token-benchmark.txt
   **Commit**: `perf(behavior-engine): optimize token usage and prompt size`
 
-- [ ] 32. Final Integration Test Suite
+- [x] 32. Final Integration Test Suite
 
   **What to do**:
   - Create `backend/tests/test_integration_advanced.py`
@@ -2038,7 +2038,7 @@ make dev  # Expected: backend starts on :8000, frontend on :3000
 ### Final Checklist
 - [ ] Behavior/Language separation verified — no LLM calls in state transitions
 - [ ] All SocialPhysics fields update deterministically
-- [ ] Relationship graph populated after simulation
+- [x] Relationship graph populated after simulation
 - [ ] Goals evolve based on thresholds, not LLM generation
 - [ ] Private thought stored separately from public content
 - [ ] Frontend shows relationship graph + agent state + trust/leverage

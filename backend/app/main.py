@@ -10,7 +10,14 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+import importlib.util as _iu
+from pathlib import Path as _P
+_be_spec = _iu.spec_from_file_location("_be_main",
+        _P(__file__).resolve().parent / "runtime" / "behavior_engine.py")
+_be_mod = _iu.module_from_spec(_be_spec)
+_be_spec.loader.exec_module(_be_mod)
+create_engine = _be_mod.make_engine
 
 from . import config
 from .database import initialize_database, close_database, get_database
@@ -20,7 +27,8 @@ from .models import (
     PersonalityProfile,
 )
 from .runtime import run_simulation_v2
-from .graph.driver import get_driver, close_driver
+
+from .graph import driver as graph_driver
 from .graph.schema import init_schema
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
@@ -83,8 +91,8 @@ async def request_logging_middleware(request: Request, call_next):
 @app.on_event("startup")
 async def startup_event() -> None:
     await initialize_database()
-    if neo4j_enabled():
-        driver = get_driver()
+    if graph_driver.neo4j_enabled():
+        driver = graph_driver.get_driver()
         if driver is not None:
             init_schema(driver)
 
@@ -96,7 +104,7 @@ async def startup_event() -> None:
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
     await close_database()
-    close_driver()
+    graph_driver.close_driver()
 
 
 class RunRequest(BaseModel):
@@ -403,7 +411,9 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
                 yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
                 return
 
-            async for event in run_simulation_v2(config, simulation_id):
+            # Create BehaviorEngine for this simulation
+            _be = create_engine([s.id for s in config.stakeholders])
+            async for event in run_simulation_v2(config, simulation_id, behavior_engine=_be):
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") == "turn" and event.get("turn_index") is not None:
                     asyncio.ensure_future(_save_v2_turn(simulation_id, event["turn_index"], json.dumps(event)))

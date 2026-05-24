@@ -13,3 +13,5 @@ tiktoken>=0.8.0
 sentence-transformers>=3.0.0
 redis>=5.0.0
 rq>=1.16.0
+neo4j
+asyncpg>=0.30.0
