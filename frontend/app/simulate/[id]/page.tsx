@@ -7,7 +7,7 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulationV2, streamSimulationV2, postmortemV2 } from "@/lib/api";
+import { fetchSimulationV2, streamSimulationV2, postmortemV2, exportSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
 import type { SimulationV2Config } from "@/lib/types";
 
@@ -37,6 +37,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const [postmortem, setPostmortem] = useState<Record<string, unknown> | null>(null);
   const [loadingPostmortem, setLoadingPostmortem] = useState(false);
   const [stateSnapshots, setStateSnapshots] = useState<Record<string, unknown>[]>([]);
+  const [isReplay, setIsReplay] = useState(false);
 
   const streamCtrl = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -46,7 +47,15 @@ export default function WarRoomPage({ params }: PageProps) {
 
   const baseInterval = 3800;
 
+  const simState = useSimulationState({
+    mode: isReplay ? "replay" : "live",
+    events: stateSnapshots,
+    simulationId: isReplay ? id : undefined,
+    turnIndex: isReplay ? playTurn : undefined,
+  });
+
   useEffect(() => {
+    if (isReplay) return;
     try {
       const saved = sessionStorage.getItem(persistKey);
       if (saved) {
@@ -61,9 +70,10 @@ export default function WarRoomPage({ params }: PageProps) {
         if (state.stateSnapshots?.length) setStateSnapshots(state.stateSnapshots);
       }
     } catch {}
-  }, [id]);
+  }, [id, isReplay]);
 
   useEffect(() => {
+    if (isReplay) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       try {
@@ -73,35 +83,41 @@ export default function WarRoomPage({ params }: PageProps) {
       } catch {}
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey]);
+  }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey, isReplay]);
 
   useEffect(() => {
     fetchSimulationV2(id)
-      .then((data) => setConfig(data.config ?? null))
-      .catch(() => {});
-    // Always start stream — backend handles replay for completed sims via DB turns
-    startStream();
+      .then((data) => {
+        setConfig(data.config ?? null);
+        if (data.status === "complete") {
+          setIsReplay(true);
+        } else {
+          startStream();
+        }
+      })
+      .catch(() => {
+        setIsReplay(false);
+      });
     return () => streamCtrl.current?.abort();
   }, [id]);
 
   useEffect(() => {
-    if (!playing || turns.length === 0) {
-      if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-      return;
-    }
-    if (playTurn >= turns.length - 1 && status === "complete") { setPlaying(false); return; }
-    if (playTurn >= turns.length - 1) return;
+    if (!playing) { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } return; }
+    const maxTurn = isReplay ? Math.max(0, simState.totalTurns - 1) : turns.length - 1;
+    if (maxTurn <= 0) return;
+    if (playTurn >= maxTurn && status === "complete") { setPlaying(false); return; }
+    if (playTurn >= maxTurn) return;
     const interval = baseInterval / speedMul;
-    timerRef.current = setTimeout(() => setPlayTurn((t) => Math.min(turns.length - 1, t + 1)), interval);
+    timerRef.current = setTimeout(() => setPlayTurn((t) => Math.min(maxTurn, t + 1)), interval);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [playing, playTurn, turns.length, speedMul, status]);
+  }, [playing, playTurn, turns.length, speedMul, status, isReplay, simState.totalTurns]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
   }, [playTurn]);
 
   const startStream = () => {
-    if (status === "running") return;
+    if (status === "running" || isReplay) return;
     setError("");
     setStatus("running");
     setPlaying(true);
@@ -171,15 +187,16 @@ export default function WarRoomPage({ params }: PageProps) {
   };
 
   useEffect(() => {
+    if (isReplay) return;
     const simDone = status === "complete" && playTurn >= turns.length - 1;
     if (simDone && !postmortem && !loadingPostmortem) {
       loadPostmortem();
     }
-  }, [status, playTurn, turns.length, postmortem, loadingPostmortem]);
+  }, [status, playTurn, turns.length, postmortem, loadingPostmortem, isReplay]);
 
   const current = turns[playTurn];
-  const done = status === "complete" && playTurn >= turns.length - 1;
-  const live = status === "running";
+  const done = !isReplay && status === "complete" && playTurn >= turns.length - 1;
+  const live = !isReplay && status === "running";
   const speakerId = current?.speaker ?? null;
   const subjectName = config?.subject?.name ?? "Debate";
 
@@ -191,8 +208,6 @@ export default function WarRoomPage({ params }: PageProps) {
   const eventLog = turns.slice(0, playTurn + 1).map((t) => ({
     t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 60)}${t.content.length > 60 ? "…" : ""}`, type: "agent" as const,
   }));
-
-  const simState = useSimulationState(stateSnapshots as Record<string, unknown>[]);
 
   const nameMap: Record<string, string> = useMemo(() => {
     const map: Record<string, string> = {};
@@ -208,6 +223,11 @@ export default function WarRoomPage({ params }: PageProps) {
         <div style={{ padding: "24px 32px", borderBottom: "1px solid var(--color-hairline)" }}>
           <h1 style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 48, fontWeight: 700, marginBottom: 12 }}>
             {subjectName}
+            {isReplay && (
+              <span style={{ marginLeft: 12, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", verticalAlign: "middle", padding: "4px 10px", borderRadius: 9999, background: "var(--color-primary)", color: "#fff" }}>
+                REPLAY
+              </span>
+            )}
           </h1>
           {config?.subject?.description && (
             <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: "50%", lineHeight: 1.6 }}>
@@ -224,23 +244,33 @@ export default function WarRoomPage({ params }: PageProps) {
 
         <ControlBar
           turn={playTurn}
-          total={Math.max(turns.length, 30)}
-          status={done ? "complete" : playing && live ? "running" : "idle"}
+          total={isReplay ? Math.max(1, simState.totalTurns) : Math.max(turns.length, 30)}
+          status={isReplay ? "complete" : (done ? "complete" : playing && live ? "running" : "idle")}
           speedMul={speedMul}
           layout={layout}
           scenarioLabel={subjectName.split(" ")[0]}
           voltage={config?.voltage}
-          onPlay={() => { if (turns.length === 0) startStream(); setPlaying(true); }}
+          onPlay={() => { if (isReplay) { setPlaying(true); return; } if (turns.length === 0) startStream(); setPlaying(true); }}
           onPause={() => setPlaying(false)}
           onRestart={() => { setPlayTurn(0); setPlaying(true); }}
           onStepBack={() => setPlayTurn((t) => Math.max(0, t - 1))}
-          onStepForward={() => setPlayTurn((t) => Math.min(turns.length - 1, t + 1))}
+          onStepForward={() => setPlayTurn((t) => {
+            const max = isReplay ? Math.max(0, simState.totalTurns - 1) : turns.length - 1;
+            return Math.min(max, t + 1);
+          })}
           onSpeedChange={setSpeedMul}
           onLayoutChange={setLayout}
         />
 
         <div style={{ flex: 1, overflowY: "auto", background: "var(--color-canvas)" }}>
-          {layout === "roster" && (
+          {isReplay && simState.loading && (
+            <div style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: 64, flexDirection: "column", gap: 16 }}>
+              <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-ink/30 border-t-ink" />
+              <span style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading replay snapshots…</span>
+            </div>
+          )}
+
+          {(!isReplay || !simState.loading) && layout === "roster" && (
             <RosterLayout
               turn={playTurn}
               current={current}
@@ -255,7 +285,7 @@ export default function WarRoomPage({ params }: PageProps) {
               nameMap={nameMap}
             />
           )}
-          {layout === "table" && (
+          {(!isReplay || !simState.loading) && layout === "table" && (
             <TableLayout
               turn={playTurn}
               current={current}
@@ -269,7 +299,7 @@ export default function WarRoomPage({ params }: PageProps) {
               nameMap={nameMap}
             />
           )}
-          {layout === "graph" && (
+          {(!isReplay || !simState.loading) && layout === "graph" && (
             <GraphLayout
               turn={playTurn}
               current={current}
@@ -285,7 +315,7 @@ export default function WarRoomPage({ params }: PageProps) {
           )}
 
           {done && !postmortem && (
-            <div style={{ textAlign: "center", padding: "12px 16px 24px" }}>
+            <div style={{ textAlign: "center", padding: "12px 16px 24px", display: "flex", justifyContent: "center", gap: 12 }}>
               <button
                 onClick={loadPostmortem}
                 disabled={loadingPostmortem}
@@ -298,19 +328,33 @@ export default function WarRoomPage({ params }: PageProps) {
                   </span>
                 ) : "Generate postmortem"}
               </button>
+              <a
+                href={exportSimulation(id)}
+                download
+                style={{ padding: "10px 24px", borderRadius: 9999, background: "transparent", color: "var(--color-ink)", border: "1px solid var(--color-ink)", fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+              >
+                Export JSON
+              </a>
             </div>
           )}
 
           {postmortem && (
             <>
               <div style={{ padding: 16, maxWidth: 700, margin: "0 auto 0" }}>
-                <div className="mb-4 text-center">
+                <div className="mb-4 text-center" style={{ display: "flex", justifyContent: "center", gap: 12 }}>
                   <a
                     href={`/simulate/${id}/postmortem`}
                     className="inline-flex items-center gap-1.5 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-canvas transition hover:bg-ink/80 no-underline"
                   >
                     View full postmortem analysis
                     <span className="text-lg">→</span>
+                  </a>
+                  <a
+                    href={exportSimulation(id)}
+                    download
+                    style={{ padding: "10px 24px", borderRadius: 9999, background: "transparent", color: "var(--color-ink)", border: "1px solid var(--color-ink)", fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "none", display: "inline-flex", alignItems: "center" }}
+                  >
+                    Export JSON
                   </a>
                 </div>
               </div>

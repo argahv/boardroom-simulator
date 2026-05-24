@@ -1,24 +1,63 @@
 # Boardroom Simulator
 
-Multi-agent negotiation simulator — **FastAPI + LangGraph** backend and **Next.js 16** frontend. Models enterprise deal-room dynamics: agents with conflicting incentives debate term sheets, form coalitions, escalate, and compromise. Default scenario is a startup vs. enterprise partnership negotiation.
+A **synthetic social operating system** — multi-agent negotiation simulator where AI stakeholders with conflicting incentives debate, form coalitions, escalate, compromise, feel emotions, and execute multi-turn strategies.
+
+Not a chatbot. An **event-driven cognitive society simulator**.
 
 ## Architecture
 
-**v2 Multi-Agent Architecture** — replaces the original single-orchestrator with a **LangGraph StateGraph** workflow:
+### Core Design Principle
+
+**Language Generation** is separated from **Behavioral State Evolution**.
+
+The LLM generates dialogue, tactical reasoning, and persuasive language.
+Deterministic systems maintain coherence, social continuity, emotional state, and strategic evolution.
+
+### 6-Layer Architecture
 
 ```
-select_speaker → generate_turn (role-tooled agent) → update_heatmap → should_continue → END
+Layer 6: Narrative Layer (LLM)
+Layer 5: Strategic Layer (planning, subgoals)
+Layer 4: Cognitive Layer (emotions, modulation, urgency)
+Layer 3: Social Physics Layer (trust, leverage, tension, etc.)
+Layer 2: Relationship Layer (NxN pairwise matrix)
+Layer 1: Procedural Layer (events, scheduling, bidding)
 ```
 
-- **Specialized agents** per stakeholder (CFO, Legal, CTO) with domain-specific tool bindings
-- **Speaker selection**: 4 algorithms — random, coalition-based, directed-at, weighted-random by incentive × voltage
-- **Memory**: Chroma vector store with per-agent semantic retrieval (OpenAI `text-embedding-3-small`)
-- **Structured outputs**: Pydantic models for every turn, heatmap, conflict timeline
-- **Guardrails**: Input content filter + jailbreak detector, output hallucination/contradiction validators
-- **Scoring**: Confidence trends, consensus rating, objection topology analysis
-- **State persistence**: Checkpoint system (disk-serialized after each turn, resume-capable)
-- **Cost tracking**: Per-turn token counts + cost estimation streamed via SSE
-- **Optional graph analytics**: Neo4j 5 (docker-compose) for relationship mining
+### What Makes This Different
+
+| Aspect | Typical Agent System | This System |
+|--------|---------------------|-------------|
+| **State** | LLM context window | Deterministic state machines + event sourcing |
+| **Autonomy** | Sequential turns | Async, reactive, event-driven (`wait_for_change()`) |
+| **Relationships** | Implicit in prompts | Explicit NxN matrix (trust, fear, admiration, rivalry, alliance, dependency) |
+| **Emotions** | Described in text | Numeric state with **causal behavioral effects** |
+| **Strategy** | None (reactive) | Multi-turn plans with subgoal decomposition |
+| **Urgency** | Round-robin or random | **Hybrid** — deterministic formula + LLM-inferred strategic importance |
+| **Debugging** | Print statements | Replay, state diff, 6+ visualization panels |
+
+## Behavioral Dynamics
+
+### Emotional Causality
+
+Emotions **causally shape behavior** — not just dialogue tone:
+
+| Emotion | Behavioral Effect |
+|---------|------------------|
+| **anger** ≥ 0.7 | interrupt_bias +0.4, compromise_bias -0.3, urgency +15 |
+| **fear** ≥ 0.6 | challenge_bias -0.2, coalition_bias +0.2 |
+| **joy** ≥ 0.7 | compromise_bias +0.2, urgency -10 |
+| **shame** ≥ 0.6 | withdraws (speaks less, interrupts less) |
+
+*See [`docs/behavioral-dynamics.md`](docs/behavioral-dynamics.md) for full rule table and scenarios.*
+
+### Hybrid Urgency
+
+Bidding is **60% deterministic formula** (personality + state + emotions) **+ 40% LLM strategy score** (inferred strategic importance from recent context). 2-second timeout with graceful fallback.
+
+### Strategic Horizon
+
+Agents maintain **multi-turn plans** with subgoals. Triggers (e.g., `trust_collapse`, `credibility_crisis`) auto-create plans ("rebuild trust", "defend position"). Plans are injected into the LLM's system prompt each turn.
 
 ## Prerequisites
 
@@ -26,7 +65,7 @@ select_speaker → generate_turn (role-tooled agent) → update_heatmap → shou
 - Node.js 20+
 - OpenRouter API key (`OPENROUTER_API_KEY`)
 
-## Quick start
+## Quick Start
 
 ```bash
 # Backend
@@ -43,76 +82,46 @@ npm run dev
 
 API docs at `http://127.0.0.1:8000/docs` · App at `http://localhost:3000`
 
-## Docs
-
-| Doc | What's inside |
-|---|---|
-| [`SETUP.md`](SETUP.md) | Full setup guide including Redis/RQ workers, env vars, architecture deep-dive, migration notes |
-| [`docs/MVP.md`](docs/MVP.md) | MVP scope, target user, success metrics |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased roadmap with success gates |
-| [`docs/tech-stack.md`](docs/tech-stack.md) | Technology decisions and rationale |
-| [`.sisyphus/plans/agentic-architecture.md`](.sisyphus/plans/agentic-architecture.md) | v2 architecture design |
-| [`.sisyphus/plans/implementation-plan.md`](.sisyphus/plans/implementation-plan.md) | Implementation plan |
-
 ## Frontend
 
-- **War Room** (`/simulate/[id]`) — real-time SSE streaming with 3 layout modes:
-  - **Roster** — avatar grid with speech bubbles, heatmap, conflict timeline
-  - **Graph** — force-directed stakeholder graph with coalition edges
-  - **Table** — chronological event log
-- **Wizard** (`/simulate/new`) — 3-step simulation creation (background → stakeholders → env flags)
-- **Persona Library** (`/personas`) — CRUD for stakeholders with archetype filter, search, incentive tuning, hidden agendas
+- **War Room** (`/simulate/[id]`) — real-time SSE streaming + **replay mode** for completed simulations
+  - **Roster** — avatar grid with emotion indicators, trust/leverage panels, coalition tracker, sentiment graph
+  - **Graph** — force-directed stakeholder graph (conversation flow + trust relationship modes)
+  - **Table** — positional seating with speech bubble and trust connection lines
+  - **State Diff Panel** — per-turn color-coded changes in social physics
+  - **Emotional Influence Panel** — active bias bars with emotion source mapping
+  - **Strategic Plan Panel** — plan goals, subgoals, and progress
+- **Agent Detail** (`/personas/[slug]`) — personality profile, emotional arc, semantic memories, goals & strategy
+- **Wizard** (`/simulate/new`) — simulation creation (background → stakeholders → env flags)
+- **Analytics** (`/analytics`) — cross-simulation aggregates
 - **Postmortem** — confidence scoring, objection topology, consensus rating
 
-### Components
-
-`Avatar` · `ActionGlyph` · `ControlBar` · `SimBadge` · `Voltage` · `TurnDisplay` · `AppShell`
-
-## Backend
-
-### Agent tool bindings
-
-| Agent | Tools | Purpose |
-|---|---|---|
-| **CFO** | `calculate_roi` · `check_financials` · `calculate_burn_rate` | NPV/IRR, financial health ratios, runway projections |
-| **Legal** | `query_clause` · `compliance_check` | 33-clause DB, GDPR/HIPAA/SOC2 scoring |
-| **CTO** | `assess_tech_stack` · `check_integration` | Architecture scoring, API compatibility |
-
-### Key endpoints
+## Key Endpoints
 
 | Method | Path | Description |
-|---|---|---|
-| POST | `/v2/simulations` | Create simulation |
-| GET | `/v2/simulations/{id}` | Get config + turns |
-| POST | `/v2/simulations/{id}/run` | Execute (LangGraph workflow) |
-| GET | `/v2/simulations/{id}/stream` | SSE stream |
-| POST | `/v2/simulations/{id}/turns` | Inject human turn |
-| GET | `/v2/simulations/{id}/postmortem` | Generate analysis |
-| GET | `/api/stakeholders` | List personas |
-| POST | `/api/stakeholders` | Create persona |
-| GET | `/library` | Default persona library |
-| GET | `/scenario/partnership` | Canned scenario for QA |
+|--------|------|-------------|
+| POST | `/simulations` | Create simulation |
+| GET | `/simulations/{id}/stream` | SSE stream (live) |
+| GET | `/simulations/{id}/replay` | Ordered state snapshots for replay |
+| GET | `/simulations/{id}/export` | Full simulation JSON download |
+| POST | `/simulations/{id}/inject` | Human turn injection |
+| POST | `/simulations/{id}/postmortem` | LLM-generated analysis |
+| GET | `/agents/{name}/detail` | Agent profile + goals + strategy |
 
-### Optional services
+## Docs
 
-```bash
-# Neo4j (graph analytics)
-docker compose up -d neo4j     # http://localhost:7474
-
-# Redis + RQ workers (async job queue)
-docker run --name boardroom-redis -p 6379:6379 -d redis:7
-python -m app.workers.simulation_worker
-python -m app.workers.postmortem_worker
-```
+| Doc | What's Inside |
+|-----|---------------|
+| [`docs/architecture-deep-dive.md`](docs/architecture-deep-dive.md) | Full component map, data flows, emergent properties, Layer 1-6 breakdown |
+| [`docs/behavioral-dynamics.md`](docs/behavioral-dynamics.md) | Emotional modulation rules, hybrid urgency mechanics, strategic planning scenarios, scenario traces |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Behavior Engine architecture (v2 runtime) |
+| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Phased roadmap with success gates |
+| [`docs/tech-stack.md`](docs/tech-stack.md) | Technology decisions and rationale |
+| [`docs/snapshot-schema.md`](docs/snapshot-schema.md) | State snapshot field reference |
 
 ## Verification
 
 ```bash
-./test-application.sh
+cd backend && python -m pytest tests/
+cd frontend && npx tsc --noEmit
 ```
-
-Tests: backend health, frontend reachable, stakeholder CRUD, simulation creation, env config.
-
----
-
-*See [`SETUP.md`](SETUP.md) for detailed installation, environment variables, production checklist, and troubleshooting.*

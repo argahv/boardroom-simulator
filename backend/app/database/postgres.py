@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -89,6 +90,31 @@ CREATE TABLE IF NOT EXISTS v2_postmortems (
 
 -- Migration: drop FK if it exists from earlier schema versions
 ALTER TABLE v2_postmortems DROP CONSTRAINT IF EXISTS v2_postmortems_simulation_id_fkey;
+
+CREATE TABLE IF NOT EXISTS v2_state_snapshots (
+    id            TEXT PRIMARY KEY,
+    simulation_id TEXT NOT NULL REFERENCES v2_simulations(simulation_id),
+    turn_index    INTEGER NOT NULL,
+    snapshot_json JSONB NOT NULL,
+    version       INTEGER NOT NULL DEFAULT 1,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON v2_state_snapshots(simulation_id, turn_index);
+
+CREATE TABLE IF NOT EXISTS v2_agent_goals (
+    id            TEXT PRIMARY KEY,
+    simulation_id TEXT NOT NULL,
+    agent_id      TEXT NOT NULL,
+    turn_index    INTEGER NOT NULL,
+    goal_text     TEXT NOT NULL,
+    priority      REAL NOT NULL,
+    source        TEXT NOT NULL,
+    is_active     INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goals_sim  ON v2_agent_goals(simulation_id);
 """
 
 
@@ -444,9 +470,11 @@ class PostgresBackend(DatabaseBackend):
             rows = await conn.fetch("""
                 SELECT id::text AS simulation_id,
                        subject_name AS name,
+                       subject_description AS description,
                        status,
                        total_participants AS stakeholder_count,
                        voltage,
+                       model_temperature,
                        created_at
                 FROM simulations
                 ORDER BY created_at DESC
@@ -455,7 +483,7 @@ class PostgresBackend(DatabaseBackend):
             result = []
             for r in rows:
                 d = dict(r)
-                d["subject"] = {"name": d.pop("name", "")}
+                d["subject"] = {"name": d.pop("name", ""), "description": d.pop("description", "")}
                 result.append(d)
             return result
 
@@ -491,7 +519,7 @@ class PostgresBackend(DatabaseBackend):
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT
-                    p.slug, p.name, p.role, p.focus, p.backstory,
+                    p.id, p.slug, p.name, p.role, p.focus, p.backstory,
                     p.hidden_agenda, p.tags, p.metadata,
                     COALESCE(sim_stats.sim_count, 0) AS sim_count,
                     COALESCE(sim_stats.total_turns, 0) AS total_turns,
@@ -530,9 +558,20 @@ class PostgresBackend(DatabaseBackend):
                 d["total_turns"] = d.pop("total_turns", 0)
                 tpls = d.pop("template_names", "[]")
                 d["templates"] = json.loads(tpls) if isinstance(tpls, str) else tpls
-                d["id"] = d.pop("slug", "")
+                d["slug"] = d.get("slug", "")
                 result.append(d)
             return result
+
+    async def get_agent_by_id(self, persona_id: str) -> Optional[dict]:
+        """Look up persona by UUID primary key."""
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, slug, name, role, focus, backstory, hidden_agenda, tags, personality, metadata "
+                "FROM personas WHERE id = $1::uuid LIMIT 1",
+                persona_id,
+            )
+            return dict(row) if row else None
 
     async def get_agent_by_name(self, name: str) -> Optional[dict]:
         pool = self._pool_or_raise()
@@ -552,7 +591,8 @@ class PostgresBackend(DatabaseBackend):
             )
             return dict(prow) if prow else None
 
-    async def get_agent_simulations(self, name: str) -> list[dict]:
+    async def get_agent_simulations_by_id(self, persona_id: str) -> list[dict]:
+        """Look up simulations by persona UUID (matches personas.id)."""
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
@@ -561,12 +601,13 @@ class PostgresBackend(DatabaseBackend):
                        s.created_at
                 FROM simulation_participants sp
                 JOIN simulations s ON s.id = sp.simulation_id
-                WHERE sp.name = $1
+                WHERE sp.persona_id = $1::uuid
                 ORDER BY s.created_at DESC
-            """, name)
+            """, persona_id)
             return [dict(r) for r in rows]
 
-    async def get_agent_turns(self, name: str, limit: int = 50) -> list[dict]:
+    async def get_agent_turns_by_id(self, persona_id: str, limit: int = 50) -> list[dict]:
+        """Look up turns by persona UUID (matches personas.id)."""
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
@@ -576,10 +617,10 @@ class PostgresBackend(DatabaseBackend):
                 FROM turns t
                 JOIN simulation_participants sp ON sp.id = t.participant_id
                 JOIN simulations s ON s.id = t.simulation_id
-                WHERE sp.name = $1
+                WHERE sp.persona_id = $1::uuid
                 ORDER BY t.created_at DESC
                 LIMIT $2
-            """, name, limit)
+            """, persona_id, limit)
             return [dict(r) for r in rows]
 
     # ── New Schema Writes (dual-write from main.py) ─────────────────────
@@ -746,6 +787,96 @@ class PostgresBackend(DatabaseBackend):
             return None
 
 
+    # ------------------------------------------------------------------
+    # v2 State Snapshots
+    # ------------------------------------------------------------------
+
+    async def create_state_snapshot(
+        self, simulation_id: str, turn_index: int, snapshot_json: str, version: int = 1
+    ) -> str:
+        pool = self._pool_or_raise()
+        snapshot_id = str(uuid.uuid4())
+        now = self._now()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO v2_state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at)
+                   VALUES ($1, $2, $3, $4::jsonb, $5, $6)""",
+                snapshot_id, simulation_id, turn_index, snapshot_json, version, now,
+            )
+        return snapshot_id
+
+    async def get_state_snapshots_by_simulation(self, simulation_id: str) -> list[dict]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = $1 ORDER BY turn_index ASC",
+                simulation_id,
+            )
+        result = []
+        for row in rows:
+            d = dict(row)
+            if isinstance(d["snapshot_json"], str):
+                d["snapshot_json"] = json.loads(d["snapshot_json"])
+            result.append(d)
+        return result
+
+    async def get_latest_state_snapshot(self, simulation_id: str) -> Optional[dict]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = $1 ORDER BY turn_index DESC LIMIT 1",
+                simulation_id,
+            )
+        if row is None:
+            return None
+        d = dict(row)
+        if isinstance(d["snapshot_json"], str):
+            d["snapshot_json"] = json.loads(d["snapshot_json"])
+        return d
+
+    async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """
+                DELETE FROM v2_state_snapshots
+                WHERE simulation_id = $1 AND id NOT IN (
+                    SELECT id FROM v2_state_snapshots
+                    WHERE simulation_id = $2
+                    ORDER BY turn_index DESC
+                    LIMIT $3
+                )
+                """,
+                simulation_id, simulation_id, max_keep,
+            )
+
+
+    # ------------------------------------------------------------------
+    # Agent Goals
+    # ------------------------------------------------------------------
+
+    async def insert_agent_goal(self, goal_id: str, simulation_id: str, agent_id: str,
+                                 turn_index: int, goal_text: str, priority: float,
+                                 source: str, is_active: bool = True) -> None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO v2_agent_goals (id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                   ON CONFLICT (id) DO NOTHING""",
+                goal_id, simulation_id, agent_id, turn_index, goal_text, priority, source, 1 if is_active else 0,
+            )
+
+    async def get_agent_goals_by_id(self, persona_id: str) -> list[dict]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active FROM v2_agent_goals WHERE agent_id = $1 ORDER BY priority DESC, turn_index DESC",
+                persona_id,
+            )
+            return [dict(r) for r in rows]
+
+
 def _extract_emotion(content: str, action_type: str) -> dict:
     """Simple rule-based emotional state extraction from turn content."""
     import re
@@ -807,7 +938,8 @@ def _extract_memory_type(content: str, action_type: str) -> Optional[str]:
     return None
 
 
-async def get_agent_memories(db, name: str) -> list[dict]:
+async def get_agent_memories_by_id(db, persona_id: str) -> list[dict]:
+    """Look up semantic memories by persona UUID (matches personas.id)."""
     pool = db._pool_or_raise()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
@@ -817,7 +949,7 @@ async def get_agent_memories(db, name: str) -> list[dict]:
             JOIN simulation_participants sp ON sp.id = sm.participant_id
             JOIN simulations s ON s.id = sm.simulation_id
             LEFT JOIN turns t ON t.id = sm.turn_id
-            WHERE sp.name = $1
+            WHERE sp.persona_id = $1::uuid
             ORDER BY sm.created_at DESC
-        """, name)
+        """, persona_id)
         return [dict(r) for r in rows]

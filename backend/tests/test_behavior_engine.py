@@ -191,7 +191,7 @@ class TestGetPublicState:
     def test_returns_all_expected_keys(self):
         engine = BehaviorEngine(["a", "b"])
         pub = engine.get_public_state()
-        assert set(pub.keys()) == {"turn_count", "relationship_matrix", "social_physics", "agent_states"}
+        assert set(pub.keys()) == {"turn_count", "relationship_matrix", "social_physics", "agent_states", "agent_plans"}
 
     def test_social_physics_by_agent(self):
         engine = BehaviorEngine(["x", "y"])

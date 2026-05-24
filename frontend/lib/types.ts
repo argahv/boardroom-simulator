@@ -309,6 +309,17 @@ export type AgentStateSnapshot = {
   confidence: number;
   certainty: number;
   focus: string;
+  goal_priority?: number;
+  modulation?: {
+    interrupt_bias: number;
+    challenge_bias: number;
+    compromise_bias: number;
+    coalition_bias: number;
+    escalate_bias: number;
+    statement_bias: number;
+    question_bias: number;
+    urgency_modifier: number;
+  };
 };
 
 export type StateSnapshotData = {
@@ -316,6 +327,13 @@ export type StateSnapshotData = {
   relationship_matrix: Record<string, Record<string, RelationshipEntry>>;
   social_physics: Record<string, SocialPhysicsSnapshot>;
   agent_states: Record<string, AgentStateSnapshot>;
+  agent_plans?: Record<string, Array<{
+    goal_text: string;
+    status: string;
+    confidence: number;
+    subgoal_count: number;
+    completed_subgoals: number;
+  }>>;
 };
 
 export type StateSnapshotEvent = {

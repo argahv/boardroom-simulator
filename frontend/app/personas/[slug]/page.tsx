@@ -216,6 +216,76 @@ export default function AgentDetailPage({ params }: PageProps) {
               )}
             </section>
 
+            {/* ── Goals & Strategy ── */}
+            <section>
+              <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-muted mb-4">Goals & Strategy</h3>
+              {data.goals.length === 0 && data.strategies.length === 0 && data.hidden_motive_scores.length === 0 ? (
+                <div className="rounded-xl border border-dashed border-hairline bg-surface-card/50 p-8 text-center">
+                  <p className="text-sm text-muted">No goal data yet.</p>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  {data.goals.length > 0 && (
+                    <div className="rounded-xl bg-surface-card border border-hairline p-4">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Active Goals</h4>
+                      <div className="space-y-3">
+                        {data.goals.map((g: any) => (
+                          <div key={g.id}>
+                            <div className="flex justify-between text-sm mb-1">
+                              <span className="text-ink">{g.goal_text}</span>
+                              <span className="font-mono text-xs text-muted">p{g.priority.toFixed(1)}</span>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-ink/10">
+                              <div className="h-1.5 rounded-full bg-primary" style={{ width: `${(g.priority / 5) * 100}%` }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {data.strategies.length > 0 && (
+                    <div className="rounded-xl bg-surface-card border border-hairline p-4">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Strategy Hints</h4>
+                      <div className="space-y-3">
+                        {data.strategies.map((st: any) => (
+                          <details key={st.simulation_id} className="group">
+                            <summary className="cursor-pointer text-sm font-medium text-ink hover:text-primary transition-colors">
+                              {st.subject_name}
+                              <span className="text-xs text-muted ml-2">({st.strategy_hints.length} hints)</span>
+                            </summary>
+                            <div className="mt-2 space-y-1 pl-2 border-l-2 border-hairline">
+                              {st.strategy_hints.map((h: any, i: number) => (
+                                <p key={i} className="text-xs text-muted leading-relaxed">
+                                  <span className="font-mono text-primary">T{h.turn_index}:</span> {h.hint}
+                                </p>
+                              ))}
+                            </div>
+                          </details>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {data.hidden_motive_scores.length > 0 && (
+                    <div className="rounded-xl bg-surface-card border border-hairline p-4">
+                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted mb-3">Hidden Motive Detection</h4>
+                      <div className="space-y-2">
+                        {data.hidden_motive_scores.map((hm: any) => (
+                          <div key={hm.simulation_id} className="flex items-center justify-between text-sm">
+                            <span className="text-ink">{hm.subject_name}</span>
+                            <span className={`font-mono text-xs px-2 py-0.5 rounded-full ${
+                              hm.consistency_score > 0.5 ? "bg-primary/10 text-primary" : "bg-accent-teal/10 text-accent-teal"
+                            }`}>
+                              {hm.consistency_score.toFixed(2)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
             {/* ── Semantic Memories ── */}
             <section ref={memoriesRef}>
               <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-muted mb-4">

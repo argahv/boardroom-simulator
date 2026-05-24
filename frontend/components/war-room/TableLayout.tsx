@@ -10,6 +10,9 @@ import { EventLog } from "./EventLog";
 import { Leaderboard } from "./Leaderboard";
 import { IncentiveHeatmap } from "./IncentiveHeatmap";
 import { LeverageShifts } from "./LeverageShifts";
+import { StateDiffPanel } from "./StateDiffPanel";
+import { EmotionalInfluencePanel } from "./EmotionalInfluencePanel";
+import { StrategicPlanPanel } from "./StrategicPlanPanel";
 import EmotionIndicator from "@/components/emotion-indicator";
 import type { SimulationStateData } from "@/lib/use-simulation-state";
 
@@ -353,6 +356,24 @@ export function TableLayout({
         <Leaderboard leaderboard={simState?.leaderboard} nameMap={nameMap} />
         <IncentiveHeatmap socialPhysics={simState?.socialPhysics} totalAgents={stakeholders.length} />
         <LeverageShifts leverageHistory={simState?.leverageHistory} nameMap={nameMap} />
+        {speakerId && (() => {
+          const sid = stakeholders.find(s => s.name === speakerId)?.id;
+          return sid ? (
+            <EmotionalInfluencePanel
+              modulation={simState?.getAgentState(sid)?.modulation ?? undefined}
+              agentName={speakerId}
+            />
+          ) : null;
+        })()}
+        <StrategicPlanPanel
+          plans={simState?.agentPlans}
+          nameMap={nameMap}
+        />
+        <StateDiffPanel
+          snapshots={simState?.snapshots ?? []}
+          currentTurn={turn}
+          nameMap={nameMap}
+        />
       </div>
     </div>
   );

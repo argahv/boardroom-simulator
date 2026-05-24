@@ -1,8 +1,11 @@
 import importlib.util
+import logging
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self
+
+logger = logging.getLogger(__name__)
 
 # Bootstrap siblings bypassing broken __init__.py chain
 _THIS_DIR = Path(__file__).resolve().parent
@@ -40,6 +43,7 @@ class BehaviorEngine:
         self._internal_states: dict[str, object] = {}
         self._graph = RelationshipGraph()
         self._turn_count: int = 0
+        self._plan_manager = None
         for aid in agent_ids:
             self.register_agent(aid)
 
@@ -53,6 +57,8 @@ class BehaviorEngine:
         speaker_id = turn.get("speaker_id", "")
         action_type = turn.get("action_type", "")
         target_id = turn.get("target_id", "")
+
+        logger.debug("Turn %d processed: speaker=%s action=%s", self._turn_count, speaker_id, action_type, extra={"turn": self._turn_count, "speaker": speaker_id, "action_type": action_type, "event": "turn_processed"})
 
         if speaker_id in self._social_physics:
             self._social_physics[speaker_id] = self._social_physics[speaker_id].update(action_type, speaker_id, target_id, turn)
@@ -90,7 +96,17 @@ class BehaviorEngine:
     def get_public_state(self) -> dict:
         return {"turn_count": self._turn_count, "relationship_matrix": self._graph.to_matrix(),
             "social_physics": {aid: sp.snapshot() for aid, sp in self._social_physics.items()},
-            "agent_states": {aid: st.snapshot() for aid, st in self._internal_states.items()}}
+            "agent_states": {aid: st.snapshot() for aid, st in self._internal_states.items()},
+            "agent_plans": {
+                aid: [{
+                    "goal_text": p.goal_text,
+                    "status": p.status,
+                    "confidence": p.confidence,
+                    "subgoal_count": len(p.subgoals),
+                    "completed_subgoals": sum(1 for sg in p.subgoals if sg.status == "completed"),
+                } for p in self._plan_manager.get_active_plans(aid)]
+                for aid in self._social_physics
+            } if self._plan_manager else {}}
 
     def _suggest_action(self, agent_id: str) -> str | None:
         if agent_id not in self._social_physics: return None

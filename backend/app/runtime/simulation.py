@@ -18,6 +18,7 @@ async def run_simulation_v2(
     simulation_id: str,
     behavior_engine: Any = None,
     memory_system: Any = None,
+    plan_manager: Any = None,
 ) -> AsyncIterator[dict]:
     space = SharedSpace(config)
 
@@ -30,6 +31,7 @@ async def run_simulation_v2(
             simulation_id=simulation_id,
             behavior_engine=behavior_engine,
             memory_system=memory_system,
+            plan_manager=plan_manager,
         )
         for s in config.stakeholders
     ]
@@ -37,6 +39,8 @@ async def run_simulation_v2(
 
     agent_tasks = [asyncio.create_task(a.run()) for a in agents]
     scheduler_task = asyncio.create_task(scheduler.run())
+
+    logger.info("Simulation %s started: subject=%s stakeholders=%d", simulation_id, config.subject.name, len(config.stakeholders), extra={"simulation_id": simulation_id, "subject": config.subject.name, "stakeholders": len(config.stakeholders), "event": "simulation_started"})
 
     try:
         with _trace_context(name="boardroom_simulation", run_type="chain",
@@ -48,7 +52,7 @@ async def run_simulation_v2(
                 if event.get("type") == "done":
                     break
     except Exception as exc:
-        logger.exception("V2_SIM_STREAM_ERR simulation_id=%s", simulation_id)
+        logger.exception("V2_SIM_STREAM_ERR simulation_id=%s", simulation_id, extra={"simulation_id": simulation_id, "event": "simulation_error"})
         raise
     finally:
         space.shutdown()

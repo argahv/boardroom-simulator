@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
@@ -38,11 +39,16 @@ from .llm import openrouter_completion, parse_json_object
 
 from .graph import driver as graph_driver
 from .graph.schema import init_schema
+from .runtime import StructuredFormatter
 
 LOG_LEVEL = os.getenv("BACKEND_LOG_LEVEL", "INFO").upper()
+_handler = logging.StreamHandler()
+_handler.setFormatter(
+    StructuredFormatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+)
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    handlers=[_handler],
 )
 logger = logging.getLogger("boardroom.api")
 
@@ -434,17 +440,50 @@ from .database import get_database
 _v2_simulations: dict[str, dict] = {}
 
 def _extract_memory_type(content: str, action_type: str) -> str | None:
-    """Simple rule-based memory extraction matching postgres.py logic."""
+    """Extract memory type from a negotiation turn.
+
+    Strong signals first, then falls back to 'position' for any substantive turn.
+    This ensures every meaningful statement produces a memory entry.
+    """
     import re
+    text = content.lower()
+
+    # Explicit compromises are always concessions
     if action_type == "compromise":
         return "concession"
-    text = content.lower()
-    if re.search(r'\b(believe|think|position|stance|support|oppose|agree|disagree)\b', text):
-        return "position"
-    if re.search(r'\b(never|cannot|red line|under no circumstances|will not|won\'t|refuse)\b', text):
+
+    # Red-line signals (strong refusal / ultimatum)
+    if re.search(
+        r'\b(never|cannot|red line|under no circumstances|will not|won\'t|refuse|'
+        r'unacceptable|dealbreaker|non.negotiable|must not|shall not|cannot accept|'
+        r'out of the question|no way|absolutely not)\b',
+        text,
+    ):
         return "red_line"
-    if re.search(r'\b(concede|concession|willing to|open to|flexible on)\b', text):
+
+    # Concession signals (yielding or acknowledging the other side)
+    if re.search(
+        r'\b(concede|concession|willing to|open to|flexible on|'
+        r'understand your|see your point|valid point|you raise a good|'
+        r'I agree|I accept|acknowledge|fair point|reasonable)\b',
+        text,
+    ):
         return "concession"
+
+    # Position signals — broadened significantly
+    if re.search(
+        r'\b(believe|think|position|stance|support|oppose|agree|disagree|'
+        r'argue|claim|maintain|assert|contend|view|opinion|perspective|'
+        r'must|should|need to|essential|crucial|important|critical|'
+        r'cannot ignore|cannot overlook|we must|we need to)\b',
+        text,
+    ):
+        return "position"
+
+    # Statement/challenge/escalate/question turns almost always express a position
+    if action_type in ("statement", "challenge", "escalate", "question", "coalition_signal"):
+        return "position"
+
     return None
 
 def _extract_turn_index(event: dict) -> int:
@@ -476,13 +515,29 @@ async def _save_turn(simulation_id: str, turn_index: int, turn_json: str) -> Non
         logging.getLogger(__name__).warning("V2_TURN_SAVE_ERR %s: %s", simulation_id, exc)
 
 
+async def _save_state_snapshot(simulation_id: str, turn_index: int, snapshot_json: str) -> None:
+    """Persist state snapshot to DB. Fire-and-forget — does not block simulation."""
+    db = get_database()
+    try:
+        if hasattr(db, 'create_state_snapshot'):
+            await db.create_state_snapshot(simulation_id, turn_index, snapshot_json, version=1)
+            if hasattr(db, 'delete_old_state_snapshots'):
+                await db.delete_old_state_snapshots(simulation_id, max_keep=50)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("V2_SNAPSHOT_SAVE_ERR %s: %s", simulation_id, exc)
+
+
 @app.get("/simulations")
 async def list_simulations_v2() -> list[dict]:
     # List from new schema, unioned with in-memory active streams
     db = get_database()
+    now_iso = datetime.now(timezone.utc).isoformat()
     active = [
         {"simulation_id": sid, "subject": entry["config"].get("subject", {}), "status": entry["status"],
-         "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50)}
+         "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50),
+         "model_temperature": entry["config"].get("model_temperature", "stable"),
+         "created_at": now_iso}
         for sid, entry in _v2_simulations.items()
     ]
     try:
@@ -573,6 +628,12 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
                     if event.get("_index") is not None:
                         event["turn_index"] = event["_index"]
                     await _save_turn(simulation_id, turn_idx, json.dumps(event))
+                    if _be is not None:
+                        try:
+                            public_state = _be.get_public_state()
+                            await _save_state_snapshot(simulation_id, turn_idx, json.dumps(public_state))
+                        except Exception as exc:
+                            logger.warning("V2_SNAPSHOT_CAPTURE_ERR %s: %s", simulation_id, exc)
         except asyncio.CancelledError:
             yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
         except Exception as exc:
@@ -603,6 +664,94 @@ async def get_simulation_v2(simulation_id: str) -> dict:
     except Exception:
         pass
     raise HTTPException(status_code=404, detail="Simulation not found")
+
+
+@app.get("/simulations/{simulation_id}/replay")
+async def replay_simulation_v2(simulation_id: str) -> dict:
+    """Return all persisted state snapshots for a simulation, ordered by turn."""
+    db = get_database()
+    try:
+        if hasattr(db, 'get_state_snapshots_by_simulation'):
+            snapshots = await db.get_state_snapshots_by_simulation(simulation_id)
+        else:
+            snapshots = []
+    except Exception:
+        snapshots = []
+
+    entry = _v2_simulations.get(simulation_id)
+    total_turns = 0
+    if entry:
+        total_turns = entry.get("config", {}).get("turns_count", 0)
+
+    parsed = []
+    for s in snapshots:
+        import json
+        data = json.loads(s["snapshot_json"]) if isinstance(s["snapshot_json"], str) else s["snapshot_json"]
+        parsed.append({
+            "turn_index": s["turn_index"],
+            "snapshot_version": s.get("version", 1),
+            "data": data,
+        })
+
+    return {
+        "simulation_id": simulation_id,
+        "total_snapshots": len(parsed),
+        "total_turns": total_turns,
+        "last_snapshot_turn": max((s["turn_index"] for s in parsed), default=-1),
+        "snapshots": parsed,
+    }
+
+
+@app.get("/simulations/{simulation_id}/export")
+async def export_simulation_v2(simulation_id: str) -> Response:
+    """Export complete simulation data as JSON download."""
+    entry = _v2_simulations.get(simulation_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+    cfg = entry["config"]
+    db = get_database()
+
+    turns = []
+    try:
+        if hasattr(db, 'get_turns_by_simulation'):
+            turns = await db.get_turns_by_simulation(simulation_id)
+    except Exception:
+        pass
+
+    snapshots = []
+    try:
+        if hasattr(db, 'get_state_snapshots_by_simulation'):
+            raw = await db.get_state_snapshots_by_simulation(simulation_id)
+            for s in raw:
+                data = json.loads(s["snapshot_json"]) if isinstance(s["snapshot_json"], str) else s["snapshot_json"]
+                snapshots.append({"turn_index": s["turn_index"], "snapshot_version": s.get("version", 1), "data": data})
+    except Exception:
+        pass
+
+    export = {
+        "simulation_id": simulation_id,
+        "config": cfg,
+        "turns": turns,
+        "state_snapshots": snapshots,
+        "summary": {
+            "total_turns": len(turns),
+            "total_snapshots": len(snapshots),
+            "stakeholder_count": len(cfg.get("stakeholders", [])),
+            "voltage": cfg.get("voltage", 50),
+            "status": entry["status"],
+        },
+        "metadata": {
+            "exported_at": __import__("datetime").datetime.utcnow().isoformat(),
+            "snapshot_version": 1,
+        },
+    }
+
+    return Response(
+        content=json.dumps(export, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="simulation-{simulation_id}.json"'},
+    )
 
 
 def _mock_postmortem_from_raw(
@@ -769,14 +918,19 @@ async def postmortem_v2(simulation_id: str) -> dict:
 async def agent_detail(name: str) -> dict:
     """Comprehensive agent/persona detail view."""
     db = get_database()
-    profile = await db.get_agent_by_name(name)
+
+    # Try UUID lookup first (frontend now uses /persona/<uuid> URLs), fall back to slug/name
+    profile = await db.get_agent_by_id(name) or await db.get_agent_by_name(name)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
-    sims = await db.get_agent_simulations(name)
-    turns = await db.get_agent_turns(name)
-    from .database.postgres import get_agent_memories as _get_memories
-    memories = await _get_memories(db, name)
+    # Use the persona UUID for all downstream queries
+    persona_id = profile["id"]
+
+    sims = await db.get_agent_simulations_by_id(persona_id)
+    turns = await db.get_agent_turns_by_id(persona_id)
+    from .database.postgres import get_agent_memories_by_id as _get_memories
+    memories = await _get_memories(db, persona_id)
 
     # Compute emotional arc across all turns
     emotional_arc = []
@@ -789,12 +943,50 @@ async def agent_detail(name: str) -> dict:
                 **{k: v for k, v in es.items() if isinstance(v, (int, float))},
             })
 
+    # Goals from persisted DB (empty until runtime writes to v2_agent_goals)
+    goals: list[dict] = []
+    if hasattr(db, 'get_agent_goals_by_id'):
+        try:
+            goals = await db.get_agent_goals_by_id(persona_id)
+        except Exception:
+            pass
+
+    # Strategies: extract internal_reasoning as strategy hints, grouped by simulation
+    strategies: list[dict] = []
+    turns_by_sim: dict[str, list[dict]] = {}
+    for t in turns:
+        sim_name = t.get("subject_name", "unknown")
+        turns_by_sim.setdefault(sim_name, []).append(t)
+    for s in sims:
+        sim_name = s.get("subject_name", "")
+        sim_turns = turns_by_sim.get(sim_name, [])
+        hint_turns = [t for t in sim_turns if t.get("internal_reasoning")]
+        strategies.append({
+            "simulation_id": s.get("id", ""),
+            "subject_name": sim_name,
+            "strategy_hints": [
+                {
+                    "turn_index": t["turn_index"],
+                    "hint": (t["internal_reasoning"][:100] + "...")
+                    if len(t["internal_reasoning"]) > 100
+                    else t["internal_reasoning"],
+                }
+                for t in hint_turns[:3]
+            ],
+        })
+
+    # Hidden motive scores: empty until PrivateThoughtSystem data is persisted
+    hidden_motive_scores: list[dict] = []
+
     return {
         "profile": profile,
         "simulations": sims,
         "recent_turns": turns[:20],
         "memories": memories,
         "emotional_arc": emotional_arc,
+        "goals": goals,
+        "strategies": strategies,
+        "hidden_motive_scores": hidden_motive_scores,
         "stats": {
             "total_simulations": len(sims),
             "total_turns": sum(s["turn_count"] for s in sims),

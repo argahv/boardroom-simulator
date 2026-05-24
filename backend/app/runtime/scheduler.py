@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 
+from app.database import get_database
 from app.models import SimulationV2Config
 from app.runtime.space import SharedSpace
 from app.graph.driver import get_driver, neo4j_enabled
@@ -63,10 +65,11 @@ class Scheduler:
             })
 
             await self.space.grant_floor(winner)
+            logger.info("Turn %d — %s has the floor", self.turn_count + 1, self._name(winner), extra={"turn": self.turn_count + 1, "speaker": winner, "event": "turn_granted"})
 
             turn = await self._wait_for_turn(winner, timeout=45.0)
             if turn is None:
-                logger.warning("Agent %s timed out, skipping", winner)
+                logger.warning("Agent %s timed out, skipping", winner, extra={"agent": winner, "turn": self.turn_count, "event": "agent_timeout"})
                 self.space.release_floor()
                 self.turn_count += 1
                 continue
@@ -81,13 +84,21 @@ class Scheduler:
                     "turn_index": self.turn_count,
                     "data": public_state,
                 })
+                try:
+                    db = get_database()
+                    if hasattr(db, 'create_state_snapshot'):
+                        await db.create_state_snapshot(self.simulation_id, self.turn_count, json.dumps(public_state), version=1)
+                except Exception:
+                    pass
 
             self.turn_count += 1
 
+        end_reason = self._end_reason()
+        logger.info("Simulation ended: %s", end_reason, extra={"turn": self.turn_count, "reason": end_reason, "event": "simulation_ended"})
         await self.space.publish({
             "type": "done",
             "agent_id": "__scheduler__",
-            "reason": self._end_reason(),
+            "reason": end_reason,
             "total_turns": self.turn_count,
         })
         self.space.shutdown()
@@ -201,7 +212,7 @@ class Scheduler:
                         )
                     )
         except Exception:
-            logger.debug("Neo4j write skipped for turn %d", self.turn_count)
+            logger.debug("Neo4j write skipped for turn %d", self.turn_count, extra={"turn": self.turn_count, "event": "neo4j_write_skipped"})
 
     # ── end conditions ────────────────────────────────────────────────
 

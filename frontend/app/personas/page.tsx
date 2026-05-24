@@ -310,12 +310,11 @@ export default function PersonasPage() {
       ) : (
         <div ref={gridRef} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredPersonas.map((persona) => {
-            const slug = persona.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
             return (
               <PersonaCard
                 key={persona.id}
                 persona={persona}
-                slug={slug}
+                slug={persona.id}
                 deleteConfirmId={deleteConfirmId}
                 onEdit={openEditModal}
                 onDelete={handleDelete}

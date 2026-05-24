@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
@@ -25,16 +25,8 @@ interface TranscriptStreamProps {
 }
 
 export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStreamProps) {
-  const endRef = useRef<HTMLDivElement>(null);
-
   const latestRef = useRef<HTMLDivElement>(null);
   const latestBadgeRef = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    if (endRef.current) {
-      endRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [turns.length]);
 
   // Animate new turn slide-in + stance badge pulse
   useGSAP(() => {
@@ -173,7 +165,6 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
             </div>
           );
         })}
-        <div ref={endRef} />
       </div>
     </div>
     </>

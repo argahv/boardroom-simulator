@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from typing import AsyncIterator
+
+logger = logging.getLogger(__name__)
 
 from app.models import SimulationV2Config
 
@@ -45,6 +48,7 @@ class SharedSpace:
             self.events.append(event)
             self._version += 1
             self._event_condition.notify_all()
+        logger.debug("Event published: type=%s", event.get("type", "unknown"), extra={"event_type": event.get("type", "unknown"), "event": "published"})
 
     # ── floor control ────────────────────────────────────────────────
 

@@ -133,5 +133,5 @@ class LanguageEngine:
             )
             return parse_llm_response(raw_text)
         except Exception as exc:
-            logger.warning("LanguageEngine call failed: %s", exc)
+            logger.warning("LanguageEngine call failed: %s", exc, extra={"error": str(exc), "event": "llm_call_failed"})
             return {"content": "(generation failed)", "action_type": "statement"}

@@ -35,6 +35,7 @@ class AgentRuntime:
         behavior_engine: Any = None,
         memory_system: Any = None,
         private_thought: Any = None,
+        plan_manager: Any = None,
     ) -> None:
         self.agent_id = config.id
         self.config = config
@@ -45,6 +46,7 @@ class AgentRuntime:
         self.behavior_engine = behavior_engine
         self.memory_system = memory_system
         self.private_thought = private_thought
+        self.plan_manager = plan_manager
 
         self.memory: list[dict] = []
         self._last_event_index = -1
@@ -65,13 +67,17 @@ class AgentRuntime:
                 self._consecutive_events_since_bid += 1
 
                 if self._should_bid(event):
-                    urgency = self._compute_urgency(event)
+                    strategy_score = await self._compute_strategy_score(event)
+                    urgency = self._compute_urgency(event, strategy_score)
                     self.space.submit_bid(self.agent_id, urgency)
+                    logger.debug("Agent %s bid urgency=%d", self.agent_id, urgency, extra={"agent": self.agent_id, "urgency": urgency, "event": "bid_submitted"})
                     self._consecutive_events_since_bid = 0
 
             if self.space.current_speaker == self.agent_id:
                 turn_event = await self._generate_turn()
                 self._turn_count += 1
+                if self.plan_manager is not None:
+                    await self._evaluate_plan_progress(turn_event)
                 self.space.release_floor()
 
     def _should_bid(self, event: dict) -> bool:
@@ -83,9 +89,15 @@ class AgentRuntime:
             return False
         if self._consecutive_events_since_bid > 3:
             return True
+        if self.behavior_engine is not None:
+            state = self.behavior_engine.get_state_for_llm(self.agent_id)
+            cs = state.get("cognitive_state", {})
+            mod = cs.get("modulation", {})
+            if mod.get("interrupt_bias", 0) > 0.3 and self._consecutive_events_since_bid > 1:
+                return True
         return False
 
-    def _compute_urgency(self, event: dict) -> int:
+    def _compute_urgency(self, event: dict, strategy_score: int | None = None) -> int:
         base = 50
         base += self.config.personality.aggressiveness // 2
         spoke_last = event.get("agent_id", "")
@@ -100,10 +112,121 @@ class AgentRuntime:
                 base += 15
             if sp.get("dominance", 0) > 0.7:
                 base += 10
+            cs = state.get("cognitive_state", {})
+            modulation = cs.get("modulation", {})
+            if modulation:
+                base += modulation.get("urgency_modifier", 0)
+        deterministic = base
+        if strategy_score is not None:
+            base = int(base * 0.6 + strategy_score * 0.4)
+        logger.debug("Bid %s urgency=%d (deterministic=%d, strategy=%s)",
+                     self.agent_id, base, deterministic, strategy_score,
+                     extra={"agent": self.agent_id, "urgency": base, "strategy_score": strategy_score,
+                            "event": "bid_calculated"})
         return max(0, min(100, base))
 
     def _trusted_allies(self) -> set[str]:
         return {s.id for s in self.space.config.stakeholders if s.stance == self.config.stance}
+
+    async def _compute_strategy_score(self, event: dict) -> int:
+        if not hasattr(self, 'llm') or self.llm is None:
+            return 50
+        recent_context = ""
+        for e in self.memory[-4:]:
+            if e.get("type") == "turn":
+                recent_context += f"[{e.get('agent_name', e.get('speaker', ''))}]: {e.get('content', '')[:80]}\n"
+        strategy_prompt = [
+            {"role": "system", "content": (
+                f"You are {self.config.name}, {self.config.role}. "
+                f"Your stance: {self.config.stance}. "
+                f"Subject: {self.space.config.subject.name}. "
+                f"Your hidden agenda: {self.config.hidden_agenda or '(none)'}."
+            )},
+            {"role": "user", "content": (
+                f"Recent discussion:\n{recent_context}\n"
+                f"On a scale of 0-100, how strategically important is it for you ({self.config.name}) "
+                f"to speak RIGHT NOW? Consider your goals, your alliances, the current speaker, "
+                f"and the topic. Return ONLY a number between 0 and 100."
+            )},
+        ]
+        try:
+            import asyncio
+            raw_text, mocked, metadata = await asyncio.wait_for(
+                self.llm(strategy_prompt, temperature=0.1,
+                         simulation_id=self.simulation_id,
+                         turn_index=self._turn_count,
+                         agent_id=self.agent_id),
+                timeout=2.0
+            )
+            score = int(''.join(c for c in raw_text.strip() if c.isdigit()) or '50')
+            return max(0, min(100, score))
+        except asyncio.TimeoutError:
+            logger.warning("strategy_score timeout for %s", self.agent_id,
+                          extra={"agent": self.agent_id, "event": "strategy_score_timeout"})
+            return 50
+        except Exception as exc:
+            logger.warning("strategy_score error for %s: %s", self.agent_id, exc,
+                          extra={"agent": self.agent_id, "error": str(exc), "event": "strategy_score_error"})
+            return 50
+
+    # ── plan integration ────────────────────────────────────────────
+
+    async def _evaluate_plan_progress(self, turn: dict) -> None:
+        """Evaluate how the last turn affected active plans."""
+        if self.plan_manager is None:
+            return
+        plans = self.plan_manager.get_active_plans(self.agent_id)
+        if not plans:
+            if self.behavior_engine is not None:
+                state = self.behavior_engine.get_state_for_llm(self.agent_id)
+                triggers = state.get("social_physics", {}).get("triggers", [])
+                for trigger in triggers:
+                    self._handle_trigger_plan(trigger)
+            return
+
+        plan = plans[0]
+        action_type = turn.get("action_type", "")
+        directed_at = turn.get("directed_at", "")
+
+        for sg in plan.subgoals:
+            if sg.status != "pending":
+                continue
+
+            if "weaken" in sg.description.lower() or "challenge" in sg.description.lower():
+                if action_type in ("challenge", "question"):
+                    sg.status = "completed"
+                    sg.progress = 1.0
+            elif "concession" in sg.description.lower() or "compromise" in sg.description.lower():
+                if action_type == "compromise":
+                    sg.status = "completed"
+                    sg.progress = 1.0
+            elif "ally" in sg.description.lower() or "coalition" in sg.description.lower():
+                if action_type == "coalition_signal":
+                    sg.status = "completed"
+                    sg.progress = 1.0
+            elif "defend" in sg.description.lower() or "position" in sg.description.lower():
+                if action_type in ("statement", "challenge"):
+                    sg.status = "completed"
+                    sg.progress = 1.0
+
+        self.plan_manager._recalculate_progress(plan)
+
+    def _handle_trigger_plan(self, trigger: str) -> None:
+        """Create a plan from a behavior trigger (e.g., 'trust_collapse' -> 'rebuild_trust')."""
+        from app.runtime.goal_evolution import TRIGGER_GOAL_MAP
+        if trigger in TRIGGER_GOAL_MAP:
+            goal_text, _ = TRIGGER_GOAL_MAP[trigger]
+            if self.plan_manager:
+                existing = self.plan_manager.get_active_plans(self.agent_id)
+                if not any(goal_text in p.goal_text for p in existing):
+                    self.plan_manager.create_plan(
+                        agent_id=self.agent_id,
+                        goal_text=goal_text,
+                        created_turn=self._turn_count,
+                    )
+                    logger.info("Plan created from trigger %s: %s", trigger, goal_text,
+                               extra={"agent": self.agent_id, "trigger": trigger, "goal": goal_text,
+                                      "event": "plan_created_from_trigger"})
 
     # ── prompt building ──────────────────────────────────────────────
 
@@ -129,7 +252,7 @@ class AgentRuntime:
                 "You are in a boardroom debate. Speak in character."
             )
         )
-        return template.format(
+        system_content = template.format(
             name=self.config.name,
             role=self.config.role,
             backstory=self.config.backstory or "(no specific backstory)",
@@ -143,6 +266,11 @@ class AgentRuntime:
             stubbornness=self.config.personality.stubbornness,
             verbosity=self.config.personality.verbosity,
         )
+        if self.plan_manager is not None:
+            plan_summary = self.plan_manager.get_plan_summary(self.agent_id)
+            if plan_summary:
+                system_content += f"\n\n{plan_summary}"
+        return system_content
 
     def _build_turn_prompt(self) -> list[dict[str, Any]]:
         system_content = self._build_system_prompt()
@@ -168,6 +296,19 @@ class AgentRuntime:
                 system_content += f"\nYour allies: {', '.join(state['allies'])}"
             if state.get("rivals"):
                 system_content += f"\nYour rivals: {', '.join(state['rivals'])}"
+            cs = state.get("cognitive_state", {})
+            mod = cs.get("modulation", {})
+            if mod:
+                bias_hints = []
+                if mod.get("interrupt_bias", 0) > 0.3: bias_hints.append("you feel an urge to INTERRUPT")
+                if mod.get("challenge_bias", 0) > 0.2: bias_hints.append("you feel inclined to CHALLENGE")
+                if mod.get("challenge_bias", 0) < -0.15: bias_hints.append("you feel AVOIDANT of direct confrontation")
+                if mod.get("compromise_bias", 0) > 0.15: bias_hints.append("you feel inclined to COMPROMISE")
+                if mod.get("coalition_bias", 0) > 0.15: bias_hints.append("you feel inclined to seek ALLIANCES")
+                if mod.get("escalate_bias", 0) > 0.15: bias_hints.append("you feel inclined to ESCALATE")
+                if mod.get("question_bias", 0) > 0.15: bias_hints.append("you feel inclined to ASK QUESTIONS")
+                if bias_hints:
+                    system_content += "\n\nEmotional state is influencing your approach: " + "; ".join(bias_hints) + "."
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_content},
         ]
@@ -219,7 +360,7 @@ class AgentRuntime:
             )
             parsed = _parse_llm_turn(raw_text)
         except Exception as exc:
-            logger.warning("Agent %s turn gen failed: %s", self.agent_id, exc)
+            logger.warning("Agent %s turn gen failed: %s", self.agent_id, exc, extra={"agent": self.agent_id, "error": str(exc), "event": "generation_failed"})
             parsed = {"content": "(...)", "action_type": "statement", "internal_reasoning": "failed to generate"}
 
         turn_event = {
@@ -236,6 +377,7 @@ class AgentRuntime:
             "reasoning": parsed.get("internal_reasoning", ""),
         }
         await self.space.publish(turn_event)
+        logger.info("Agent %s generated turn %d", self.agent_id, self._turn_count, extra={"agent": self.agent_id, "turn": self._turn_count, "action_type": turn_event.get("action_type", "statement"), "event": "turn_generated"})
         if self.behavior_engine is not None:
             be_turn = {
                 "agent_id": self.agent_id,
@@ -253,7 +395,7 @@ class AgentRuntime:
                 turn=self._turn_count,
             )
             self.memory_system.compress(self.agent_id)
-        logger.debug("Agent %s published turn %d", self.agent_id, self._turn_count)
+        logger.debug("Agent %s published turn %d", self.agent_id, self._turn_count, extra={"agent": self.agent_id, "turn": self._turn_count, "action_type": turn_event.get("action_type", "statement"), "event": "turn_generated"})
         return turn_event
 
     def _resolve_name(self, agent_id: str) -> str:

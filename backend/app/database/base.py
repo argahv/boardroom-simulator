@@ -92,4 +92,26 @@ class DatabaseBackend(ABC):
     async def stakeholder_exists(self, stakeholder_id: str) -> bool:
         pass
 
+    # ------------------------------------------------------------------
+    # v2 State Snapshots
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def create_state_snapshot(
+        self, simulation_id: str, turn_index: int, snapshot_json: str, version: int = 1
+    ) -> str:
+        pass
+
+    @abstractmethod
+    async def get_state_snapshots_by_simulation(self, simulation_id: str) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def get_latest_state_snapshot(self, simulation_id: str) -> Optional[dict]:
+        pass
+
+    @abstractmethod
+    async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
+        pass
+
 

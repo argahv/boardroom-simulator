@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { fetchSimulationsV2, createSimulationV2, fetchTemplates, type TemplateListItem } from "@/lib/api";
+import { fetchSimulationsV2, createSimulationV2, fetchTemplates, type TemplateListItem, type SimulationListItem } from "@/lib/api";
 
 const STATUS_STYLE: Record<string, string> = {
   idle: "bg-accent-amber/20 text-accent-amber",
@@ -13,9 +13,22 @@ const STATUS_STYLE: Record<string, string> = {
   complete: "bg-green-500/20 text-green-700",
 };
 
+function timeAgo(iso: string | undefined): string {
+  if (!iso) return "";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "just now";
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 export default function SimulationsPage() {
   const router = useRouter();
-  const [items, setItems] = useState<{ simulation_id: string; subject: { name: string }; status: string; stakeholder_count: number; voltage: number }[]>([]);
+  const [items, setItems] = useState<SimulationListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [creating, setCreating] = useState(false);
@@ -105,14 +118,21 @@ export default function SimulationsPage() {
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {items.map((sim) => (
-              <article key={sim.simulation_id} className="rounded-xl border border-ink/10 bg-surface-card p-5 shadow-sm">
+              <article key={sim.simulation_id} className="group rounded-xl border border-ink/10 bg-surface-card p-5 shadow-sm transition-shadow hover:shadow-md">
                 <div className="mb-3 flex items-center justify-between gap-2">
                   <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wider ${STATUS_STYLE[sim.status] ?? "bg-canvas/10 text-canvas/70"}`}>{sim.status}</span>
+                  {sim.created_at && (
+                    <span className="text-[11px] text-muted/60">{timeAgo(sim.created_at)}</span>
+                  )}
                 </div>
-                <h3 className="font-display text-2xl tracking-display text-ink line-clamp-2">{sim.subject?.name || "Untitled"}</h3>
-                <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-muted">
+                <h3 className="font-display text-2xl tracking-display text-ink line-clamp-1">{sim.subject?.name || "Untitled"}</h3>
+                {sim.subject?.description && (
+                  <p className="mt-1.5 text-xs text-muted/80 leading-relaxed line-clamp-2">{sim.subject.description}</p>
+                )}
+                <div className="mt-4 grid grid-cols-3 gap-3 text-xs text-muted">
                   <div><p className="uppercase tracking-wider text-muted">Stakeholders</p><p className="mt-1 font-semibold text-ink">{sim.stakeholder_count}</p></div>
                   <div><p className="uppercase tracking-wider text-muted">Voltage</p><p className="mt-1 font-semibold text-ink">{sim.voltage}%</p></div>
+                  <div><p className="uppercase tracking-wider text-muted">Temp</p><p className="mt-1 font-semibold text-ink capitalize">{sim.model_temperature ?? "stable"}</p></div>
                 </div>
                 <div className="mt-5 flex flex-wrap gap-2">
                   <Link href={`/simulate/${sim.simulation_id}`}><Button>Open War Room</Button></Link>

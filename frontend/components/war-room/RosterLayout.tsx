@@ -10,6 +10,9 @@ import { IncentiveHeatmap } from "./IncentiveHeatmap";
 import { SentimentGraph } from "./SentimentGraph";
 import { LeverageShifts } from "./LeverageShifts";
 import { CoalitionTracker } from "./CoalitionTracker";
+import { StateDiffPanel } from "./StateDiffPanel";
+import { EmotionalInfluencePanel } from "./EmotionalInfluencePanel";
+import { StrategicPlanPanel } from "./StrategicPlanPanel";
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import EmotionIndicator from "@/components/emotion-indicator";
 import CognitiveStatePanel from "@/components/cognitive-state-panel";
@@ -228,6 +231,21 @@ export function RosterLayout({
         <SentimentGraph sentimentHistory={simState?.sentimentHistory} />
         <LeverageShifts leverageHistory={simState?.leverageHistory} nameMap={nameMap} />
         <CoalitionTracker coalitions={simState?.coalitions} nameMap={nameMap} />
+        {speakerAgentId && (
+          <EmotionalInfluencePanel
+            modulation={simState?.getAgentState(speakerAgentId)?.modulation ?? undefined}
+            agentName={nameMap?.[speakerAgentId] ?? speakerAgentId}
+          />
+        )}
+        <StrategicPlanPanel
+          plans={simState?.agentPlans}
+          nameMap={nameMap}
+        />
+        <StateDiffPanel
+          snapshots={simState?.snapshots ?? []}
+          currentTurn={turn}
+          nameMap={nameMap}
+        />
       </div>
     </div>
   );

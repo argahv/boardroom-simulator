@@ -6,6 +6,8 @@ import type {
   SimulationState,
   SimulationV2Config,
   Stakeholder,
+  StateSnapshotData,
+  StateSnapshotEvent,
   StreamEvent,
 } from "@/lib/types";
 
@@ -155,6 +157,26 @@ export type AgentDetailResponse = {
   recent_turns: Array<Record<string, unknown>>;
   memories: Array<Record<string, unknown>>;
   emotional_arc: Array<Record<string, unknown>>;
+  goals: Array<{
+    id: string;
+    simulation_id: string;
+    agent_id: string;
+    turn_index: number;
+    goal_text: string;
+    priority: number;
+    source: string;
+    is_active: number;
+  }>;
+  strategies: Array<{
+    simulation_id: string;
+    subject_name: string;
+    strategy_hints: Array<{ turn_index: number; hint: string }>;
+  }>;
+  hidden_motive_scores: Array<{
+    simulation_id: string;
+    subject_name: string;
+    consistency_score: number;
+  }>;
   stats: {
     total_simulations: number;
     total_turns: number;
@@ -178,8 +200,18 @@ export const createSimulationV2 = (payload: SimulationV2Config) =>
     body: JSON.stringify(payload),
   });
 
+export type SimulationListItem = {
+  simulation_id: string;
+  subject: { name: string; description?: string };
+  status: string;
+  stakeholder_count: number;
+  voltage: number;
+  model_temperature?: string;
+  created_at?: string;
+};
+
 export const fetchSimulationsV2 = () =>
-  request<{ simulation_id: string; subject: { name: string }; status: string; stakeholder_count: number; voltage: number }[]>("/simulations");
+  request<SimulationListItem[]>("/simulations");
 
 export const fetchSimulationV2 = (simulationId: string) =>
   request<{ config: SimulationV2Config; status: string }>(`/simulations/${simulationId}`);
@@ -194,6 +226,19 @@ export const injectV2Turn = (simulationId: string, stakeholderId: string, conten
     method: "POST",
     body: JSON.stringify({ stakeholder_id: stakeholderId, content }),
   });
+
+export function exportSimulation(id: string): string {
+  return `${API_URL}/simulations/${id}/export`;
+}
+
+export const fetchSimulationReplay = async (simulationId: string): Promise<StateSnapshotEvent[]> => {
+  const res = await request<{ snapshots: Array<{ turn_index: number; data: StateSnapshotData }> }>(`/simulations/${simulationId}/replay`);
+  return res.snapshots.map((s) => ({
+    type: "state_snapshot" as const,
+    turn_index: s.turn_index,
+    data: s.data,
+  }));
+};
 
 export const streamSimulationV2 = (
   simulationId: string,

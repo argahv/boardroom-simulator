@@ -1,41 +1,82 @@
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { fetchSimulationReplay } from "@/lib/api";
 import type {
   StateSnapshotData,
   SocialPhysicsSnapshot,
   AgentStateSnapshot,
+  StateSnapshotEvent,
 } from "@/lib/types";
 
-/**
- * Accumulates state_snapshot events from the SSE stream into
- * time-series data + latest values for all dashboard components.
- */
-export function useSimulationState(
-  sseEvents: Record<string, unknown>[]
-): SimulationStateData {
-  return useMemo(() => {
-    const snapshots = sseEvents.filter(
-      (e): e is { type: "state_snapshot"; turn_index: number; data: StateSnapshotData } =>
-        e.type === "state_snapshot" && typeof e.turn_index === "number"
-    );
+// ── Options ────────────────────────────────────────────────
 
-    const latest = snapshots[snapshots.length - 1]?.data ?? null;
+export type UseSimulationStateOptions = {
+  mode?: "live" | "replay";
+  events?: Record<string, unknown>[];
+  simulationId?: string;
+  turnIndex?: number;
+};
+
+// ── Hook ───────────────────────────────────────────────────
+
+export function useSimulationState(options: UseSimulationStateOptions): SimulationStateData {
+  const { mode = "live", events, simulationId, turnIndex } = options;
+
+  const [cachedSnapshots, setCachedSnapshots] = useState<StateSnapshotEvent[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (mode !== "replay" || !simulationId) {
+      setCachedSnapshots([]);
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    fetchSimulationReplay(simulationId)
+      .then((data) => {
+        setCachedSnapshots(data);
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        setError(err instanceof Error ? err.message : "Failed to fetch replay data");
+        setLoading(false);
+      });
+  }, [mode, simulationId]);
+
+  const computed = useMemo(() => {
+    let rawSnapshots: { turn_index: number; data: StateSnapshotData }[];
+
+    if (mode === "live") {
+      rawSnapshots = (events ?? []).filter(
+        (e): e is { type: "state_snapshot"; turn_index: number; data: StateSnapshotData } =>
+          e.type === "state_snapshot" && typeof e.turn_index === "number"
+      );
+    } else {
+      rawSnapshots = cachedSnapshots;
+    }
+
+    let effectiveSnapshots: { turn_index: number; data: StateSnapshotData }[];
+    let latestData: StateSnapshotData | null;
+
+    if (mode === "replay" && turnIndex !== undefined) {
+      effectiveSnapshots = rawSnapshots.filter((s) => s.turn_index <= turnIndex);
+      latestData = rawSnapshots.find((s) => s.turn_index === turnIndex)?.data ?? null;
+    } else {
+      effectiveSnapshots = rawSnapshots;
+      latestData = rawSnapshots[rawSnapshots.length - 1]?.data ?? null;
+    }
 
     // ── Time-series ─────────────────────────────────────────────
-
-    // Trust history: per-pair trust over turns
     const trustHistory: TrustPoint[] = [];
-    // Aggregate sentiment (avg of all agent momentum/trust per turn)
     const sentimentHistory: SentimentPoint[] = [];
-    // Leverage per agent per turn
     const leverageHistory: { turn: number; agent: string; leverage: number }[] = [];
 
-    for (const snap of snapshots) {
+    for (const snap of effectiveSnapshots) {
       const d = snap.data;
       const turn = snap.turn_index;
 
-      // Trust — flatten relationship_matrix
       const relMat = d.relationship_matrix ?? {};
       for (const [from, targets] of Object.entries(relMat)) {
         for (const [to, entry] of Object.entries(targets)) {
@@ -43,7 +84,6 @@ export function useSimulationState(
         }
       }
 
-      // Sentiment = average trust across all pairs or average momentum
       const spEntries = Object.values(d.social_physics ?? {});
       const avgSentiment =
         spEntries.length > 0
@@ -51,17 +91,15 @@ export function useSimulationState(
           : 0.5;
       sentimentHistory.push({ turn, value: avgSentiment });
 
-      // Leverage per agent
       for (const [agent, sp] of Object.entries(d.social_physics ?? {})) {
         leverageHistory.push({ turn, agent, leverage: sp.leverage });
       }
     }
 
     // ── Latest values ─────────────────────────────────────────────
-
     const trustMatrix: Record<string, Record<string, number>> = {};
-    if (latest?.relationship_matrix) {
-      for (const [from, targets] of Object.entries(latest.relationship_matrix)) {
+    if (latestData?.relationship_matrix) {
+      for (const [from, targets] of Object.entries(latestData.relationship_matrix)) {
         trustMatrix[from] = {};
         for (const [to, entry] of Object.entries(targets)) {
           trustMatrix[from][to] = entry.trust;
@@ -69,7 +107,7 @@ export function useSimulationState(
       }
     }
 
-    const socialPhysics = latest?.social_physics ?? {};
+    const socialPhysics = latestData?.social_physics ?? {};
     const agentIds = Object.keys(socialPhysics);
 
     const leaderboard = agentIds
@@ -78,7 +116,7 @@ export function useSimulationState(
         return {
           agent: id,
           score: Math.round((sp.credibility * 0.4 + sp.trust * 0.3 + sp.momentum * 0.3) * 100),
-          delta: 0, // computed below
+          delta: 0,
           leverage: sp.leverage,
           tension: sp.tension,
           dominance: sp.dominance,
@@ -97,11 +135,14 @@ export function useSimulationState(
       leverageScores[id] = sp.leverage;
     }
 
-    const coalitions = computeCoalitions(snapshots);
+    const coalitions = computeCoalitions(effectiveSnapshots);
+
+    const agentPlans: Record<string, Array<{goal_text: string; status: string; confidence: number; subgoal_count: number; completed_subgoals: number}>> =
+      latestData?.agent_plans ?? {};
 
     return {
-      latestSnapshot: latest,
-      snapshots,
+      latestSnapshot: latestData,
+      snapshots: effectiveSnapshots,
       trustHistory,
       sentimentHistory,
       leverageHistory,
@@ -110,12 +151,69 @@ export function useSimulationState(
       leverageScores,
       coalitions,
       socialPhysics,
-      agentStates: latest?.agent_states ?? {},
-      totalTurns: latest?.turn_count ?? 0,
-      getAgentState: (id: string) => latest?.agent_states?.[id] ?? null,
+      agentStates: latestData?.agent_states ?? {},
+      totalTurns: rawSnapshots[rawSnapshots.length - 1]?.data.turn_count ?? 0,
+      getAgentState: (id: string) => latestData?.agent_states?.[id] ?? null,
       getSocialPhysics: (id: string) => socialPhysics[id] ?? null,
+      agentPlans,
     };
-  }, [sseEvents]);
+  }, [mode, events, cachedSnapshots, turnIndex]);
+
+  return {
+    ...computed,
+    loading: mode === "replay" ? loading : false,
+    error: mode === "replay" ? error : null,
+  };
+}
+
+// ── Replay Navigation ──────────────────────────────────────
+
+export type ReplayControls = {
+  play: () => void;
+  pause: () => void;
+  stepForward: () => void;
+  stepBack: () => void;
+  goToTurn: (n: number) => void;
+  isPlaying: boolean;
+  currentTurn: number;
+  totalTurns: number;
+};
+
+export function useReplayNavigation(totalTurns: number): ReplayControls {
+  const [currentTurn, setCurrentTurn] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    if (currentTurn >= totalTurns - 1) {
+      setIsPlaying(false);
+      return;
+    }
+    timerRef.current = setTimeout(() => {
+      setCurrentTurn((t) => Math.min(totalTurns - 1, t + 1));
+    }, 3800);
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [isPlaying, currentTurn, totalTurns]);
+
+  const play = useCallback(() => setIsPlaying(true), []);
+  const pause = useCallback(() => setIsPlaying(false), []);
+  const stepForward = useCallback(
+    () => setCurrentTurn((t) => Math.min(totalTurns - 1, t + 1)),
+    [totalTurns]
+  );
+  const stepBack = useCallback(
+    () => setCurrentTurn((t) => Math.max(0, t - 1)),
+    []
+  );
+  const goToTurn = useCallback(
+    (n: number) => setCurrentTurn(Math.max(0, Math.min(totalTurns - 1, n))),
+    [totalTurns]
+  );
+
+  return { play, pause, stepForward, stepBack, goToTurn, isPlaying, currentTurn, totalTurns };
 }
 
 // ── Derived data ─────────────────────────────────────────────
@@ -198,4 +296,7 @@ export type SimulationStateData = {
   totalTurns: number;
   getAgentState: (id: string) => AgentStateSnapshot | null;
   getSocialPhysics: (id: string) => SocialPhysicsSnapshot | null;
+  agentPlans: Record<string, Array<{goal_text: string; status: string; confidence: number; subgoal_count: number; completed_subgoals: number}>>;
+  loading: boolean;
+  error: string | null;
 };

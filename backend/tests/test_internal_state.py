@@ -197,7 +197,7 @@ class TestSnapshot:
         result = default_state.snapshot()
         assert result["agent_id"] == "agent-alpha"
         assert set(result.keys()) == {
-            "agent_id", "emotion", "confidence", "certainty", "focus", "goal_priority",
+            "agent_id", "emotion", "confidence", "certainty", "focus", "goal_priority", "modulation",
         }
         assert isinstance(result["emotion"], dict)
         for key in ("anger", "fear", "joy", "shame", "surprise"):

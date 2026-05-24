@@ -20,13 +20,14 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export function EventLog({ events }: EventLogProps) {
-  const endRef = useRef<HTMLDivElement>(null);
   const cursorRef = useRef<HTMLSpanElement>(null);
   const eventContainerRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom on new events
+  // Scroll container to bottom on new events (scrollTop only, never scrollIntoView — which scrolls parent containers)
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (eventContainerRef.current) {
+      eventContainerRef.current.scrollTop = eventContainerRef.current.scrollHeight;
+    }
   }, [events.length]);
 
   // Blinking cursor animation with GSAP
@@ -85,9 +86,7 @@ export function EventLog({ events }: EventLogProps) {
         {events.length === 0 && (
           <span className="text-on-dark-soft">Awaiting events…</span>
         )}
-        <div ref={endRef}>
-          <span className="inline-block text-primary" ref={cursorRef}>▌</span>
-        </div>
+        <span className="inline-block text-primary" ref={cursorRef}>▌</span>
       </div>
     </div>
   );

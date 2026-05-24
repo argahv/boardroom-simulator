@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import uuid
 from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -106,6 +107,36 @@ class SQLiteBackend(DatabaseBackend):
             )
         """)
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS v2_state_snapshots (
+                id TEXT PRIMARY KEY,
+                simulation_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON v2_state_snapshots(simulation_id, turn_index)")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS v2_agent_goals (
+                id TEXT PRIMARY KEY,
+                simulation_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                turn_index INTEGER NOT NULL,
+                goal_text TEXT NOT NULL,
+                priority REAL NOT NULL,
+                source TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 1
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
+
         self.conn.commit()
 
     async def _migrate(self) -> None:
@@ -124,6 +155,24 @@ class SQLiteBackend(DatabaseBackend):
         if "state_version" not in sim_cols:
             cursor.execute("ALTER TABLE simulations ADD COLUMN state_version INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
+
+        cursor.execute("PRAGMA table_info(v2_agent_goals)")
+        if not cursor.fetchall():
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS v2_agent_goals (
+                    id TEXT PRIMARY KEY,
+                    simulation_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    turn_index INTEGER NOT NULL,
+                    goal_text TEXT NOT NULL,
+                    priority REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
+            self.conn.commit()
 
     # ------------------------------------------------------------------
     # Simulations
@@ -217,6 +266,97 @@ class SQLiteBackend(DatabaseBackend):
             (simulation_id, from_index),
         )
         return [json.loads(row["turn_json"]) for row in cursor.fetchall()]
+
+    # ------------------------------------------------------------------
+    # v2 State Snapshots
+    # ------------------------------------------------------------------
+
+    async def create_state_snapshot(
+        self, simulation_id: str, turn_index: int, snapshot_json: str, version: int = 1
+    ) -> str:
+        cursor = self.conn.cursor()
+        snapshot_id = uuid.uuid4().hex
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO v2_state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            (snapshot_id, simulation_id, turn_index, snapshot_json, version, now),
+        )
+        self.conn.commit()
+        return snapshot_id
+
+    async def get_state_snapshots_by_simulation(self, simulation_id: str) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = ? ORDER BY turn_index ASC",
+            (simulation_id,),
+        )
+        return [
+            {
+                "id": row["id"],
+                "simulation_id": row["simulation_id"],
+                "turn_index": row["turn_index"],
+                "snapshot_json": json.loads(row["snapshot_json"]),
+                "version": row["version"],
+                "created_at": row["created_at"],
+            }
+            for row in cursor.fetchall()
+        ]
+
+    async def get_latest_state_snapshot(self, simulation_id: str) -> Optional[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = ? ORDER BY turn_index DESC LIMIT 1",
+            (simulation_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "simulation_id": row["simulation_id"],
+            "turn_index": row["turn_index"],
+            "snapshot_json": json.loads(row["snapshot_json"]),
+            "version": row["version"],
+            "created_at": row["created_at"],
+        }
+
+    # ------------------------------------------------------------------
+    # Agent Goals
+    # ------------------------------------------------------------------
+
+    async def insert_agent_goal(self, goal_id: str, simulation_id: str, agent_id: str,
+                                 turn_index: int, goal_text: str, priority: float,
+                                 source: str, is_active: bool = True) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "INSERT INTO v2_agent_goals (id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (goal_id, simulation_id, agent_id, turn_index, goal_text, priority, source, 1 if is_active else 0),
+        )
+        self.conn.commit()
+
+    async def get_agent_goals_by_id(self, persona_id: str) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active FROM v2_agent_goals WHERE agent_id = ? ORDER BY priority DESC, turn_index DESC",
+            (persona_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """
+            DELETE FROM v2_state_snapshots
+            WHERE simulation_id = ? AND id NOT IN (
+                SELECT id FROM v2_state_snapshots
+                WHERE simulation_id = ?
+                ORDER BY turn_index DESC
+                LIMIT ?
+            )
+            """,
+            (simulation_id, simulation_id, max_keep),
+        )
+        self.conn.commit()
 
     # ------------------------------------------------------------------
     # Stakeholders

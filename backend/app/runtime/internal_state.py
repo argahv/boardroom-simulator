@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Self
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, Field
 
 from app.models import PersonalityProfile
@@ -24,6 +26,78 @@ _DEFAULT_EMOTIONS: dict[str, float] = {
 
 _UNKNOWN_EVENT_DECAY: float = 0.01
 
+# ── Emotional Modulation Thresholds ──────────────────────────────────────
+# All modulation is deterministic math. Same emotions → same behavior biases.
+
+ANGER_HIGH: float = 0.7
+FEAR_HIGH: float = 0.6
+JOY_HIGH: float = 0.7
+SHAME_HIGH: float = 0.6
+SURPRISE_HIGH: float = 0.7
+
+ANGER_MODERATE: float = 0.4
+FEAR_MODERATE: float = 0.3
+
+
+@dataclass
+class EmotionalModulation:
+    """Behavior probability biases derived from emotional state.
+
+    All values are additive modifiers to base behavior probabilities.
+    Positive = more likely, negative = less likely.
+    Range: -1.0 to 1.0
+    """
+    interrupt_bias: float = 0.0
+    challenge_bias: float = 0.0
+    compromise_bias: float = 0.0
+    coalition_bias: float = 0.0
+    escalate_bias: float = 0.0
+    statement_bias: float = 0.0
+    question_bias: float = 0.0
+    urgency_modifier: float = 0.0
+
+
+# ── Emotion → Modulation Mapping ─────────────────────────────────────────
+# Pure function. No LLM calls. No randomness. Deterministic.
+
+EMOTION_MODULATION_RULES: list[tuple[str, float, str, float]] = [
+    ("anger", 0.7, "interrupt_bias", 0.4),
+    ("anger", 0.7, "compromise_bias", -0.3),
+    ("anger", 0.7, "challenge_bias", 0.25),
+    ("anger", 0.7, "urgency_modifier", 15),
+    ("fear", 0.6, "challenge_bias", -0.2),
+    ("fear", 0.6, "coalition_bias", 0.2),
+    ("fear", 0.6, "escalate_bias", -0.15),
+    ("fear", 0.6, "urgency_modifier", 10),
+    ("joy", 0.7, "compromise_bias", 0.2),
+    ("joy", 0.7, "statement_bias", 0.1),
+    ("joy", 0.7, "urgency_modifier", -10),
+    ("shame", 0.6, "interrupt_bias", -0.2),
+    ("shame", 0.6, "statement_bias", -0.15),
+    ("surprise", 0.7, "question_bias", 0.2),
+    ("surprise", 0.7, "interrupt_bias", 0.15),
+]
+
+
+def compute_modulation(emotions: dict[str, float]) -> EmotionalModulation:
+    """Compute behavior probability biases from emotional state.
+
+    Args:
+        emotions: dict with keys anger, fear, joy, shame, surprise (0.0-1.0)
+
+    Returns:
+        EmotionalModulation with bias values set based on emotion thresholds
+    """
+    mod = EmotionalModulation()
+    for emotion, threshold, target, delta in EMOTION_MODULATION_RULES:
+        if emotions.get(emotion, 0.0) >= threshold:
+            current = getattr(mod, target)
+            if target == "urgency_modifier":
+                setattr(mod, target, current + delta)
+            else:
+                setattr(mod, target, _clamp11(current + delta))
+    return mod
+
 
 class CognitiveState(BaseModel):
     emotion: dict[str, float]
@@ -31,6 +105,7 @@ class CognitiveState(BaseModel):
     certainty: float = Field(default=0.5, ge=0.0, le=1.0)
     focus: str = ""
     goal_priority: int = Field(default=3, ge=0, le=5)
+    modulation: EmotionalModulation | None = None  # computed from emotions
 
 
 class InternalState:
@@ -74,6 +149,7 @@ class InternalState:
                 elif cs.emotion[key] < base:
                     cs.emotion[key] = _clamp01(cs.emotion[key] + _UNKNOWN_EVENT_DECAY)
 
+        cs.modulation = compute_modulation(cs.emotion)
         self.history.append(dict(event))
         return self
 
@@ -96,6 +172,16 @@ class InternalState:
             "certainty": cs.certainty,
             "focus": cs.focus,
             "goal_priority": cs.goal_priority,
+            "modulation": {
+                "interrupt_bias": cs.modulation.interrupt_bias if cs.modulation else 0,
+                "challenge_bias": cs.modulation.challenge_bias if cs.modulation else 0,
+                "compromise_bias": cs.modulation.compromise_bias if cs.modulation else 0,
+                "coalition_bias": cs.modulation.coalition_bias if cs.modulation else 0,
+                "escalate_bias": cs.modulation.escalate_bias if cs.modulation else 0,
+                "statement_bias": cs.modulation.statement_bias if cs.modulation else 0,
+                "question_bias": cs.modulation.question_bias if cs.modulation else 0,
+                "urgency_modifier": cs.modulation.urgency_modifier if cs.modulation else 0,
+            } if cs.modulation else {},
         }
 
     def __repr__(self) -> str:
@@ -110,3 +196,7 @@ class InternalState:
 
 def _clamp01(val: float) -> float:
     return max(0.0, min(1.0, round(val, 6)))
+
+
+def _clamp11(val: float) -> float:
+    return max(-1.0, min(1.0, round(val, 6)))

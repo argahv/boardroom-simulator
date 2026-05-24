@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Self
+from typing import Any, Self
 
 from pydantic import BaseModel, Field
 
@@ -29,10 +29,11 @@ TRIGGER_GOAL_MAP: dict[str, tuple[str, float]] = {
 
 
 class GoalEvolution:
-    def __init__(self) -> None:
+    def __init__(self, plan_manager: Any = None) -> None:
         self._goals: dict[str, list[GoalState]] = {}
         self._last_top_goal: dict[str, str | None] = {}
         self._turn: int = 0
+        self._plan_manager = plan_manager
 
     def _agent_goals(self, agent_id: str) -> list[GoalState]:
         if agent_id not in self._goals:
@@ -57,6 +58,8 @@ class GoalEvolution:
                 text, prio = TRIGGER_GOAL_MAP[trigger]
                 if not self._has_active_goal_text(agent_id, text):
                     self.add_goal(agent_id, text, prio, source="pressure", turn=self._turn)
+                    if self._plan_manager is not None:
+                        self._plan_manager.create_plan(agent_id, text, created_turn=self._turn)
             elif trigger == "gaining_traction":
                 active = self.get_active_goals(agent_id, 10)
                 if active:
@@ -116,5 +119,5 @@ class GoalEvolution:
                    for g in self._goals.get(agent_id, []))
 
 
-def make_goal_evolution() -> GoalEvolution:
-    return GoalEvolution()
+def make_goal_evolution(plan_manager: Any = None) -> GoalEvolution:
+    return GoalEvolution(plan_manager=plan_manager)
