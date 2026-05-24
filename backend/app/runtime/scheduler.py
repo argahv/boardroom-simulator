@@ -72,6 +72,16 @@ class Scheduler:
                 continue
 
             self._update_dynamics(turn)
+
+            # Publish state snapshot for frontend real-time dashboards
+            if self.behavior_engine is not None:
+                public_state = self.behavior_engine.get_public_state()
+                await self.space.publish({
+                    "type": "state_snapshot",
+                    "turn_index": self.turn_count,
+                    "data": public_state,
+                })
+
             self.turn_count += 1
 
         await self.space.publish({
@@ -98,7 +108,23 @@ class Scheduler:
     async def _moderator_decides(self) -> str:
         moderators = [s for s in self.config.stakeholders if s.stance == "moderator"]
         if moderators:
-            return moderators[self.turn_count % len(moderators)].id
+            # If multiple moderators, cycle through them
+            if len(moderators) > 1:
+                return moderators[self.turn_count % len(moderators)].id
+            # Single moderator: moderator goes first each round, then cycle all other agents
+            all_ids = [s.id for s in self.config.stakeholders]
+            mod_id = moderators[0].id
+            others = [s for s in all_ids if s != mod_id]
+            if not others:
+                return mod_id
+            # Turn 0 = moderator, then cycle through others
+            if self.turn_count == 0:
+                return mod_id
+            # Moderator re-enters every 4th turn
+            cycle_pos = (self.turn_count - 1) % (len(others) + 1)
+            if cycle_pos < len(others):
+                return others[cycle_pos]
+            return mod_id
         return await self._highest_bid()
 
     async def _alternating_side(self) -> str:

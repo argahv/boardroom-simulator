@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { fetchSimulationsV2 } from "@/lib/api";
+import { fetchSimulationsV2, createSimulationV2, fetchTemplates, type TemplateListItem } from "@/lib/api";
 
 const STATUS_STYLE: Record<string, string> = {
   idle: "bg-accent-amber/20 text-accent-amber",
@@ -13,18 +14,37 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 export default function SimulationsPage() {
+  const router = useRouter();
   const [items, setItems] = useState<{ simulation_id: string; subject: { name: string }; status: string; stakeholder_count: number; voltage: number }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
 
   useEffect(() => {
     let alive = true;
-    fetchSimulationsV2()
-      .then((data) => { if (alive) setItems(data); })
-      .catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : "Failed to load simulations."); })
+    Promise.all([
+      fetchSimulationsV2(),
+      fetchTemplates(),
+    ])
+      .then(([sims, tmpls]) => { if (alive) { setItems(sims); setTemplates(tmpls); } })
+      .catch((err: unknown) => { if (alive) setError(err instanceof Error ? err.message : "Failed to load."); })
       .finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
   }, []);
+
+  const handleQuickPlay = async () => {
+    setCreating(true);
+    try {
+      const first = templates.find((t) => t.category === "Fundraising") ?? templates[0];
+      if (!first || !first.config) return;
+      const res = await createSimulationV2(first.config as any);
+      router.push(`/simulate/${res.simulation_id}`);
+    } catch {
+      setError("Failed to launch quick play.");
+      setCreating(false);
+    }
+  };
 
   return (
     <AppShell activeTab="War Room">
@@ -55,9 +75,32 @@ export default function SimulationsPage() {
             ))}
           </div>
         ) : items.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-ink/20 bg-surface-card p-10 text-center">
-            <p className="text-sm text-muted">No simulations yet.</p>
-            <div className="mt-4"><Link href="/simulate/new"><Button>Create your first simulation</Button></Link></div>
+          <div className="rounded-xl border border-dashed border-ink/20 bg-surface-card p-12 text-center">
+            <p className="text-xs font-semibold uppercase tracking-[0.28em] text-primary">Simulations</p>
+            <h3 className="mt-3 font-display text-3xl font-normal tracking-display text-ink">No simulations yet</h3>
+            <p className="mt-2 text-sm text-muted">Launch a pre-built scenario or create a custom one</p>
+            <div className="mt-6 flex items-center justify-center gap-3">
+              <Button onClick={handleQuickPlay} disabled={creating}>
+                {creating ? "Launching..." : "Quick Play"}
+              </Button>
+              <Link href="/simulate/new">
+                <Button variant="ghost">Custom Setup</Button>
+              </Link>
+            </div>
+            <div className="mx-auto mt-10 grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
+              {templates.slice(0, 3).map((t) => (
+                <div key={t.slug} className="rounded-lg border border-ink/10 bg-surface-subtle p-4 text-left">
+                  <p className="text-xs font-semibold uppercase tracking-wider text-primary">{t.category}</p>
+                  <p className="mt-2 text-sm font-semibold text-ink">{t.name}</p>
+                  <p className="mt-1 text-xs text-muted line-clamp-2">{t.description}</p>
+                  <div className="mt-3 flex gap-2 text-xs text-muted">
+                    <span>{t.stakeholder_count} stakeholders</span>
+                    <span>·</span>
+                    <span>{t.voltage}v</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

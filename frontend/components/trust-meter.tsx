@@ -1,5 +1,8 @@
 "use client";
 
+import { useRef, useEffect } from "react";
+import gsap from "gsap";
+
 interface TrustMeterProps {
   trust: number; // 0–1
   size?: "small" | "medium" | "large";
@@ -21,6 +24,30 @@ export function TrustMeter({ trust, size = "medium" }: TrustMeterProps) {
   const pct = Math.round(Math.max(0, Math.min(1, trust)) * 100);
   const hue = trustHue(trust);
   const color = `hsl(${hue}, 65%, ${pct < 25 ? 42 : 38}%)`;
+  const barRef = useRef<HTMLSpanElement>(null);
+  const labelRef = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!barRef.current) return;
+    gsap.to(barRef.current, {
+      width: `${pct}%`,
+      duration: 0.5,
+      ease: "power3.out",
+    });
+  }, [pct]);
+
+  useEffect(() => {
+    if (!labelRef.current) return;
+    const obj = { val: parseInt(labelRef.current.textContent || "0") };
+    gsap.to(obj, {
+      val: pct,
+      duration: 0.4,
+      ease: "power2.out",
+      onUpdate: () => {
+        if (labelRef.current) labelRef.current.textContent = `${Math.round(obj.val)}%`;
+      },
+    });
+  }, [pct]);
 
   return (
     <span className="inline-flex items-center gap-1.5" style={{ minWidth: cfg.w + cfg.mw + 8 }}>
@@ -36,17 +63,18 @@ export function TrustMeter({ trust, size = "medium" }: TrustMeterProps) {
         }}
       >
         <span
+          ref={barRef}
           style={{
             width: `${pct}%`,
             height: "100%",
             display: "block",
             background: color,
             borderRadius: 9999,
-            transition: "width 500ms cubic-bezier(.4,0,.2,1), background 500ms",
           }}
         />
       </span>
       <span
+        ref={labelRef}
         style={{
           fontSize: cfg.fs,
           fontWeight: 600,

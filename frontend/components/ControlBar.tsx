@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 
 export type WarRoomLayout = "roster" | "table" | "graph";
 export type PlaybackStatus = "idle" | "running" | "complete";
@@ -114,11 +116,60 @@ export function ControlBar({
 }: ControlBarProps) {
   const playing = status === "running";
   const done = status === "complete";
+  const liveDotRef = useRef<HTMLDivElement>(null);
+  const turnRef = useRef<HTMLSpanElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
 
   const [hoveredLayout, setHoveredLayout] = useState<WarRoomLayout | null>(null);
 
+  // Live dot glow animation with GSAP
+  useEffect(() => {
+    if (!liveDotRef.current) return;
+    if (playing) {
+      gsap.to(liveDotRef.current, {
+        boxShadow: "0 0 8px var(--color-primary), 0 0 16px var(--color-primary)",
+        duration: 0.8,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
+    } else {
+      gsap.killTweensOf(liveDotRef.current, "boxShadow");
+      gsap.to(liveDotRef.current, { boxShadow: "none", duration: 0.2 });
+    }
+    return () => { if (liveDotRef.current) gsap.killTweensOf(liveDotRef.current, "boxShadow"); };
+  }, [playing]);
+
+  // Turn counter count-up
+  useEffect(() => {
+    if (!turnRef.current) return;
+    const obj = { val: parseInt(turnRef.current.textContent?.replace(/\D/g, "") || "0") };
+    gsap.to(obj, {
+      val: turn,
+      duration: 0.3,
+      ease: "power2.out",
+      onUpdate: () => {
+        if (turnRef.current) {
+          turnRef.current.textContent = `T${String(Math.round(obj.val)).padStart(2, "0")}`;
+        }
+      },
+    });
+  }, [turn]);
+
+  // ControlBar entrance
+  useGSAP(() => {
+    gsap.from(barRef.current, {
+      y: -8,
+      opacity: 0,
+      duration: 0.3,
+      ease: "power2.out",
+      clearProps: "transform",
+    });
+  }, { scope: barRef });
+
   return (
     <div
+      ref={barRef}
       style={{
         borderBottom: "1px solid var(--color-hairline)",
         background: "var(--color-canvas)",
@@ -135,13 +186,14 @@ export function ControlBar({
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
+            ref={liveDotRef}
             style={{
               width: 8,
               height: 8,
               borderRadius: "50%",
               background:
                 playing ? "var(--color-primary)" : done ? "var(--color-muted)" : "var(--color-hairline)",
-              animation: playing ? "pulse 1.6s ease-in-out infinite" : "none",
+              transition: "background 240ms ease",
             }}
           />
           <span
@@ -266,9 +318,10 @@ export function ControlBar({
             fontSize: 12,
             color: "var(--color-ink)",
             padding: "0 8px",
+            fontVariantNumeric: "tabular-nums",
           }}
         >
-          T{String(turn).padStart(2, "0")} / T{String(Math.max(0, total - 1)).padStart(2, "0")}
+          <span ref={turnRef}>T{String(turn).padStart(2, "0")}</span> / T{String(Math.max(0, total - 1)).padStart(2, "0")}
         </span>
       </div>
 
@@ -296,6 +349,7 @@ export function ControlBar({
               onMouseEnter={() => setHoveredLayout(opt.id)}
               onMouseLeave={() => setHoveredLayout(null)}
               title={`Layout: ${opt.label}`}
+              data-layout-btn
               style={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -313,7 +367,7 @@ export function ControlBar({
                 fontWeight: 500,
                 fontSize: 13,
                 cursor: "pointer",
-                transition: "background 120ms ease, color 120ms ease",
+                transition: "background 120ms ease, color 120ms ease, border-color 120ms ease",
               }}
             >
               {opt.glyph}

@@ -94,7 +94,7 @@ export default function PostmortemPage({ params }: PageProps) {
           )}
 
           {/* Alignment deltas */}
-          {postmortem.alignment_deltas.length > 0 && (
+          {postmortem.alignment_deltas?.length > 0 && (
             <section className="rounded-xl bg-surface-dark p-5 text-canvas">
               <h3 className="text-xs font-semibold uppercase tracking-wider text-canvas/75 mb-4">
                 Stakeholder Alignment Delta
@@ -152,7 +152,7 @@ export default function PostmortemPage({ params }: PageProps) {
           )}
 
           {/* Strategy cards */}
-          {postmortem.strategy_cards.length > 0 && (
+          {postmortem.strategy_cards?.length > 0 && (
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wider text-muted mb-4">
                 Meeting Strategy Guide — {postmortem.strategy_cards.length} Patterns

@@ -1,54 +1,108 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { fetchStakeholders } from "@/lib/api";
-import type { Stakeholder } from "@/lib/types";
+import { Button } from "@/components/Button";
+import { fetchTemplates, createSimulationV2, type TemplateListItem } from "@/lib/api";
 
 export default function LibraryPage() {
-  const [personas, setPersonas] = useState<Stakeholder[]>([]);
+  const router = useRouter();
+  const [templates, setTemplates] = useState<TemplateListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState<string | null>(null);
+  const [category, setCategory] = useState("all");
 
   useEffect(() => {
-    fetchStakeholders()
-      .then(setPersonas)
+    fetchTemplates()
+      .then(setTemplates)
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
 
+  const categories = ["all", ...new Set(templates.map((t) => t.category).filter(Boolean))];
+  const filtered = category === "all" ? templates : templates.filter((t) => t.category === category);
+  const totalPersonas = new Set(templates.flatMap((t) => {
+    const cfg = t.config as Record<string, any> | undefined;
+    return cfg?.stakeholders?.map((s: any) => s.name) ?? [];
+  })).size;
+
+  const handleLaunch = async (t: TemplateListItem) => {
+    setCreating(t.slug);
+    try {
+      if (!t.config) return;
+      const res = await createSimulationV2(t.config as any);
+      router.push(`/simulate/${res.simulation_id}`);
+    } catch {
+      setCreating(null);
+    }
+  };
+
   return (
-    <AppShell activeTab="Personas">
+    <AppShell>
       <div className="px-8 py-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Library</p>
-        <h2 className="mt-2 font-display text-4xl font-semibold tracking-display">Persona Assets</h2>
-        <p className="mt-2 text-sm text-muted max-w-xl">Reusable stakeholder personas available for your simulations.</p>
+        <div className="mb-8">
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Library</p>
+          <h2 className="mt-2 font-display text-4xl font-semibold tracking-display">Scenario Blueprint Library</h2>
+          <p className="mt-2 text-sm text-muted max-w-xl">
+            {templates.length} templates across {categories.length - 1} sectors featuring {totalPersonas} unique stakeholder personas.
+          </p>
+        </div>
 
         {loading ? (
-          <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1,2,3].map(i => <div key={i} className="rounded-xl border border-hairline bg-surface-card p-5 animate-pulse h-28" />)}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[1,2,3,4,5,6].map(i => <div key={i} className="rounded-xl border border-hairline bg-surface-card p-5 animate-pulse h-28" />)}
           </div>
-        ) : personas.length === 0 ? (
-          <div className="mt-8 rounded-xl border-2 border-dashed border-hairline bg-surface-card/50 p-10 text-center">
-            <p className="text-sm text-muted">No personas in the library yet.</p>
-            <a href="/personas" className="mt-3 inline-block text-sm text-primary hover:underline">Create personas →</a>
+        ) : templates.length === 0 ? (
+          <div className="rounded-xl border-2 border-dashed border-hairline bg-surface-card/50 p-10 text-center">
+            <p className="text-sm text-muted">No templates in the library yet.</p>
           </div>
         ) : (
-          <div className="mt-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {personas.map((p) => (
-              <div key={p.id} className="rounded-xl border border-hairline bg-surface-card p-5 hover:border-primary/30 transition">
-                <div className="flex items-center gap-3 mb-3">
-                  <div className="w-10 h-10 rounded-full bg-surface-container-higher flex items-center justify-center text-sm font-bold text-ink">
-                    {p.name.charAt(0)}
+          <>
+            <div className="mb-6 flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <button key={c} onClick={() => setCategory(c)}
+                  className={`text-xs font-medium px-4 py-2 rounded-full transition ${
+                    category === c ? "bg-primary text-canvas" : "bg-surface-card text-muted hover:text-ink border border-hairline"
+                  }`}>{c === "all" ? `All (${templates.length})` : c}</button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filtered.map((t) => {
+                const stakeholders: any[] = (t.config as any)?.stakeholders ?? [];
+                return (
+                  <div key={t.slug} className="rounded-xl border border-hairline bg-surface-card p-5 transition flex flex-col">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-primary">{t.category}</span>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${
+                        t.voltage >= 70 ? "text-error border-error/30 bg-error/10" :
+                        t.voltage >= 55 ? "text-accent-amber border-accent-amber/30 bg-accent-amber/10" :
+                        "text-accent-teal border-accent-teal/30 bg-accent-teal/10"
+                      }`}>{t.voltage}v</span>
+                    </div>
+                    <h3 className="font-semibold">{t.name}</h3>
+                    <p className="text-xs text-muted mt-1 line-clamp-2">{t.description}</p>
+
+                    <div className="mt-3 flex flex-wrap gap-1.5">
+                      {stakeholders.map((s: any) => (
+                        <span key={s.id} className={`text-[10px] px-2 py-0.5 rounded-full border ${
+                          s.stance === "champion" ? "border-accent-teal/30 text-accent-teal" :
+                          s.stance === "detractor" ? "border-primary/30 text-primary" :
+                          "border-hairline text-muted"
+                        }`}>{s.name}</span>
+                      ))}
+                    </div>
+
+                    <div className="mt-auto pt-4">
+                      <Button variant="ghost" className="w-full" onClick={() => handleLaunch(t)} disabled={creating !== null}>
+                        {creating === t.slug ? "Launching..." : "Launch Scenario"}
+                      </Button>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="font-semibold text-sm">{p.name}</h3>
-                    <p className="text-xs text-muted">{p.role}</p>
-                  </div>
-                </div>
-                <p className="text-xs text-muted italic">{p.focus}</p>
-                {p.tag && <span className="mt-2 inline-block rounded-full bg-canvas/80 px-2.5 py-0.5 text-[10px] font-medium border border-hairline">{p.tag}</span>}
-              </div>
-            ))}
-          </div>
+                );
+              })}
+            </div>
+          </>
         )}
       </div>
     </AppShell>

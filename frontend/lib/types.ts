@@ -15,6 +15,9 @@ export type Stakeholder = {
   incentive_tuning: number;
   hidden_agenda: string;
   tag?: string | null;
+  sim_count?: number;
+  total_turns?: number;
+  templates?: string[];
 };
 
 export type SimulationCreate = {
@@ -276,4 +279,59 @@ export type SimulationV2Config = {
   player_mode: boolean;
   env_flags: Record<string, boolean>;
   model_temperature: string;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// State Snapshot types (from behavior_engine -> SSE state_snapshot events)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type RelationshipEntry = {
+  trust: number;
+  fear: number;
+  admiration: number;
+  rivalry: number;
+  alliance: boolean;
+  dependency: number;
+};
+
+export type SocialPhysicsSnapshot = {
+  trust: number;
+  leverage: number;
+  tension: number;
+  dominance: number;
+  credibility: number;
+  momentum: number;
+  triggers: string[];
+};
+
+export type AgentStateSnapshot = {
+  emotion: Record<string, number>;
+  confidence: number;
+  certainty: number;
+  focus: string;
+};
+
+export type StateSnapshotData = {
+  turn_count: number;
+  relationship_matrix: Record<string, Record<string, RelationshipEntry>>;
+  social_physics: Record<string, SocialPhysicsSnapshot>;
+  agent_states: Record<string, AgentStateSnapshot>;
+};
+
+export type StateSnapshotEvent = {
+  type: "state_snapshot";
+  turn_index: number;
+  data: StateSnapshotData;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Analytics
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type SimulationAnalytics = {
+  total_simulations: number;
+  total_turns: number;
+  avg_voltage: number;
+  top_personas: [string, number][];
+  stance_distribution: Record<string, number>;
 };

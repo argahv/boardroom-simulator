@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import { useEffect, useRef } from "react";
+import gsap from "gsap";
 
 interface EmotionIndicatorProps {
   emotions: Record<string, number>;
@@ -31,6 +32,18 @@ export default function EmotionIndicator({ emotions, size = "md" }: EmotionIndic
 
   const dotSize = size === "sm" ? 8 : size === "lg" ? 16 : 12;
 
+  const dotRef = useRef<HTMLSpanElement>(null);
+
+  // Pulse animation when dominant emotion changes
+  useEffect(() => {
+    if (!dotRef.current || !dominant) return;
+    gsap.fromTo(
+      dotRef.current,
+      { scale: 1.4, opacity: 0.7 },
+      { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(2)" },
+    );
+  }, [dominant?.[0]]);
+
   if (dominant) {
     return (
       <span
@@ -38,6 +51,7 @@ export default function EmotionIndicator({ emotions, size = "md" }: EmotionIndic
         title={`${dominant[0]}: ${Math.round(dominant[1] * 100)}%`}
       >
         <span
+          ref={dotRef}
           className="inline-block rounded-full"
           style={{
             width: dotSize,

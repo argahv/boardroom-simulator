@@ -1,6 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import type { CSSProperties, ReactNode } from "react";
+import gsap from "gsap";
 
 export type BadgeTone =
   | "neutral"
@@ -38,9 +40,35 @@ interface SimBadgeProps {
 }
 
 export function SimBadge({ children, tone = "neutral", style }: SimBadgeProps) {
+  const ref = useRef<HTMLSpanElement>(null);
   const { bg, fg } = TONE_STYLES[tone] ?? TONE_STYLES.neutral;
+
+  // Scale-in entrance on mount
+  useEffect(() => {
+    if (!ref.current) return;
+    gsap.from(ref.current, {
+      scale: 0.85,
+      opacity: 0,
+      duration: 0.25,
+      ease: "back.out(1.7)",
+      clearProps: "transform",
+    });
+  }, []);
+
+  // Animate background color transition on tone change
+  useEffect(() => {
+    if (!ref.current) return;
+    gsap.to(ref.current, {
+      background: bg,
+      color: fg,
+      duration: 0.3,
+      ease: "power2.out",
+    });
+  }, [tone, bg, fg]);
+
   return (
     <span
+      ref={ref}
       style={{
         background: bg,
         color: fg,

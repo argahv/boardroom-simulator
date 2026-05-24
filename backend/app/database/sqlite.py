@@ -97,6 +97,15 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim ON v2_turns(simulation_id, turn_index)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim_created ON v2_turns(simulation_id, created_at)")
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS v2_postmortems (
+                simulation_id TEXT PRIMARY KEY,
+                postmortem_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
+            )
+        """)
+
         self.conn.commit()
 
     async def _migrate(self) -> None:

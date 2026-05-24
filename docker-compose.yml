@@ -1,4 +1,17 @@
 services:
+  # ── Redis (RQ worker queue) ────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: boardroom_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   # ── Neo4j (graph analytics — optional) ──────────────────────────────────
   neo4j:
     image: neo4j:5
@@ -23,7 +36,7 @@ services:
 
   # ── PostgreSQL (primary data store) ─────────────────────────────────────
   postgres:
-    image: postgres:16
+    image: pgvector/pgvector:0.8.0-pg16
     container_name: boardroom_postgres
     ports:
       - "5432:5432"

@@ -124,6 +124,8 @@ a:focus-visible,
   background: radial-gradient(circle at center, #1f1e1b 0%, #181715 100%);
 }
 
+/* ── Microanimation Keyframes ── */
+
 /* Pulse coral animation for active timeline marker */
 .pulse-coral {
   animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
@@ -142,4 +144,74 @@ a:focus-visible,
     transform: scale(0.95);
     opacity: 0.8;
   }
+}
+
+/* Shimmer loading */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.anim-shimmer {
+  background: linear-gradient(90deg, var(--color-hairline) 25%, var(--color-surface-card) 50%, var(--color-hairline) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
+/* Slide up + fade */
+@keyframes slide-up-fade {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.anim-slide-up {
+  animation: slide-up-fade 0.35s ease-out both;
+}
+
+/* Scale in (for badges, pills) */
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.anim-scale-in {
+  animation: scale-in 0.25s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+
+/* Glow pulse (for live indicator) */
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--color-primary); }
+  50% { box-shadow: 0 0 12px var(--color-primary), 0 0 20px var(--color-primary); }
+}
+.anim-glow {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
+
+/* Draw line (for SVG graph edges) */
+@keyframes draw-line {
+  from { stroke-dashoffset: 1000; }
+  to { stroke-dashoffset: 0; }
+}
+
+/* Brief highlight flash (for new items) */
+@keyframes flash-highlight {
+  0% { background-color: var(--color-primary); opacity: 0.15; }
+  100% { background-color: transparent; }
+}
+.anim-flash {
+  animation: flash-highlight 1.2s ease-out forwards;
+}
+
+/* Stagger entrance helper (data-anim) */
+[data-anim="fade-up"] {
+  opacity: 0;
 }

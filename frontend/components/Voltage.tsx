@@ -1,5 +1,8 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+import gsap from "gsap";
+
 interface VoltageProps {
   value: number;
   max?: number;
@@ -15,7 +18,18 @@ export function Voltage({
   color = "var(--color-primary)",
   bg = "var(--color-hairline)",
 }: VoltageProps) {
+  const barRef = useRef<HTMLDivElement>(null);
   const pct = Math.min(100, Math.max(0, (value / max) * 100));
+
+  useEffect(() => {
+    if (!barRef.current) return;
+    gsap.fromTo(
+      barRef.current,
+      { width: `${gsap.getProperty(barRef.current, "width")}px` },
+      { width: `${pct}%`, duration: 0.6, ease: "power3.out" },
+    );
+  }, [pct]);
+
   return (
     <div
       style={{
@@ -26,12 +40,12 @@ export function Voltage({
       }}
     >
       <div
+        ref={barRef}
         style={{
           width: `${pct}%`,
           height: "100%",
           background: color,
           borderRadius: 9999,
-          transition: "width 600ms cubic-bezier(.4,0,.2,1)",
         }}
       />
     </div>

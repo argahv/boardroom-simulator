@@ -1,10 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
 import { createStakeholder, deleteStakeholder, fetchStakeholders, updateStakeholder } from "@/lib/api";
 import type { Stakeholder } from "@/lib/types";
+
+gsap.registerPlugin(useGSAP);
 
 type ArchetypeFilter = "all" | "executive" | "technical" | "procurement" | "legal";
 
@@ -16,6 +21,113 @@ const ARCHETYPE_LABELS: Record<ArchetypeFilter, string> = {
   legal: "Legal",
 };
 
+function PersonaCard({
+  persona,
+  slug,
+  deleteConfirmId,
+  onEdit,
+  onDelete,
+  onSetDeleteConfirmId,
+}: {
+  persona: Stakeholder;
+  slug: string;
+  deleteConfirmId: string | null;
+  onEdit: (p: Stakeholder) => void;
+  onDelete: (id: string) => void;
+  onSetDeleteConfirmId: (id: string | null) => void;
+}) {
+  const cardRef = useRef<HTMLDivElement>(null);
+
+  return (
+    <div ref={cardRef} data-anim="card">
+      <div className="group rounded-3xl border border-ink/10 bg-white/40 p-5 transition hover:border-primary/50 hover:shadow-lg block">
+        <div className="mb-3 flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-display text-2xl font-semibold truncate">{persona.name}</h3>
+            <p className="mt-0.5 text-sm text-muted truncate">{persona.role}</p>
+          </div>
+          {persona.tag && (
+            <span className="shrink-0 rounded-full bg-surface-card border border-hairline px-2.5 py-0.5 text-[10px] font-medium ml-2">
+              {persona.tag}
+            </span>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 mb-3 text-xs">
+          <span className="flex items-center gap-1 text-muted">
+            <span className="material-symbols-outlined text-[14px]">play_circle</span>
+            {persona.sim_count ?? 0} sims
+          </span>
+          <span className="flex items-center gap-1 text-muted">
+            <span className="material-symbols-outlined text-[14px]">forum</span>
+            {persona.total_turns ?? 0} turns
+          </span>
+        </div>
+
+        {persona.focus && (
+          <p className="text-xs text-muted leading-relaxed line-clamp-2 mb-4 italic">{persona.focus}</p>
+        )}
+
+        {persona.templates && persona.templates.length > 0 && (
+          <div className="flex flex-wrap gap-1 mb-4">
+            <span className="text-[10px] text-muted/60 mr-0.5">in:</span>
+            {persona.templates.slice(0, 3).map((t: string) => (
+              <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-primary/5 text-primary border border-primary/20">
+                {t.replace(/-/g, ' ')}
+              </span>
+            ))}
+            {persona.templates.length > 3 && (
+              <span className="text-[10px] text-muted">+{persona.templates.length - 3}</span>
+            )}
+          </div>
+        )}
+
+        <Link
+          href={`/personas/${slug}`}
+          className="mb-3 block text-right text-xs font-medium text-primary hover:underline"
+        >
+          View profile →
+        </Link>
+
+        <div className="flex gap-2">
+          <button
+            onClick={() => onEdit(persona)}
+            className="flex-1 rounded-full bg-surface-card px-4 py-2 text-sm font-medium transition hover:bg-primary/10"
+          >
+            Edit
+          </button>
+          <button
+            onClick={() => onSetDeleteConfirmId(persona.id)}
+            className="rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary-active transition hover:bg-primary/20"
+          >
+            Delete
+          </button>
+        </div>
+
+        {deleteConfirmId === persona.id && (
+          <div className="mt-3 rounded-2xl bg-primary/5 p-3">
+            <p className="mb-2 text-xs text-muted">Delete this persona?</p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => onDelete(persona.id)}
+                className="flex-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-canvas"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => onSetDeleteConfirmId(null)}
+                className="flex-1 rounded-full bg-surface-card px-3 py-1.5 text-xs font-medium"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function PersonasPage() {
   const [personas, setPersonas] = useState<Stakeholder[]>([]);
   const [filteredPersonas, setFilteredPersonas] = useState<Stakeholder[]>([]);
@@ -26,6 +138,8 @@ export default function PersonasPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingPersona, setEditingPersona] = useState<Stakeholder | null>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+
+  const gridRef = useRef<HTMLDivElement>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -40,6 +154,22 @@ export default function PersonasPage() {
     stubbornness: 50,
     verbosity: 50,
   });
+
+  useGSAP(() => {
+    const mm = gsap.matchMedia();
+    mm.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.from("[data-anim='card']", {
+        y: 24,
+        opacity: 0,
+        rotate: -1,
+        duration: 0.45,
+        ease: "back.out(1.7)",
+        stagger: { amount: 0.35, from: "start" },
+        clearProps: "transform",
+      });
+    });
+    return () => mm.revert();
+  }, { scope: gridRef, dependencies: [filteredPersonas] });
 
   const loadPersonas = async () => {
     setLoading(true);
@@ -178,62 +308,21 @@ export default function PersonasPage() {
       {loading ? (
         <p className="text-center text-muted">Loading personas...</p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredPersonas.map((persona) => (
-            <div
-              key={persona.id}
-              className="group rounded-3xl border border-ink/10 bg-white/40 p-5 transition hover:border-primary/50 hover:shadow-lg"
-            >
-              <div className="mb-4 flex items-start justify-between">
-                <div className="flex-1">
-                  <h3 className="font-display text-2xl font-semibold">{persona.name}</h3>
-                  <p className="mt-1 text-sm text-muted">{persona.role}</p>
-                </div>
-                {persona.tag && (
-                  <span className="rounded-full bg-surface-card px-3 py-1 text-xs font-medium">
-                    {persona.tag}
-                  </span>
-                )}
-              </div>
-
-              <p className="mb-4 text-sm text-muted italic">{persona.focus}</p>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={() => openEditModal(persona)}
-                  className="flex-1 rounded-full bg-surface-card px-4 py-2 text-sm font-medium transition hover:bg-primary/10"
-                >
-                  Edit
-                </button>
-                <button
-                  onClick={() => setDeleteConfirmId(persona.id)}
-                  className="rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary-active transition hover:bg-primary/20"
-                >
-                  Delete
-                </button>
-              </div>
-
-              {deleteConfirmId === persona.id && (
-                <div className="mt-3 rounded-2xl bg-primary/5 p-3">
-                  <p className="mb-2 text-xs text-muted">Delete this persona?</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleDelete(persona.id)}
-                      className="flex-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-canvas"
-                    >
-                      Confirm
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirmId(null)}
-                      className="flex-1 rounded-full bg-surface-card px-3 py-1.5 text-xs font-medium"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+        <div ref={gridRef} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredPersonas.map((persona) => {
+            const slug = persona.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+            return (
+              <PersonaCard
+                key={persona.id}
+                persona={persona}
+                slug={slug}
+                deleteConfirmId={deleteConfirmId}
+                onEdit={openEditModal}
+                onDelete={handleDelete}
+                onSetDeleteConfirmId={setDeleteConfirmId}
+              />
+            );
+          })}
 
           <button
             onClick={openCreateModal}
@@ -246,6 +335,7 @@ export default function PersonasPage() {
           </button>
         </div>
       )}
+
       </div>
 
       {showModal && (

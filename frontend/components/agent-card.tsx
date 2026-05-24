@@ -1,5 +1,11 @@
 "use client";
 
+import { useRef } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
+
+gsap.registerPlugin(useGSAP);
+
 export type AgentEmotions = {
   anger: number;
   fear: number;
@@ -42,6 +48,7 @@ function PctBar({ value, color }: { value: number; color: string }) {
   return (
     <div className="flex-1 h-[5px] rounded-full" style={{ background: "var(--color-hairline)" }}>
       <div
+        data-anim="bar"
         className="h-full rounded-full"
         style={{
           width: `${Math.max(0, Math.min(100, value))}%`,
@@ -55,9 +62,46 @@ function PctBar({ value, color }: { value: number; color: string }) {
 
 export function AgentCard({ agent }: AgentCardProps) {
   const sc = STANCE_COLORS[agent.stance] ?? "var(--color-muted)";
+  const cardRef = useRef<HTMLDivElement>(null);
+  const stanceRef = useRef<HTMLSpanElement>(null);
+  const barsContainerRef = useRef<HTMLDivElement>(null);
+
+  useGSAP(() => {
+    const mm = gsap.matchMedia();
+    mm.add("(prefers-reduced-motion: no-preference)", () => {
+      gsap.from(cardRef.current, {
+        scale: 0.9,
+        opacity: 0,
+        duration: 0.3,
+        ease: "back.out(1.7)",
+        clearProps: "transform",
+      });
+      const bars = barsContainerRef.current?.querySelectorAll("[data-anim='bar']");
+      if (bars?.length) {
+        gsap.fromTo(
+          bars,
+          { scaleX: 0, transformOrigin: "left center" },
+          { scaleX: 1, duration: 0.4, stagger: 0.04, ease: "power2.out" }
+        );
+      }
+    });
+    return () => mm.revert();
+  }, { scope: cardRef });
+
+  useGSAP(() => {
+    if (!stanceRef.current) return;
+    gsap.to(stanceRef.current, {
+      background: `${sc}18`,
+      color: sc,
+      borderColor: `${sc}30`,
+      duration: 0.3,
+      ease: "power2.out",
+    });
+  }, { dependencies: [agent.stance], revertOnUpdate: true });
 
   return (
     <div
+      ref={cardRef}
       style={{
         width: 280,
         background: "var(--color-surface-card)",
@@ -84,6 +128,7 @@ export function AgentCard({ agent }: AgentCardProps) {
           </p>
         </div>
         <span
+          ref={stanceRef}
           className="rounded-full px-2.5 py-[3px] text-[10px] font-bold uppercase tracking-[0.08em] whitespace-nowrap shrink-0"
           style={{
             background: `${sc}18`,
@@ -96,7 +141,7 @@ export function AgentCard({ agent }: AgentCardProps) {
       </div>
 
       {/* Confidence & Certainty */}
-      <div className="flex flex-col gap-2 mb-3">
+      <div ref={barsContainerRef} className="flex flex-col gap-2 mb-3">
         {(["confidence", "certainty"] as const).map((key) => {
           const val = agent[key];
           const barColor =
@@ -149,3 +194,5 @@ export function AgentCard({ agent }: AgentCardProps) {
     </div>
   );
 }
+
+

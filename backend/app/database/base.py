@@ -91,3 +91,5 @@ class DatabaseBackend(ABC):
     @abstractmethod
     async def stakeholder_exists(self, stakeholder_id: str) -> bool:
         pass
+
+

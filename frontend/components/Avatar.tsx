@@ -1,5 +1,8 @@
 "use client";
 
+import { useRef, useEffect } from "react";
+import gsap from "gsap";
+
 export type AvatarAccent = "ink" | "amber" | "teal" | "coral" | "muted" | string;
 
 interface AvatarProps {
@@ -31,9 +34,48 @@ export function Avatar({
   active = false,
   label,
 }: AvatarProps) {
+  const ref = useRef<HTMLDivElement>(null);
   const bg = ACCENT_VARS[accent] ?? accent;
   const fg = needsDarkText(accent) ? "var(--color-ink)" : "var(--color-on-dark)";
   const fontSize = Math.round(size * 0.38);
+
+  // Speaking ring animation
+  useEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    if (speaking) {
+      gsap.set(el, { boxShadow: "0 0 0 3px var(--color-canvas), 0 0 0 5px var(--color-primary)" });
+      gsap.to(el, {
+        boxShadow: "0 0 0 3px var(--color-canvas), 0 0 0 8px var(--color-primary-active)",
+        duration: 0.8,
+        repeat: -1,
+        yoyo: true,
+        ease: "sine.inOut",
+      });
+    } else if (active) {
+      gsap.killTweensOf(el, "boxShadow");
+      gsap.to(el, {
+        boxShadow: "0 0 0 2px var(--color-canvas), 0 0 0 3px var(--color-hairline)",
+        duration: 0.2,
+      });
+    } else {
+      gsap.killTweensOf(el, "boxShadow");
+      gsap.to(el, { boxShadow: "none", duration: 0.2 });
+    }
+    return () => { gsap.killTweensOf(el, "boxShadow"); };
+  }, [speaking, active]);
+
+  // Entrance scale-in
+  useEffect(() => {
+    if (!ref.current) return;
+    gsap.from(ref.current, {
+      scale: 0.85,
+      opacity: 0,
+      duration: 0.25,
+      ease: "back.out(1.4)",
+      clearProps: "transform",
+    });
+  }, []);
 
   let boxShadow = "none";
   if (speaking) {
@@ -44,6 +86,7 @@ export function Avatar({
 
   return (
     <div
+      ref={ref}
       role="img"
       aria-label={label ?? initials}
       style={{
@@ -61,7 +104,6 @@ export function Avatar({
         fontWeight: 500,
         flexShrink: 0,
         boxShadow,
-        transition: "box-shadow 200ms ease",
         userSelect: "none",
       }}
     >

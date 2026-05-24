@@ -1,29 +1,41 @@
 "use client";
 
 interface IncentiveHeatmapProps {
-  turn: number;
-  turns?: { speaker: string; stance?: string }[];
+  socialPhysics?: Record<string, { trust: number; leverage: number; tension: number }>;
+  totalAgents?: number;
 }
 
-export function IncentiveHeatmap({ turn, turns }: IncentiveHeatmapProps) {
-  const championCount = turns?.filter((t) => t.stance === "champion").length ?? 0;
-  const detractorCount = turns?.filter((t) => t.stance === "detractor").length ?? 0;
-  const totalTurns = turns?.length || 1;
+export function IncentiveHeatmap({ socialPhysics, totalAgents = 0 }: IncentiveHeatmapProps) {
+  const spValues = Object.values(socialPhysics ?? {});
+
+  const engagement = Math.min(96, Math.max(20, totalAgents * 15 + 20));
+
+  const avgTension =
+    spValues.length > 0
+      ? spValues.reduce((s, sp) => s + sp.tension, 0) / spValues.length
+      : 0.5;
+  const stanceConflict = Math.min(96, Math.max(20, Math.round(avgTension * 100)));
+
+  const avgTrust =
+    spValues.length > 0
+      ? spValues.reduce((s, sp) => s + sp.trust, 0) / spValues.length
+      : 0.5;
+  const voltage = Math.min(96, Math.max(20, Math.round((1 - avgTrust) * 100)));
 
   const bars = [
     {
       label: "Debate Engagement",
-      value: Math.min(96, Math.max(20, 50 + totalTurns * 2)),
-      hint: `${totalTurns} turns completed`,
+      value: engagement,
+      hint: `${totalAgents} participants`,
     },
     {
       label: "Stance Conflict",
-      value: Math.min(96, Math.max(20, 50 + ((championCount - detractorCount) / Math.max(totalTurns, 1)) * 20)),
-      hint: `${championCount} champion / ${detractorCount} detractor turns`,
+      value: stanceConflict,
+      hint: `${spValues.length > 0 ? Math.round(avgTension * 100) : "--"}% avg tension`,
     },
     {
       label: "Voltage",
-      value: Math.min(96, Math.max(20, 50 + Math.sin(turn * 0.3) * 15)),
+      value: voltage,
       hint: "Debate intensity",
     },
   ];

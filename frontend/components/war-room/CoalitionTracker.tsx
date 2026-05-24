@@ -2,15 +2,22 @@
 
 import { Avatar, initialsFromName } from "@/components/Avatar";
 
-interface CoalitionTrackerProps {
-  current?: { speaker: string; content: string };
+interface CoalitionEntry {
+  agentA: string;
+  agentB: string;
+  strength: number;
+  issue: string;
 }
 
-export function CoalitionTracker({ current }: CoalitionTrackerProps) {
-  const active: { pair: string[]; issue: string }[] = [];
-  if (current) {
-    active.push({ pair: [current.speaker, "Moderator"], issue: current.content.slice(0, 60) + "…" });
-  }
+interface CoalitionTrackerProps {
+  coalitions?: CoalitionEntry[];
+  nameMap?: Record<string, string>;
+}
+
+export function CoalitionTracker({ coalitions, nameMap }: CoalitionTrackerProps) {
+  const active = coalitions ?? [];
+
+  const resolveName = (id: string) => nameMap?.[id] ?? id;
 
   return (
     <div className="rounded-xl border border-hairline bg-surface-card p-[18px]">
@@ -22,25 +29,42 @@ export function CoalitionTracker({ current }: CoalitionTrackerProps) {
         {active.length === 0 && (
           <span className="text-[12px] italic text-muted">None yet — room is still individual.</span>
         )}
-        {active.map((c, i) => (
-          <div
-            key={i}
-            className="flex items-center gap-[10px] rounded-lg border border-hairline bg-canvas px-3 py-[10px]"
-          >
-            <div className="flex">
-              <Avatar initials={initialsFromName(c.pair[0])} size={28} />
-              <div className="-ml-[10px]">
-                <Avatar initials={initialsFromName(c.pair[1])} size={28} accent="teal" />
+        {active.map((c, i) => {
+          const nameA = resolveName(c.agentA);
+          const nameB = resolveName(c.agentB);
+          return (
+            <div
+              key={i}
+              className="flex items-center gap-[10px] rounded-lg border border-hairline bg-canvas px-3 py-[10px]"
+            >
+              <div className="flex">
+                <Avatar initials={initialsFromName(nameA)} size={28} />
+                <div className="-ml-[10px]">
+                  <Avatar initials={initialsFromName(nameB)} size={28} accent="teal" />
+                </div>
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-[13px] font-medium">
+                  {nameA.split(" ")[0]} + {nameB.split(" ")[0]}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink/10">
+                    <div
+                      className="h-full rounded-full bg-secondary"
+                      style={{ width: `${Math.round(c.strength * 100)}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] font-mono text-muted">
+                    {Math.round(c.strength * 100)}%
+                  </span>
+                </div>
+                {c.issue && (
+                  <div className="truncate text-[11px] text-muted">{c.issue}</div>
+                )}
               </div>
             </div>
-            <div className="min-w-0 flex-1">
-              <div className="text-[13px] font-medium">
-                {c.pair[0].split(" ")[0]} + {c.pair[1].split(" ")[0]}
-              </div>
-              <div className="truncate text-[11px] text-muted">{c.issue}</div>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

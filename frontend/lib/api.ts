@@ -1,6 +1,7 @@
 import type {
   JobResponse,
   Postmortem,
+  SimulationAnalytics,
   SimulationCreate,
   SimulationState,
   SimulationV2Config,
@@ -126,6 +127,45 @@ export const deleteStakeholderV2 = (id: string) =>
     method: "DELETE",
   });
 
+// ── Templates ──────────────────────────────────────────────────────
+
+export type TemplateListItem = {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  difficulty: string;
+  estimated_duration: string;
+  stakeholder_count: number;
+  voltage: number;
+  config: Record<string, unknown>;  // full SimulationV2Config
+};
+
+export const fetchTemplates = () =>
+  request<TemplateListItem[]>("/templates");
+
+export const fetchTemplate = (templateId: string) =>
+  request<TemplateListItem>(`/templates/${templateId}`);
+
+// ── Agent Detail ────────────────────────────────────────────────────
+
+export type AgentDetailResponse = {
+  profile: Record<string, unknown>;
+  simulations: Array<Record<string, unknown>>;
+  recent_turns: Array<Record<string, unknown>>;
+  memories: Array<Record<string, unknown>>;
+  emotional_arc: Array<Record<string, unknown>>;
+  stats: {
+    total_simulations: number;
+    total_turns: number;
+    total_memories: number;
+    stances: string[];
+  };
+};
+
+export const fetchAgentDetail = (name: string) =>
+  request<AgentDetailResponse>(`/agents/${encodeURIComponent(name)}/detail`);
+
 export const createSimulation = (payload: SimulationCreate) =>
   request<SimulationState>("/simulations", {
     method: "POST",
@@ -196,6 +236,9 @@ export const streamSimulationV2 = (
   run();
   return controller;
 };
+
+export const fetchSimulationAnalytics = () =>
+  request<SimulationAnalytics>("/simulations/analytics");
 
 export const fetchSimulations = () =>
   request<SimulationState[]>("/simulations");

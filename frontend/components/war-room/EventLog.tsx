@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import gsap from "gsap";
 
 interface EventLogEntry {
   t: number;
@@ -20,9 +21,41 @@ const TYPE_COLORS: Record<string, string> = {
 
 export function EventLog({ events }: EventLogProps) {
   const endRef = useRef<HTMLDivElement>(null);
+  const cursorRef = useRef<HTMLSpanElement>(null);
+  const eventContainerRef = useRef<HTMLDivElement>(null);
 
+  // Scroll to bottom on new events
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events.length]);
+
+  // Blinking cursor animation with GSAP
+  useEffect(() => {
+    if (!cursorRef.current) return;
+    gsap.to(cursorRef.current, {
+      opacity: 0.2,
+      duration: 0.6,
+      repeat: -1,
+      yoyo: true,
+      ease: "steps(1)",
+    });
+    return () => { gsap.killTweensOf(cursorRef.current); };
+  }, []);
+
+  // New event slide-in animation
+  useEffect(() => {
+    if (events.length === 0) return;
+    const container = eventContainerRef.current;
+    if (!container) return;
+    const newEvents = container.querySelectorAll("[data-anim='event']");
+    if (newEvents.length > 0) {
+      const lastEvent = newEvents[newEvents.length - 1] as HTMLElement;
+      gsap.fromTo(
+        lastEvent,
+        { x: -8, opacity: 0 },
+        { x: 0, opacity: 1, duration: 0.3, ease: "power2.out", clearProps: "x" },
+      );
+    }
   }, [events.length]);
 
   return (
@@ -37,9 +70,14 @@ export function EventLog({ events }: EventLogProps) {
           ))}
         </div>
       </div>
-      <div className="max-h-[200px] overflow-y-auto font-mono text-[12px] leading-[1.7] text-canvas">
+      <div ref={eventContainerRef} className="max-h-[200px] overflow-y-auto font-mono text-[12px] leading-[1.7] text-canvas">
         {events.map((e, i) => (
-          <div key={i} className="flex gap-[10px]">
+          <div
+            key={i}
+            data-anim="event"
+            className="flex gap-[10px]"
+            style={{ opacity: 0 }}
+          >
             <span className="min-w-[28px] text-on-dark-soft">T{String(e.t).padStart(2, "0")}</span>
             <span className={TYPE_COLORS[e.type] ?? "text-on-dark-soft"}>{e.text}</span>
           </div>
@@ -48,7 +86,7 @@ export function EventLog({ events }: EventLogProps) {
           <span className="text-on-dark-soft">Awaiting events…</span>
         )}
         <div ref={endRef}>
-          <span className="animate-pulse text-primary" style={{ animation: "pulse 1s steps(2) infinite" }}>▌</span>
+          <span className="inline-block text-primary" ref={cursorRef}>▌</span>
         </div>
       </div>
     </div>

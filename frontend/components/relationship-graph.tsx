@@ -29,6 +29,8 @@ interface Props {
   width?: number;
   height?: number;
   className?: string;
+  trustMatrix?: Record<string, Record<string, number>>;
+  nameMap?: Record<string, string>;
 }
 
 /* ── Stance → color ───────────────────────────────── */
@@ -164,6 +166,8 @@ export function RelationshipGraph({
   width = 600,
   height = 420,
   className = "",
+  trustMatrix,
+  nameMap,
 }: Props) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -209,13 +213,14 @@ export function RelationshipGraph({
           const a = nodeMap.get(e.from);
           const b = nodeMap.get(e.to);
           if (!a || !b) return null;
+          const trust = trustMatrix?.[e.from]?.[e.to] ?? e.trust;
           return (
             <line
               key={`${e.from}-${e.to}`}
               x1={a.x} y1={a.y} x2={b.x} y2={b.y}
               stroke="var(--color-ink)"
-              strokeWidth={edgeWidth(e.trust)}
-              opacity={edgeOpacity(e.trust)}
+              strokeWidth={edgeWidth(trust)}
+              opacity={edgeOpacity(trust)}
             />
           );
         })}
@@ -271,7 +276,7 @@ export function RelationshipGraph({
                 fontFamily="var(--font-sans), sans-serif"
                 style={{ pointerEvents: "none" }}
               >
-                {n.label.length > 14 ? n.label.slice(0, 12) + "…" : n.label}
+                {(nameMap?.[n.id] ?? n.label).length > 14 ? (nameMap?.[n.id] ?? n.label).slice(0, 12) + "…" : (nameMap?.[n.id] ?? n.label)}
               </text>
             </g>
           );

@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useRef } from "react";
 import type { ReactNode } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
 
 type AppShellProps = {
   children: ReactNode;
@@ -22,17 +25,87 @@ type SideNavItem = {
 };
 
 const SIDE_NAV: SideNavItem[] = [
-  { label: "Simulation", href: "/simulate", icon: "play_circle" },
-  { label: "Stakeholders", href: "/personas", icon: "group" },
-  { label: "Library", href: "/library", icon: "library_books" },
+  { label: "War Room", href: "/simulate", icon: "play_circle" },
+  { label: "Personas", href: "/personas", icon: "group" },
+  { label: "Templates", href: "/frameworks", icon: "library_books" },
   { label: "Analytics", href: "/analytics", icon: "bar_chart" },
 ];
 
 export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
   const pathname = usePathname();
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLDivElement>(null);
+
+  // Track active nav index for sidebar indicator animation
+  const activeSideIdx = SIDE_NAV.findIndex(
+    ({ href }) => pathname === href || pathname.startsWith(`${href}/`),
+  );
+
+  // Animate sidebar active indicator pill
+  useGSAP(
+    () => {
+      const indicator = sidebarRef.current?.querySelector("[data-indicator]") as HTMLElement | null;
+      const activeItem = sidebarRef.current?.querySelector(
+        `[data-nav-item="${activeSideIdx}"]`,
+      ) as HTMLElement | null;
+      if (!indicator || !activeItem) return;
+      gsap.to(indicator, {
+        y: activeItem.offsetTop - (sidebarRef.current?.querySelector("nav")?.offsetTop ?? 0),
+        duration: 0.35,
+        ease: "power2.out",
+      });
+    },
+    { scope: sidebarRef, dependencies: [activeSideIdx], revertOnUpdate: true },
+  );
+
+  // Stagger entrance for sidebar nav items
+  useGSAP(
+    () => {
+      gsap.from("[data-anim='nav-item']", {
+        x: -12,
+        opacity: 0,
+        duration: 0.35,
+        stagger: { amount: 0.3, from: "start" },
+        clearProps: "transform",
+      });
+    },
+    { scope: sidebarRef },
+  );
+
+  // Tab underline slide animation
+  useGSAP(
+    () => {
+      const activeTabEl = navRef.current?.querySelector("[data-tab-active='true']") as HTMLElement | null;
+      const underline = navRef.current?.querySelector("[data-tab-underline]") as HTMLElement | null;
+      if (!activeTabEl || !underline) return;
+      gsap.to(underline, {
+        x: activeTabEl.offsetLeft,
+        width: activeTabEl.offsetWidth - 32,
+        duration: 0.3,
+        ease: "power2.out",
+      });
+    },
+    { scope: navRef, dependencies: [pathname], revertOnUpdate: true },
+  );
+
+  // Sidebar entrance slide
+  useGSAP(
+    () => {
+      gsap.from(sidebarRef.current, {
+        x: -20,
+        opacity: 0,
+        duration: 0.4,
+        ease: "power2.out",
+        delay: 0.05,
+        clearProps: "transform",
+      });
+    },
+    { scope: sidebarRef },
+  );
 
   return (
-    <div className="min-h-screen bg-canvas text-ink overflow-x-hidden">
+    <div ref={shellRef} className="min-h-screen bg-canvas text-ink overflow-x-hidden">
       <nav
         className="fixed top-0 left-0 right-0 h-16 z-50 bg-canvas border-b border-hairline flex items-center px-6 gap-6"
         aria-label="Top navigation"
@@ -46,7 +119,7 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
           </span>
         </Link>
 
-        <div className="flex-1 flex items-center justify-center gap-1" role="tablist">
+        <div ref={navRef} className="flex-1 flex items-center justify-center gap-1 relative" role="tablist">
           {NAV_TABS.map((tab) => {
             const isActive = tab.label === activeTab || (tab.label === "War Room" && pathname.startsWith("/simulate"));
             return (
@@ -55,6 +128,7 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
                 href={tab.href}
                 role="tab"
                 aria-selected={isActive}
+                data-tab-active={isActive}
                 className={`relative px-5 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? "text-ink"
@@ -62,12 +136,15 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
                 }`}
               >
                 {tab.label}
-                {isActive && (
-                  <span className="absolute bottom-0 left-4 right-4 h-[2px] bg-primary rounded-full" />
-                )}
               </Link>
             );
           })}
+          {/* Animated underline indicator */}
+          <span
+            data-tab-underline
+            className="absolute bottom-0 h-[2px] bg-primary rounded-full pointer-events-none"
+            style={{ left: 16 }}
+          />
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -93,6 +170,7 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
       </nav>
 
       <aside
+        ref={sidebarRef}
         className="fixed top-0 left-0 w-64 h-full z-40 bg-canvas border-r border-hairline flex flex-col pt-20 pb-6 hidden lg:flex"
         aria-label="Side navigation"
       >
@@ -101,16 +179,24 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
           <p className="text-[11px] text-muted mt-0.5">Version 4.2 Active</p>
         </div>
 
-        <nav className="flex-1 px-3 space-y-0.5">
-          {SIDE_NAV.map(({ label, href, icon }) => {
+        <nav className="flex-1 px-3 space-y-0.5 relative">
+          {/* Animated indicator pill */}
+          <span
+            data-indicator
+            className="absolute left-3 w-[calc(100%-24px)] h-[42px] bg-surface-container-low rounded-lg pointer-events-none"
+            style={{ top: 0 }}
+          />
+          {SIDE_NAV.map(({ label, href, icon }, idx) => {
             const isActive = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
                 key={label}
                 href={href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                data-nav-item={idx}
+                data-anim="nav-item"
+                className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                   isActive
-                    ? "bg-surface-container-low text-primary font-medium"
+                    ? "text-primary font-medium"
                     : "text-muted hover:text-ink hover:bg-surface-card"
                 }`}
               >
@@ -121,9 +207,6 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
                   {icon}
                 </span>
                 {label}
-                {isActive && (
-                  <span className="ml-auto w-1 h-4 bg-primary rounded-full" />
-                )}
               </Link>
             );
           })}

@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
+import gsap from "gsap";
+import { useGSAP } from "@gsap/react";
 import { Avatar, initialsFromName } from "@/components/Avatar";
+
+gsap.registerPlugin(useGSAP);
 
 export type V2Turn = {
   turn_index: number;
@@ -11,6 +15,7 @@ export type V2Turn = {
   content: string;
   stance?: string;
   reasoning?: string;
+  action_type?: string;
 };
 
 interface TranscriptStreamProps {
@@ -22,13 +27,54 @@ interface TranscriptStreamProps {
 export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStreamProps) {
   const endRef = useRef<HTMLDivElement>(null);
 
+  const latestRef = useRef<HTMLDivElement>(null);
+  const latestBadgeRef = useRef<HTMLSpanElement>(null);
+
   useEffect(() => {
     if (endRef.current) {
       endRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [turns.length]);
 
+  // Animate new turn slide-in + stance badge pulse
+  useGSAP(() => {
+    if (turns.length === 0) return;
+    const mm = gsap.matchMedia();
+    mm.add("(prefers-reduced-motion: no-preference)", () => {
+      if (latestRef.current) {
+        gsap.from(latestRef.current, {
+          y: 20,
+          opacity: 0,
+          duration: 0.35,
+          ease: "power2.out",
+          clearProps: "transform",
+        });
+      }
+      if (latestBadgeRef.current) {
+        gsap.fromTo(
+          latestBadgeRef.current,
+          { opacity: 0.4, scale: 0.9 },
+          { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }
+        );
+      }
+    });
+    return () => mm.revert();
+  }, { dependencies: [turns.length], revertOnUpdate: true });
+
   return (
+    <>
+      <style>{`
+        .reasoning-content {
+          max-height: 0;
+          overflow: hidden;
+          transition: max-height 0.3s ease, opacity 0.2s ease;
+          opacity: 0;
+        }
+        .reasoning-details[open] .reasoning-content {
+          max-height: 400px;
+          opacity: 1;
+        }
+      `}</style>
     <div className="flex min-h-[360px] flex-col rounded-xl border border-hairline bg-canvas">
       <div className="flex items-center justify-between border-b border-hairline px-5 py-[14px]">
         <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Transcript</span>
@@ -59,6 +105,7 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
           return (
             <div
               key={i}
+              ref={isCurrent ? latestRef : null}
               className={`flex gap-3 border-b py-[10px] ${isCurrent ? "opacity-100" : "opacity-82"} ${
                 i < turns.length - 1 ? "border-hairline" : "border-transparent"
               }`}
@@ -76,6 +123,7 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
                   <span className="text-[14px] font-semibold">{t.speaker}</span>
                   {t.stance && (
                     <span
+                      ref={isCurrent ? latestBadgeRef : null}
                       className={`text-[11px] uppercase tracking-[0.08em] ${
                         t.stance === "champion" ? "text-primary" : "text-error"
                       }`}
@@ -114,9 +162,9 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
                   </ReactMarkdown>
                 </div>
                 {t.reasoning && (
-                  <details className="mt-[6px]">
+                  <details className="reasoning-details mt-[6px]">
                     <summary className="cursor-pointer text-[11px] text-muted">Reasoning</summary>
-                    <p className="mt-1 text-[12px] italic leading-relaxed text-muted">
+                    <p className="mt-1 text-[12px] italic leading-relaxed text-muted reasoning-content">
                       {t.reasoning}
                     </p>
                   </details>
@@ -128,5 +176,6 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
         <div ref={endRef} />
       </div>
     </div>
+    </>
   );
 }

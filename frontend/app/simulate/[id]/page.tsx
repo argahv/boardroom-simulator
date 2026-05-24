@@ -1,12 +1,14 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { ControlBar, type WarRoomLayout, type PlaybackStatus, type SpeedMultiplier } from "@/components/ControlBar";
 import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
-import { GraphLayout } from "@/components/war-room/GraphLayout";
-import { streamSimulationV2, postmortemV2 } from "@/lib/api";
+import dynamic from "next/dynamic";
+const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
+import { fetchSimulationV2, streamSimulationV2, postmortemV2 } from "@/lib/api";
+import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
 import type { SimulationV2Config } from "@/lib/types";
 
 type PageProps = { params: Promise<{ id: string }> };
@@ -18,6 +20,7 @@ type V2Turn = {
   content: string;
   stance?: string;
   reasoning?: string;
+  action_type?: string;
 };
 
 export default function WarRoomPage({ params }: PageProps) {
@@ -33,6 +36,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const [playing, setPlaying] = useState(true);
   const [postmortem, setPostmortem] = useState<Record<string, unknown> | null>(null);
   const [loadingPostmortem, setLoadingPostmortem] = useState(false);
+  const [stateSnapshots, setStateSnapshots] = useState<Record<string, unknown>[]>([]);
 
   const streamCtrl = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -54,6 +58,7 @@ export default function WarRoomPage({ params }: PageProps) {
         if (state.postmortem) setPostmortem(state.postmortem);
         if (typeof state.playing === "boolean") setPlaying(state.playing);
         if (state.status) setStatus(state.status);
+        if (state.stateSnapshots?.length) setStateSnapshots(state.stateSnapshots);
       }
     } catch {}
   }, [id]);
@@ -63,24 +68,19 @@ export default function WarRoomPage({ params }: PageProps) {
     saveTimer.current = setTimeout(() => {
       try {
         sessionStorage.setItem(persistKey, JSON.stringify({
-          turns, playTurn, speedMul, layout, playing, status, postmortem,
+          turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots,
         }));
       } catch {}
     }, 500);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [turns, playTurn, speedMul, layout, playing, status, postmortem, persistKey]);
+  }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey]);
 
   useEffect(() => {
-    fetch(`http://127.0.0.1:8000/v2/simulations/${id}`, { cache: "no-store" })
-      .then((r) => r.ok ? r.json() : null)
-      .then((data) => setConfig(data?.config ?? null))
+    fetchSimulationV2(id)
+      .then((data) => setConfig(data.config ?? null))
       .catch(() => {});
-    try {
-      const saved = sessionStorage.getItem(persistKey);
-      if (!saved || !JSON.parse(saved).turns?.length) startStream();
-    } catch {
-      startStream();
-    }
+    // Always start stream — backend handles replay for completed sims via DB turns
+    startStream();
     return () => streamCtrl.current?.abort();
   }, [id]);
 
@@ -117,6 +117,7 @@ export default function WarRoomPage({ params }: PageProps) {
             content: String(evt.content ?? ""),
             stance: evt.stance ? String(evt.stance) : undefined,
             reasoning: evt.reasoning ? String(evt.reasoning) : undefined,
+            action_type: evt.action_type ? String(evt.action_type) : undefined,
           };
           setTurns((prev) => {
             const updated = [...prev, turn];
@@ -135,6 +136,18 @@ export default function WarRoomPage({ params }: PageProps) {
           });
         } else if (evt.type === "done") {
           setStatus("complete");
+        } else if (evt.type === "state_snapshot") {
+          setStateSnapshots((prev) => {
+            // Deduplicate: if we already have a snapshot for this turn, replace it
+            const idx = evt.turn_index as number;
+            const existing = prev.findIndex((s) => (s as any).turn_index === idx);
+            if (existing >= 0) {
+              const next = [...prev];
+              next[existing] = evt;
+              return next;
+            }
+            return [...prev, evt];
+          });
         } else if (evt.type === "error") {
           setError(String(evt.message ?? "Unknown error"));
           setStatus("idle");
@@ -178,6 +191,16 @@ export default function WarRoomPage({ params }: PageProps) {
   const eventLog = turns.slice(0, playTurn + 1).map((t) => ({
     t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 60)}${t.content.length > 60 ? "…" : ""}`, type: "agent" as const,
   }));
+
+  const simState = useSimulationState(stateSnapshots as Record<string, unknown>[]);
+
+  const nameMap: Record<string, string> = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const s of config?.stakeholders ?? []) {
+      map[s.id] = s.name;
+    }
+    return map;
+  }, [config]);
 
   return (
     <AppShell activeTab="War Room">
@@ -228,6 +251,8 @@ export default function WarRoomPage({ params }: PageProps) {
               turns={turns.slice(0, playTurn + 1)}
               scrollRef={scrollRef}
               totalTurns={Math.max(turns.length, 30)}
+              simState={simState}
+              nameMap={nameMap}
             />
           )}
           {layout === "table" && (
@@ -240,6 +265,8 @@ export default function WarRoomPage({ params }: PageProps) {
               eventLog={eventLog}
               turns={turns.slice(0, playTurn + 1)}
               totalTurns={Math.max(turns.length, 30)}
+              simState={simState}
+              nameMap={nameMap}
             />
           )}
           {layout === "graph" && (
@@ -252,6 +279,8 @@ export default function WarRoomPage({ params }: PageProps) {
               turns={turns.slice(0, playTurn + 1)}
               totalTurns={Math.max(turns.length, 30)}
               eventLog={eventLog}
+              simState={simState}
+              nameMap={nameMap}
             />
           )}
 
