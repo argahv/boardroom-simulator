@@ -240,12 +240,29 @@ class AgentRuntime:
         }
         stance_text = stance_descriptions.get(self.config.stance, "neutral")
 
+        # Format attributes as structured key facts
+        attrs = self.space.config.subject.attributes
+        if attrs:
+            attributes_formatted = "\n".join(f"- {k}: {v}" for k, v in attrs.items())
+        else:
+            attributes_formatted = "None"
+
+        # Format evidence items as bullet list
+        ev = self.space.config.subject.evidence_items
+        if ev:
+            evidence_formatted = "\n".join(f"- {e}" for e in ev)
+        else:
+            evidence_formatted = "None"
+
         template = (
             self.system_prompt_template
             or (
                 "You are {name}, {role}. {backstory}\n"
                 "Your stance: {stance}.\n{stance_description}\n"
                 "Current subject: {subject_name} — {subject_description}\n"
+                "Key facts:\n{attributes_formatted}\n"
+                "Evidence:\n{evidence_formatted}\n"
+                "What's at stake: {stakes_description}\n"
                 "Hidden agenda: {hidden_agenda}\n"
                 "Personality: aggressiveness={aggressiveness}, empathy={empathy}, "
                 "stubbornness={stubbornness}, verbosity={verbosity}\n"
@@ -260,6 +277,9 @@ class AgentRuntime:
             stance_description=stance_text,
             subject_name=self.space.config.subject.name,
             subject_description=self.space.config.subject.description,
+            attributes_formatted=attributes_formatted,
+            evidence_formatted=evidence_formatted,
+            stakes_description=self.space.config.subject.stakes_description or "None",
             hidden_agenda=self.config.hidden_agenda or "(none)",
             aggressiveness=self.config.personality.aggressiveness,
             empathy=self.config.personality.empathy,

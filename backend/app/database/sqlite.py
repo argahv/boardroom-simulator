@@ -5,7 +5,7 @@ from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 
-from app.models import ScenarioTemplate, SimulationState, Stakeholder
+from app.models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
 from .base import DatabaseBackend
 
 
@@ -122,6 +122,23 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON v2_state_snapshots(simulation_id, turn_index)")
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS document_uploads (
+                id TEXT PRIMARY KEY,
+                simulation_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                file_size INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                extracted_text TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (simulation_id) REFERENCES simulations(simulation_id)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_uploads_sim ON document_uploads(simulation_id)")
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS v2_agent_goals (
                 id TEXT PRIMARY KEY,
                 simulation_id TEXT NOT NULL,
@@ -136,6 +153,22 @@ class SQLiteBackend(DatabaseBackend):
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS document_uploads (
+                id TEXT PRIMARY KEY,
+                simulation_id TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                filepath TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                extracted_text TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_uploads_sim ON document_uploads(simulation_id)")
 
         self.conn.commit()
 
@@ -467,3 +500,70 @@ class SQLiteBackend(DatabaseBackend):
         cursor = self.conn.cursor()
         cursor.execute("SELECT 1 FROM stakeholders WHERE id = ?", (stakeholder_id,))
         return cursor.fetchone() is not None
+
+    # ------------------------------------------------------------------
+    # Document uploads
+    # ------------------------------------------------------------------
+
+    def _row_to_document(self, row: sqlite3.Row) -> SimulationDocument:
+        return SimulationDocument(
+            id=row["id"],
+            simulation_id=row["simulation_id"],
+            filename=row["filename"],
+            content_type=row["content_type"],
+            size_bytes=row["file_size"],
+            status=row["status"],
+            extracted_text=row["extracted_text"],
+            created_at=str(row["created_at"] or ""),
+        )
+
+    async def create_document(self, doc: SimulationDocument) -> None:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO document_uploads (id, simulation_id, filename, content_type, file_size, status, extracted_text, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (doc.id, doc.simulation_id, doc.filename, doc.content_type, doc.size_bytes, doc.status, doc.extracted_text, now, now),
+        )
+        self.conn.commit()
+
+    async def get_documents_by_simulation(self, simulation_id: str) -> list[SimulationDocument]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, simulation_id, filename, content_type, file_size, status, extracted_text, created_at FROM document_uploads WHERE simulation_id = ? ORDER BY created_at ASC",
+            (simulation_id,),
+        )
+        return [self._row_to_document(row) for row in cursor.fetchall()]
+
+    async def get_document(self, document_id: str) -> Optional[SimulationDocument]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, simulation_id, filename, content_type, file_size, status, extracted_text FROM document_uploads WHERE id = ?",
+            (document_id,),
+        )
+        row = cursor.fetchone()
+        return self._row_to_document(row) if row else None
+
+    async def update_document_status(
+        self, document_id: str, status: str, extracted_text: str | None = None
+    ) -> None:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        if extracted_text is not None:
+            cursor.execute(
+                "UPDATE document_uploads SET status = ?, extracted_text = ?, updated_at = ? WHERE id = ?",
+                (status, extracted_text, now, document_id),
+            )
+        else:
+            cursor.execute(
+                "UPDATE document_uploads SET status = ?, updated_at = ? WHERE id = ?",
+                (status, now, document_id),
+            )
+        self.conn.commit()
+
+    async def delete_documents_by_simulation(self, simulation_id: str) -> None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "DELETE FROM document_uploads WHERE simulation_id = ?",
+            (simulation_id,),
+        )
+        self.conn.commit()

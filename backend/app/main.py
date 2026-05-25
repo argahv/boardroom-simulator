@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -37,6 +37,8 @@ from .models import (
 from .runtime import run_simulation_v2
 
 from .llm import openrouter_completion, parse_json_object
+
+from .upload.extraction import extract_text, truncate_to_token_limit
 
 from .graph import driver as graph_driver
 from .graph.schema import init_schema
@@ -440,6 +442,99 @@ async def create_simulation_v2(payload: SimulationV2Config) -> dict:
     }
 
 
+@app.post("/simulations/with-documents")
+async def create_simulation_with_documents(
+    raw_config: str = Form(...),
+    files: list[UploadFile] = File(...),
+) -> dict:
+    simulation_id = str(uuid4())
+    config_json = json.loads(raw_config)
+    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle"}
+    logger.info(
+        "DOC_SIM_CREATE simulation_id=%s files=%d subject=%s",
+        simulation_id,
+        len(files),
+        config_json.get("subject", {}).get("name", "?"),
+    )
+
+    # Persist simulation metadata
+    try:
+        db = get_database()
+        if hasattr(db, 'create_new_simulation'):
+            await db.create_new_simulation(simulation_id, config_json)
+    except Exception as exc:
+        logger.warning("DOC_SIM_SAVE_ERR %s: %s", simulation_id, exc)
+
+    doc_context_parts: list[str] = []
+
+    for f in files:
+        doc_id = str(uuid4())
+        content_type = f.content_type or "application/octet-stream"
+
+        # Determine filepath on disk
+        safe_name = f"{doc_id}_{f.filename or 'unnamed'}"
+        filepath = os.path.join(config.UPLOAD_DIR, safe_name)
+
+        # Read + write to disk
+        try:
+            content = await f.read()
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            with open(filepath, "wb") as fh:
+                fh.write(content)
+        except Exception as exc:
+            logger.warning("DOC_WRITE_ERR %s: %s", doc_id, exc)
+            continue
+
+        size_bytes = len(content)
+
+        # DB record
+        from .models import SimulationDocument
+        doc = SimulationDocument(
+            id=doc_id,
+            simulation_id=simulation_id,
+            filename=f.filename or "unnamed",
+            content_type=content_type,
+            size_bytes=size_bytes,
+            status="pending",
+        )
+        try:
+            db = get_database()
+            if hasattr(db, 'create_document'):
+                await db.create_document(doc)
+        except Exception as exc:
+            logger.warning("DOC_DB_CREATE_ERR %s: %s", doc_id, exc)
+
+        # Extract text + update status
+        extracted = await extract_text(filepath, content_type)
+        if extracted:
+            try:
+                db = get_database()
+                if hasattr(db, 'update_document_status'):
+                    await db.update_document_status(doc_id, "ready", extracted)
+            except Exception as exc:
+                logger.warning("DOC_STATUS_ERR %s: %s", doc_id, exc)
+            doc_context_parts.append(f"{f.filename or 'unnamed'}:\n{extracted}")
+        else:
+            try:
+                db = get_database()
+                if hasattr(db, 'update_document_status'):
+                    await db.update_document_status(doc_id, "failed")
+            except Exception as exc:
+                logger.warning("DOC_STATUS_ERR %s: %s", doc_id, exc)
+
+    # Build _document_context from extracted text
+    if doc_context_parts:
+        combined = "\n\n## Reference Documents\n\n" + "\n\n".join(doc_context_parts)
+        combined = truncate_to_token_limit(combined, max_tokens=4000)
+        _v2_simulations[simulation_id]["_document_context"] = combined
+
+    return {
+        "simulation_id": simulation_id,
+        "config": config_json,
+        "status": "idle",
+    }
+
+
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
     entry = _v2_simulations.get(simulation_id)
@@ -448,6 +543,15 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
 
     already_complete = entry["status"] == "complete"
     config = SimulationV2Config(**entry["config"])
+
+    # Inject document context into system prompt if available
+    doc_ctx = entry.get("_document_context")
+    if doc_ctx:
+        config.system_prompt_template = (
+            config.system_prompt_template + "\n" + doc_ctx
+            if config.system_prompt_template
+            else doc_ctx
+        )
 
     if not already_complete:
         entry["status"] = "running"
@@ -515,17 +619,43 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
 @app.get("/simulations/{simulation_id}")
 async def get_simulation_v2(simulation_id: str) -> dict:
     entry = _v2_simulations.get(simulation_id)
+    response = {}
     if entry is not None:
-        return {"config": entry["config"], "status": entry["status"]}
-    db = get_database()
+        response = {"config": entry["config"], "status": entry["status"]}
+    else:
+        db = get_database()
+        try:
+            if hasattr(db, 'get_simulation_config'):
+                cfg = await db.get_simulation_config(simulation_id)
+                if cfg:
+                    response = {"config": cfg, "status": "complete"}
+        except Exception:
+            pass
+        if not response:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+
+    # Attach document metadata (exclude extracted_text / filepath)
     try:
-        if hasattr(db, 'get_simulation_config'):
-            cfg = await db.get_simulation_config(simulation_id)
-            if cfg:
-                return {"config": cfg, "status": "complete"}
+        db = get_database()
+        if hasattr(db, 'get_documents_by_simulation'):
+            docs = await db.get_documents_by_simulation(simulation_id)
+            response["documents"] = [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "size_bytes": d.size_bytes,
+                    "content_type": d.content_type,
+                    "status": d.status,
+                    "created_at": d.created_at,
+                }
+                for d in docs
+            ]
+        else:
+            response["documents"] = []
     except Exception:
-        pass
-    raise HTTPException(status_code=404, detail="Simulation not found")
+        response["documents"] = []
+
+    return response
 
 
 @app.get("/simulations/{simulation_id}/replay")

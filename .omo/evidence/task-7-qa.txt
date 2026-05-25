@@ -1,0 +1,11 @@
+=== QA OUTPUT: Task 7 - GET /simulations/{id} document metadata + prompt injection ===
+
+CREATE: {"simulation_id":"65cb57c3-62c1-43fe-a6ec-1dee8bbb25e7","config":{"subject":{"name":"PromptInjectionTest"},"stakeholders":[],"action_space":{"actions":[]},"speaker_rules":{"mode":"alternating"},"end_condition":{"type":"timeout","turns":5},"voltage":50,"player_mode":false,"env_flags":{},"system_prompt_template":"","model_temperature":"stable"},"status":"idle"}
+SIM_ID: 65cb57c3-62c1-43fe-a6ec-1dee8bbb25e7
+GET: {"config":{"subject":{"name":"PromptInjectionTest"},"stakeholders":[],"action_space":{"actions":[]},"speaker_rules":{"mode":"alternating"},"end_condition":{"type":"timeout","turns":5},"voltage":50,"player_mode":false,"env_flags":{},"system_prompt_template":"","model_temperature":"stable"},"status":"idle","documents":[{"id":"02f771c2-b086-49c5-9156-f28c4fb59d44","filename":"qa-prompt-test.pdf","size_bytes":59,"content_type":"application/pdf","status":"failed","created_at":"2026-05-25 04:51:16.050580+00:00"}]}
+
+=== QA VALIDATION ===
+DOCS_METADATA: PASS
+DOC_COUNT: 1
+  DOC: qa-prompt-test.pdf status=failed size=59
+=== DONE ===

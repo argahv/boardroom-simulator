@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from ..models import ScenarioTemplate, SimulationState, Stakeholder
+from ..models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
 
 
 class DatabaseBackend(ABC):
@@ -112,6 +112,32 @@ class DatabaseBackend(ABC):
 
     @abstractmethod
     async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Document uploads
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def create_document(self, doc: SimulationDocument) -> None:
+        pass
+
+    @abstractmethod
+    async def get_documents_by_simulation(self, simulation_id: str) -> list[SimulationDocument]:
+        pass
+
+    @abstractmethod
+    async def get_document(self, document_id: str) -> Optional[SimulationDocument]:
+        pass
+
+    @abstractmethod
+    async def update_document_status(
+        self, document_id: str, status: str, extracted_text: str | None = None
+    ) -> None:
+        pass
+
+    @abstractmethod
+    async def delete_documents_by_simulation(self, simulation_id: str) -> None:
         pass
 
 

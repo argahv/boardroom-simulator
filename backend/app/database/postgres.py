@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.models import ScenarioTemplate, SimulationState, Stakeholder
+from app.models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
 from .base import DatabaseBackend
 
 logger = logging.getLogger("boardroom.db.postgres")
@@ -115,6 +115,20 @@ CREATE TABLE IF NOT EXISTS v2_agent_goals (
 
 CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_goals_sim  ON v2_agent_goals(simulation_id);
+
+CREATE TABLE IF NOT EXISTS document_uploads (
+    id            TEXT PRIMARY KEY,
+    simulation_id TEXT NOT NULL,
+    filename      TEXT NOT NULL,
+    content_type  TEXT NOT NULL DEFAULT 'application/octet-stream',
+    file_size     INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    extracted_text TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_doc_uploads_sim ON document_uploads(simulation_id);
 """
 
 
@@ -875,6 +889,77 @@ class PostgresBackend(DatabaseBackend):
                 persona_id,
             )
             return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Document uploads
+    # ------------------------------------------------------------------
+
+    async def create_document(self, doc: SimulationDocument) -> None:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO document_uploads (id, simulation_id, filename, content_type, file_size, status, extracted_text, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)""",
+                doc.id, doc.simulation_id, doc.filename, doc.content_type,
+                doc.size_bytes, doc.status, doc.extracted_text, now, now,
+            )
+
+    async def get_documents_by_simulation(self, simulation_id: str) -> list[SimulationDocument]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, simulation_id, filename, content_type, file_size, status, extracted_text, created_at FROM document_uploads WHERE simulation_id = $1 ORDER BY created_at ASC",
+                simulation_id,
+            )
+        return [self._row_to_document(r) for r in rows]
+
+    async def get_document(self, document_id: str) -> Optional[SimulationDocument]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, simulation_id, filename, content_type, file_size, status, extracted_text FROM document_uploads WHERE id = $1",
+                document_id,
+            )
+        return self._row_to_document(row) if row else None
+
+    async def update_document_status(
+        self, document_id: str, status: str, extracted_text: str | None = None
+    ) -> None:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            if extracted_text is not None:
+                await conn.execute(
+                    "UPDATE document_uploads SET status = $1, extracted_text = $2, updated_at = $3 WHERE id = $4",
+                    status, extracted_text, now, document_id,
+                )
+            else:
+                await conn.execute(
+                    "UPDATE document_uploads SET status = $1, updated_at = $2 WHERE id = $3",
+                    status, now, document_id,
+                )
+
+    async def delete_documents_by_simulation(self, simulation_id: str) -> None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "DELETE FROM document_uploads WHERE simulation_id = $1",
+                simulation_id,
+            )
+
+    @staticmethod
+    def _row_to_document(row: asyncpg.Record) -> SimulationDocument:
+        return SimulationDocument(
+            id=row["id"],
+            simulation_id=row["simulation_id"],
+            filename=row["filename"],
+            content_type=row["content_type"],
+            size_bytes=row["file_size"],
+            status=row["status"],
+            extracted_text=row["extracted_text"],
+            created_at=str(row["created_at"]) if row.get("created_at") else "",
+        )
 
 
 def _extract_emotion(content: str, action_type: str) -> dict:

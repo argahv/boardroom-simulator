@@ -206,7 +206,7 @@ class Subject(BaseModel):
     """What the simulation is ABOUT — first-class entity."""
     name: str
     description: str = ""
-    attributes: dict[str, str | int | float] = Field(default_factory=dict)
+    attributes: dict[str, str | int | float | bool] = Field(default_factory=dict)
     evidence_items: list[str] = Field(default_factory=list)
     stakes_description: str = ""
 
@@ -306,6 +306,19 @@ class SimulationV2Config(BaseModel):
         "external_leaks": False, "deadlock_risk": False,
     })
     model_temperature: str = "volatile"
+
+
+class SimulationDocument(BaseModel):
+    """Metadata-only document attached to a simulation (file stored externally)."""
+    id: str
+    simulation_id: str
+    filename: str
+    filepath: str = ""
+    size_bytes: int = 0
+    content_type: str = "application/octet-stream"
+    extracted_text: str | None = None
+    status: str = "pending"  # pending | ready | failed
+    created_at: str = ""
 
 
 class StrategyCard(BaseModel):
