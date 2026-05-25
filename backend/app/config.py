@@ -30,3 +30,12 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0").strip()
 RQ_QUEUE_SIMULATION = os.getenv("RQ_QUEUE_SIMULATION", "simulation").strip()
 RQ_QUEUE_POSTMORTEM = os.getenv("RQ_QUEUE_POSTMORTEM", "postmortem").strip()
 RQ_JOB_TIMEOUT_SECONDS = int(os.getenv("RQ_JOB_TIMEOUT_SECONDS", "300"))
+
+# Upload config
+UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "./data/uploads")
+MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "25"))
+ALLOWED_CONTENT_TYPES: list[str] = [
+    "application/pdf",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain",
+]

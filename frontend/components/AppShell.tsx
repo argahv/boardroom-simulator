@@ -10,6 +10,7 @@ import gsap from "gsap";
 type AppShellProps = {
   children: ReactNode;
   activeTab?: string;
+  hideTopNav?: boolean;
 };
 
 const NAV_TABS: { label: string; href: string }[] = [
@@ -31,7 +32,7 @@ const SIDE_NAV: SideNavItem[] = [
   { label: "Analytics", href: "/analytics", icon: "bar_chart" },
 ];
 
-export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
+export function AppShell({ children, activeTab = "War Room", hideTopNav = false }: AppShellProps) {
   const pathname = usePathname();
   const sidebarRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
@@ -106,6 +107,7 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
 
   return (
     <div ref={shellRef} className="min-h-screen bg-canvas text-ink overflow-x-hidden">
+      {!hideTopNav && (
       <nav
         className="fixed top-0 left-0 right-0 h-16 z-50 bg-canvas border-b border-hairline flex items-center px-6 gap-6"
         aria-label="Top navigation"
@@ -168,10 +170,11 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
           </div>
         </div>
       </nav>
+      )}
 
       <aside
         ref={sidebarRef}
-        className="fixed top-0 left-0 w-64 h-full z-40 bg-canvas border-r border-hairline flex flex-col pt-20 pb-6 hidden lg:flex"
+        className={`fixed top-0 left-0 w-64 h-full z-40 bg-canvas border-r border-hairline flex flex-col pb-6 hidden lg:flex ${hideTopNav ? "pt-6" : "pt-20"}`}
         aria-label="Side navigation"
       >
         <div className="px-5 mb-6">
@@ -237,7 +240,7 @@ export function AppShell({ children, activeTab = "War Room" }: AppShellProps) {
         </div>
       </aside>
 
-      <main className="lg:ml-64 pt-16 min-h-screen">
+      <main className={`lg:ml-64 min-h-screen ${hideTopNav ? "pt-0" : "pt-16"}`}>
         {children}
       </main>
     </div>
