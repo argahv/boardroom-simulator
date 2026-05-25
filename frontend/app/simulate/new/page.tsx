@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { createSimulationV2, fetchStakeholders } from "@/lib/api";
+import { DocumentUpload } from "@/components/DocumentUpload";
+import { createSimulationV2, createSimulationWithDocuments, fetchStakeholders } from "@/lib/api";
 import type {
   SimulationV2Config,
   Subject,
@@ -55,6 +56,8 @@ export default function NewSimulationPage() {
   const [step, setStep] = useState(1);
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
 
   // Step 1 — Subject
   const [subject, setSubject] = useState<Subject>({
@@ -62,7 +65,11 @@ export default function NewSimulationPage() {
   });
   const [attrKey, setAttrKey] = useState("");
   const [attrVal, setAttrVal] = useState("");
+  const [attrType, setAttrType] = useState<"string" | "number" | "boolean">("string");
+  const [attrDuplicateWarn, setAttrDuplicateWarn] = useState("");
   const [evidenceInput, setEvidenceInput] = useState("");
+  const [evidenceSource, setEvidenceSource] = useState("");
+  const [evidenceImportance, setEvidenceImportance] = useState<"high" | "medium" | "low">("medium");
 
   // Step 2 — Personas
   const [personas, setPersonas] = useState<StakeholderV2[]>([freshPersona(), freshPersona()]);
@@ -171,11 +178,22 @@ export default function NewSimulationPage() {
     setSubmitting(true);
     setError("");
     try {
-      const result = await createSimulationV2(buildConfig());
+      const config = buildConfig();
+      let result: Awaited<ReturnType<typeof createSimulationV2>>;
+
+      if (uploadFiles.length > 0) {
+        setIsUploading(true);
+        result = await createSimulationWithDocuments(config, uploadFiles);
+        setIsUploading(false);
+      } else {
+        result = await createSimulationV2(config);
+      }
+
       router.push(`/simulate/${result.simulation_id}`);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to create simulation");
+    } catch (err) {
+      setIsUploading(false);
       setSubmitting(false);
+      setError(err instanceof Error ? err.message : "Failed to create simulation");
     }
   };
 
@@ -223,50 +241,169 @@ export default function NewSimulationPage() {
             </div>
             
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-ink">Attributes</label>
-              <div className="flex gap-2">
-                <input value={attrKey} onChange={(e) => setAttrKey(e.target.value)}
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-ink">
+                  Attributes
+                  {Object.keys(subject.attributes).length > 0 && (
+                    <span className="ml-2 text-xs font-normal text-muted">({Object.keys(subject.attributes).length})</span>
+                  )}
+                </label>
+              </div>
+              {attrDuplicateWarn && (
+                <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 text-xs text-amber-600">{attrDuplicateWarn}</div>
+              )}
+              <div className="flex gap-2 items-start">
+                <input value={attrKey} onChange={(e) => { setAttrKey(e.target.value); setAttrDuplicateWarn(""); }}
                   className="flex-1 rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5 text-sm outline-none focus:border-primary" placeholder="Key" />
-                <input value={attrVal} onChange={(e) => setAttrVal(e.target.value)}
-                  className="flex-1 rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5 text-sm outline-none focus:border-primary" placeholder="Value" />
+                <select value={attrType} onChange={(e) => setAttrType(e.target.value as "string" | "number" | "boolean")}
+                  className="rounded-xl border border-hairline bg-surface-card/50 px-3 py-2.5 text-xs outline-none focus:border-primary text-muted">
+                  <option value="string">abc</option>
+                  <option value="number">#</option>
+                  <option value="boolean">✓/✗</option>
+                </select>
+                {attrType === "boolean" ? (
+                  <div className="flex items-center gap-2 rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5">
+                    <span className="text-xs text-muted">false</span>
+                    <button role="switch" aria-checked={attrVal === "true"}
+                      onClick={() => setAttrVal(attrVal === "true" ? "false" : "true")}
+                      className={`relative w-10 h-5 rounded-full transition-colors ${attrVal === "true" ? "bg-primary" : "bg-ink/20"}`}>
+                      <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${attrVal === "true" ? "translate-x-5" : ""}`} />
+                    </button>
+                    <span className="text-xs text-muted">true</span>
+                  </div>
+                ) : (
+                  <input value={attrVal} onChange={(e) => setAttrVal(e.target.value)}
+                    type={attrType === "number" ? "number" : "text"}
+                    className="flex-1 rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5 text-sm outline-none focus:border-primary"
+                    placeholder={attrType === "number" ? "0" : "Value"} />
+                )}
                 <Button variant="ghost" onClick={() => {
-                  if (attrKey && attrVal) {
-                    setSubject((s) => ({ ...s, attributes: { ...s.attributes, [attrKey]: isNaN(Number(attrVal)) ? attrVal : Number(attrVal) } }));
-                    setAttrKey(""); setAttrVal("");
+                  if (!attrKey || (!attrVal && attrType !== "boolean")) return;
+                  if (attrKey in subject.attributes) {
+                    setAttrDuplicateWarn(`"${attrKey}" already exists. Adding will overwrite it.`);
                   }
+                  const typedVal: string | number | boolean = attrType === "number"
+                    ? (attrVal === "" ? 0 : Number(attrVal))
+                    : attrType === "boolean"
+                    ? attrVal === "true"
+                    : attrVal;
+                  if (attrType === "boolean" && !attrVal) {
+                    setAttrVal("true");
+                    setSubject((s) => ({ ...s, attributes: { ...s.attributes, [attrKey]: true } }));
+                  } else {
+                    setSubject((s) => ({ ...s, attributes: { ...s.attributes, [attrKey]: typedVal } }));
+                  }
+                  setAttrKey(""); if (attrType !== "boolean") setAttrVal(""); setAttrType("string");
                 }}>Add</Button>
               </div>
               {Object.entries(subject.attributes).length > 0 && (
-                <div className="flex flex-wrap gap-1.5 mt-2">
-                  {Object.entries(subject.attributes).map(([k, v]) => (
-                    <span key={k} className="inline-flex items-center gap-1 rounded-full bg-surface-card px-3 py-1 text-xs">
-                      {k}: {v}
-                      <button onClick={() => { const { [k]: _, ...rest } = subject.attributes; setSubject((s) => ({ ...s, attributes: rest })); }} className="text-muted hover:text-error ml-0.5">×</button>
-                    </span>
-                  ))}
+                <div className="flex flex-col gap-1.5 mt-2">
+                  {Object.entries(subject.attributes).map(([k, v]) => {
+                    const vtype = typeof v === "number" ? "number" : typeof v === "boolean" ? "boolean" : "string";
+                    const typeIcon = vtype === "number" ? "#" : vtype === "boolean" ? "✓/✗" : "abc";
+                    return (
+                      <div key={k} className="flex items-center gap-2 rounded-xl bg-surface-card px-4 py-2.5 text-sm group hover:border hover:border-hairline transition">
+                        <span className="font-semibold text-ink min-w-[80px]">{k}</span>
+                        <span className={`text-[10px] uppercase tracking-wider font-mono px-1.5 py-0.5 rounded ${
+                          vtype === "number" ? "bg-blue-500/10 text-blue-600" :
+                          vtype === "boolean" ? "bg-purple-500/10 text-purple-600" :
+                          "bg-gray-500/10 text-gray-600"
+                        }`}>{typeIcon}</span>
+                        <span className="text-muted flex-1 truncate">{String(v)}</span>
+                        <button onClick={() => { const { [k]: _, ...rest } = subject.attributes; setSubject((s) => ({ ...s, attributes: rest })); }}
+                          className="text-muted hover:text-error opacity-0 group-hover:opacity-100 transition">✕</button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
             
             <div className="space-y-2">
-              <label className="text-sm font-semibold text-ink">Evidence items</label>
-              <div className="flex gap-2">
-                <input value={evidenceInput} onChange={(e) => setEvidenceInput(e.target.value)}
-                  className="flex-1 rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5 text-sm outline-none focus:border-primary" placeholder="Add evidence..." />
-                <Button variant="ghost" onClick={() => {
-                  if (evidenceInput.trim()) { setSubject((s) => ({ ...s, evidence_items: [...s.evidence_items, evidenceInput.trim()] })); setEvidenceInput(""); }
-                }}>Add</Button>
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-semibold text-ink">
+                  Evidence items
+                  {subject.evidence_items.length > 0 && (
+                    <span className="ml-2 text-xs font-normal text-muted">({subject.evidence_items.length})</span>
+                  )}
+                </label>
+              </div>
+              <div className="flex flex-col gap-2">
+                <div className="flex gap-2 items-start">
+                  <div className="flex-1 space-y-2">
+                    <input value={evidenceInput} onChange={(e) => setEvidenceInput(e.target.value)}
+                      className="w-full rounded-xl border border-hairline bg-surface-card/50 px-4 py-2.5 text-sm outline-none focus:border-primary"
+                      placeholder="Evidence text..." />
+                    <div className="flex gap-2">
+                      <input value={evidenceSource} onChange={(e) => setEvidenceSource(e.target.value)}
+                        className="flex-1 rounded-xl border border-hairline bg-surface-card/50 px-3 py-1.5 text-xs outline-none focus:border-primary"
+                        placeholder="Source (optional)" />
+                      <div className="flex rounded-xl border border-hairline overflow-hidden">
+                        {(["high", "medium", "low"] as const).map((imp) => (
+                          <button key={imp} onClick={() => setEvidenceImportance(imp)}
+                            className={`px-2.5 py-1 text-[10px] uppercase font-semibold tracking-wider transition ${
+                              evidenceImportance === imp
+                                ? imp === "high" ? "bg-red-500 text-white"
+                                  : imp === "medium" ? "bg-amber-500 text-white"
+                                  : "bg-gray-400 text-white"
+                                : "bg-surface-card/50 text-muted hover:text-ink"
+                            }`}>{imp}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  <Button variant="ghost" onClick={() => {
+                    if (!evidenceInput.trim()) return;
+                    const formatted = `[${evidenceImportance.toUpperCase()}] ${evidenceInput.trim()}${evidenceSource.trim() ? ` | source: ${evidenceSource.trim()}` : ""}`;
+                    setSubject((s) => ({ ...s, evidence_items: [...s.evidence_items, formatted] }));
+                    setEvidenceInput(""); setEvidenceSource(""); setEvidenceImportance("medium");
+                  }}>Add</Button>
+                </div>
               </div>
               {subject.evidence_items.length > 0 && (
-                <ul className="space-y-1 mt-2">
-                  {subject.evidence_items.map((item, i) => (
-                    <li key={i} className="flex items-center gap-2 rounded-xl bg-surface-card px-4 py-2 text-sm">
-                      <span className="text-muted">•</span> {item}
-                      <button onClick={() => setSubject((s) => ({ ...s, evidence_items: s.evidence_items.filter((_, j) => j !== i) }))} className="ml-auto text-muted hover:text-error">×</button>
-                    </li>
-                  ))}
-                </ul>
+                <div className="space-y-1.5 mt-2">
+                  {subject.evidence_items.map((item, i) => {
+                    const impMatch = item.match(/^\[(HIGH|MEDIUM|LOW)\]/);
+                    const imp = impMatch ? impMatch[1].toLowerCase() as "high" | "medium" | "low" : null;
+                    const srcMatch = item.match(/\| source: (.+)$/);
+                    const src = srcMatch ? srcMatch[1] : null;
+                    const cleanText = item
+                      .replace(/^\[(HIGH|MEDIUM|LOW)\]\s*/, "")
+                      .replace(/\s*\|\s*source:\s*.+$/, "");
+                    const impColor = imp === "high" ? "border-l-red-500 bg-red-500/5" :
+                      imp === "low" ? "border-l-gray-400 bg-gray-400/5" :
+                      "border-l-amber-500 bg-amber-500/5";
+                    return (
+                      <div key={i} className={`flex items-start gap-3 rounded-xl border border-hairline border-l-4 ${impColor} px-4 py-3 text-sm group`}>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-ink">{cleanText}</p>
+                          <div className="flex items-center gap-2 mt-1.5">
+                            {imp && (
+                              <span className={`text-[10px] uppercase font-semibold tracking-wider px-1.5 py-0.5 rounded ${
+                                imp === "high" ? "bg-red-500/10 text-red-600" :
+                                imp === "low" ? "bg-gray-500/10 text-gray-600" :
+                                "bg-amber-500/10 text-amber-600"
+                              }`}>{imp}</span>
+                            )}
+                            {src && <span className="text-[10px] text-muted truncate">source: {src}</span>}
+                          </div>
+                        </div>
+                        <button onClick={() => setSubject((s) => ({ ...s, evidence_items: s.evidence_items.filter((_, j) => j !== i) }))}
+                          className="text-muted hover:text-error opacity-0 group-hover:opacity-100 transition shrink-0">✕</button>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-semibold text-ink">Reference Documents</label>
+              <p className="text-xs text-muted mb-3">Upload relevant documents as context for AI stakeholders</p>
+              <DocumentUpload
+                files={uploadFiles}
+                onFilesChange={setUploadFiles}
+              />
             </div>
           </section>
         )}
@@ -691,7 +828,11 @@ export default function NewSimulationPage() {
             ) : (
               <Button onClick={finish} disabled={submitting}>
                 {submitting ? (
-                  <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Creating...</span>
+                  isUploading ? (
+                    <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Uploading documents...</span>
+                  ) : (
+                    <span className="flex items-center gap-2"><span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Creating...</span>
+                  )
                 ) : "Launch debate"}
               </Button>
             )}
