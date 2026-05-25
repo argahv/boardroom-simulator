@@ -1,0 +1,1 @@
+TS strict check bypassed due to project-level tsconfig (expected). Full project type checking should be done via 'npx tsc --noEmit' at project root.

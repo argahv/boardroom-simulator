@@ -1,0 +1,11 @@
+PASS exports function
+PASS input type file
+PASS onDrop handler
+PASS multiple accept
+PASS material icon
+PASS max 5 files
+PASS uploading prop
+PASS drag state
+PASS remove button close icon
+PASS description icon
+PASS hourglass_empty for loading
