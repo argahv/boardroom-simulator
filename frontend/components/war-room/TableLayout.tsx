@@ -45,11 +45,11 @@ interface TableLayoutProps {
 }
 
 const STANCE_COLORS: Record<string, string> = {
-  champion: "#22c55e",
-  detractor: "#ef4444",
-  neutral: "#a3a3a3",
-  moderator: "#3b82f6",
-  wildcard: "#f59e0b",
+  champion: "var(--color-primary)",
+  detractor: "var(--color-error)",
+  neutral: "var(--color-muted)",
+  moderator: "var(--color-accent-teal)",
+  wildcard: "var(--color-accent-amber)",
 };
 
 function SpeakingPulse({ active }: { active: boolean }) {
@@ -153,23 +153,25 @@ export function TableLayout({
         <div
           ref={tableRef}
           className="relative aspect-[16/10] overflow-hidden rounded-xl"
-          style={{ background: "linear-gradient(145deg, #1a1816 0%, #12110f 100%)" }}
+          style={{
+            background: "radial-gradient(circle at center, var(--color-surface-dark-soft) 0%, var(--color-surface-dark) 100%)",
+          }}
         >
-          {/* Table surface */}
+          {/* Table surface — mahogany oval */}
           <div
             className="absolute inset-6 rounded-full"
             style={{
-              background: "radial-gradient(ellipse at center, #2a2725 0%, #1f1c19 60%, #141210 100%)",
-              border: "1px solid #2e2b27",
+              background: "radial-gradient(ellipse at center, var(--color-surface-dark-elevated) 0%, var(--color-surface-dark) 60%, var(--color-surface-dark-soft) 100%)",
+              border: "1px solid rgba(255,255,255,0.06)",
               boxShadow: "inset 0 0 60px rgba(0,0,0,0.5)",
             }}
           />
 
-          {/* Table center glow */}
+          {/* Table center glow — coral accent */}
           <div
             className="absolute left-1/2 top-1/2 h-16 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full"
             style={{
-              background: "radial-gradient(ellipse, rgba(146,74,49,0.08) 0%, transparent 70%)",
+              background: "radial-gradient(ellipse, rgba(237,111,92,0.10) 0%, transparent 70%)",
             }}
           />
 
@@ -276,18 +278,18 @@ export function TableLayout({
               <div
                 className="rounded-xl border p-4 backdrop-blur-sm"
                 style={{
-                  background: "rgba(24,23,21,0.85)",
-                  borderColor: "rgba(146,74,49,0.3)",
-                  boxShadow: "0 8px 32px rgba(0,0,0,0.4)",
+                  background: "rgba(30,28,25,0.92)",
+                  borderColor: "rgba(237,111,92,0.25)",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(237,111,92,0.08) inset",
                 }}
               >
                 <div className="mb-2 flex items-center gap-2">
-                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-primary">
+                  <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-primary" style={{ fontFamily: "var(--font-mono)" }}>
                     T{String(turn).padStart(2, "0")}
                   </span>
                   <span className="text-[10px] font-medium text-canvas/50">{current.speaker}</span>
                 </div>
-                <div className="font-newsreader min-h-[2.5em] text-[17px] leading-[1.3] tracking-[-0.3px] text-canvas">
+                <div className="min-h-[2.5em] text-[17px] leading-[1.35] text-canvas" style={{ fontFamily: "var(--font-body), Inter, sans-serif", letterSpacing: "-0.01em" }}>
                   &ldquo;{typewriter}
                   {(typewriter.length < (current.content?.length ?? 0)) && (
                     <span className="inline-block h-[0.85em] w-[2px] animate-pulse bg-primary align-middle" />
@@ -316,8 +318,8 @@ export function TableLayout({
 
           {!current && (
             <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-              <div className="font-newsreader text-3xl text-canvas/20">Empty table</div>
-              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.12em] text-canvas/30">
+              <div className="text-3xl text-canvas/20" style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif" }}>Empty table</div>
+              <div className="mt-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-canvas/30">
                 Awaiting first speaker
               </div>
             </div>

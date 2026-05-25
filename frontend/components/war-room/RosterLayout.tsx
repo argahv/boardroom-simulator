@@ -62,14 +62,14 @@ function StakeholderCard({
 
   const handleMouseEnter = useCallback(() => {
     gsap.to(cardRef.current, {
-      y: -4, scale: 1.02, boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+      y: -4, scale: 1.02, boxShadow: "0 8px 20px rgba(0,0,0,0.08)",
       duration: 0.3, ease: "back.out(1.7)",
     });
   }, []);
 
   const handleMouseLeave = useCallback(() => {
     gsap.to(cardRef.current, {
-      y: 0, scale: 1, boxShadow: "none",
+      y: 0, scale: 1, boxShadow: "0 1px 3px rgba(0,0,0,0.03)",
       duration: 0.3, ease: "back.out(1.7)",
     });
   }, []);
@@ -80,7 +80,7 @@ function StakeholderCard({
     mm.add("(prefers-reduced-motion: no-preference)", () => {
       gsap.to(cardRef.current, {
         borderColor: "var(--color-primary)",
-        boxShadow: "0 0 20px rgba(var(--color-primary-rgb), 0.25)",
+        boxShadow: "0 0 20px rgba(237,111,92,0.20), 0 0 40px rgba(237,111,92,0.08)",
         duration: 0.8, repeat: -1, yoyo: true, ease: "sine.inOut",
       });
     });
@@ -92,7 +92,7 @@ function StakeholderCard({
       ref={cardRef}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
-      style={{ border: "1px solid transparent" }}
+      style={{ border: "1px solid var(--color-hairline)" }}
       className={`rounded-xl p-[14px] transition-colors duration-[240ms] ${
         speaking
           ? "bg-ink text-canvas"
@@ -210,7 +210,11 @@ export function RosterLayout({
         <EventLog events={eventLog} />
       </div>
 
+      {/* ── Right column: data panels ── */}
       <div className="flex flex-col gap-[14px]">
+        <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-muted)", marginBottom: -4 }}>
+          Intelligence
+        </div>
         <IncentiveHeatmap
           socialPhysics={simState?.socialPhysics}
           totalAgents={stakeholders.length}

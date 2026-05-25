@@ -25,8 +25,8 @@ const config: Config = {
         "accent-teal": "var(--color-accent-teal)",
       },
       fontFamily: {
-        display: ["var(--font-display)", "Cormorant Garamond", "serif"],
-        newsreader: ["var(--font-newsreader)", "Newsreader", "serif"],
+        display: ["var(--font-display)", "Playfair Display", "Georgia", "serif"],
+        "sans-tight": ["var(--font-sans-tight)", "Inter Tight", "system-ui", "sans-serif"],
         sans: ["var(--font-sans)", "Inter", "system-ui", "sans-serif"],
         mono: ["var(--font-mono)", "JetBrains Mono", "monospace"],
       },

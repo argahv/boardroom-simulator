@@ -37,7 +37,7 @@ interface Props {
 
 const STANCE_FILL = (s: string) => {
   const map: Record<string, string> = {
-    champion:  "#924a31",
+    champion:  "#ed6f5c",
     detractor: "#ba1a1a",
     neutral:   "#6c6a64",
     moderator: "#3d9e8c",

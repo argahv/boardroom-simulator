@@ -1,0 +1,2 @@
+{"id":"test-id","simulation_id":"sim-1","filename":"doc.pdf","filepath":"/tmp/doc.pdf","size_bytes":1000,"content_type":"application/pdf","extracted_text":null,"status":"pending","created_at":"2025-01-01T00:00:00"}
+MODEL_VALID: YES

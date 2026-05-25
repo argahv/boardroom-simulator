@@ -5,7 +5,15 @@ from typing import List, Optional
 from pathlib import Path
 from datetime import datetime
 
-from app.models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
+from app.models import (
+    PersonaDocument,
+    PersonaEvolution,
+    PersonaResearch,
+    ScenarioTemplate,
+    SimulationDocument,
+    SimulationState,
+    Stakeholder,
+)
 from .base import DatabaseBackend
 
 
@@ -39,6 +47,10 @@ class SQLiteBackend(DatabaseBackend):
                 hidden_agenda TEXT,
                 tag TEXT,
                 tool_profile TEXT NOT NULL DEFAULT 'none',
+                backstory TEXT DEFAULT '',
+                stance TEXT DEFAULT 'neutral',
+                personality TEXT DEFAULT '{}',
+                tools TEXT DEFAULT '[]',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -155,6 +167,54 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
 
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS persona_documents (
+                id TEXT PRIMARY KEY,
+                persona_id TEXT NOT NULL,
+                filename TEXT NOT NULL DEFAULT '',
+                filepath TEXT NOT NULL DEFAULT '',
+                content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'pending',
+                extracted_text TEXT,
+                embedding_id TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_docs_pid ON persona_documents(persona_id)")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS persona_evolution (
+                id TEXT PRIMARY KEY,
+                persona_id TEXT NOT NULL,
+                simulation_id TEXT NOT NULL DEFAULT '',
+                proposed_deltas TEXT NOT NULL DEFAULT '{}',
+                before_snapshot TEXT NOT NULL DEFAULT '{}',
+                status TEXT NOT NULL DEFAULT 'pending',
+                applied_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_evo_pid ON persona_evolution(persona_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_evo_status ON persona_evolution(status)")
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS persona_research (
+                id TEXT PRIMARY KEY,
+                persona_id TEXT NOT NULL,
+                query TEXT NOT NULL DEFAULT '',
+                results TEXT NOT NULL DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+            )
+        """)
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_research_pid ON persona_research(persona_id)")
+
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS document_uploads (
                 id TEXT PRIMARY KEY,
                 simulation_id TEXT NOT NULL,
@@ -180,6 +240,15 @@ class SQLiteBackend(DatabaseBackend):
         if "tool_profile" not in cols:
             cursor.execute("ALTER TABLE stakeholders ADD COLUMN tool_profile TEXT NOT NULL DEFAULT 'none'")
             self.conn.commit()
+        for col_name, col_def in [
+            ("backstory", "TEXT DEFAULT ''"),
+            ("stance", "TEXT DEFAULT 'neutral'"),
+            ("personality", "TEXT DEFAULT '{}'"),
+            ("tools", "TEXT DEFAULT '[]'"),
+        ]:
+            if col_name not in cols:
+                cursor.execute(f"ALTER TABLE stakeholders ADD COLUMN {col_name} {col_def}")
+                self.conn.commit()
 
         cursor.execute("PRAGMA table_info(simulations)")
         sim_cols = {row["name"] for row in cursor.fetchall()}

@@ -11,7 +11,7 @@ export function ConflictTimeline({ turn, totalTurns, dark = false }: ConflictTim
   return (
     <div className={`rounded-xl px-[18px] py-[14px] ${dark ? 'bg-surface-dark text-canvas' : 'bg-surface-card text-ink'}`}>
       <div className="mb-[10px] flex items-baseline justify-between">
-        <span className={`text-[10px] font-bold uppercase tracking-[0.12em] ${dark ? 'text-canvas/50' : 'text-muted'}`}>
+        <span className={`font-mono text-[10px] font-bold uppercase tracking-[0.12em] ${dark ? 'text-canvas/50' : 'text-muted'}`}>
           Timeline · turn {turn + 1} / {totalTurns}
         </span>
       </div>

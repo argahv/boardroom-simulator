@@ -1,0 +1,44 @@
+=== FINAL QA REPORT ===
+Date: Mon May 25 10:52:21 +0545 2026
+Server PID: 64790
+Fix applied: POST /simulations/with-documents now returns "documents" in response body
+
+=== SCENARIO 1: Happy path — upload PDF with config ===
+SIM_ID=0415b992-217f-48d0-81bb-a34c753d65ed
+DOC_ID=a14066ac-f81b-444f-937e-9aeb21ead517
+DOC_FILENAME=qa-final-test.pdf
+SCENARIO_1: PASS
+Verification: POST returned documents[] with 1 entry, filename ends with .pdf
+
+=== SCENARIO 2: Document metadata in GET response (no extracted_text) ===
+SCENARIO_2: PASS
+Verification: GET /simulations/{id} returns doc with id, filename, size_bytes, content_type, status, created_at
+No extracted_text or filepath leaked
+
+=== SCENARIO 3: Reject invalid file type ===
+SCENARIO_3: PASS (HTTP 422)
+Verification: Uploading /bin/ls (not allowed type) returns 422
+
+=== SCENARIO 4: Backward compat — JSON endpoint unchanged ===
+SCENARIO_4: PASS (HTTP 200)
+Verification: POST /simulations (JSON body) still works unchanged
+
+=== SCENARIO 5: No files still works ===
+SCENARIO_5: PASS (HTTP 200)
+Verification: POST /simulations/with-documents without files returns 200
+
+=== SCENARIO 6: Uploaded file exists on disk ===
+SCENARIO_6: PASS
+Verification: backend/data/uploads/a14066ac-f81b-444f-937e-9aeb21ead517_qa-final-test.pdf exists (51 bytes)
+
+=== SUMMARY ===
+SCENARIO_1: PASS
+SCENARIO_2: PASS
+SCENARIO_3: PASS
+SCENARIO_4: PASS
+SCENARIO_5: PASS
+SCENARIO_6: PASS
+
+Pass: 6 / 6
+Integration: PASS
+VERDICT: ALL PASS

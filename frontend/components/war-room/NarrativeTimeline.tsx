@@ -91,14 +91,14 @@ export function NarrativeTimeline({
     >
       <div className="mb-[10px] flex items-baseline justify-between">
         <span
-          className={`text-[10px] font-bold uppercase tracking-[0.12em] ${
+          className={`font-mono text-[10px] font-bold uppercase tracking-[0.12em] ${
             dark ? "text-canvas/50" : "text-muted"
           }`}
         >
           Timeline · turn {turn + 1} / {totalTurns}
         </span>
         <span
-          className={`text-[10px] font-bold uppercase tracking-[0.12em] ${
+          className={`font-mono text-[10px] font-bold uppercase tracking-[0.12em] ${
             dark ? "text-canvas/50" : "text-muted"
           }`}
         >

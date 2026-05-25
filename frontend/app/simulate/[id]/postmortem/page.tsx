@@ -86,7 +86,7 @@ export default function PostmortemPage({ params }: PageProps) {
 
           {postmortem.unanticipated_note && (
             <div className="rounded-xl bg-surface-card p-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted mb-2">
+              <p className="font-mono text-xs font-semibold uppercase tracking-wider text-muted mb-2">
                 Unanticipated Dynamics
               </p>
               <p className="text-sm text-ink leading-relaxed">{postmortem.unanticipated_note}</p>
@@ -159,14 +159,14 @@ export default function PostmortemPage({ params }: PageProps) {
               </h3>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {postmortem.strategy_cards.map((card: StrategyCard) => (
-                  <article key={card.objection} className="rounded-xl bg-white/60 border border-ink/8 p-5">
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+                  <article key={card.objection} className="rounded-xl bg-surface-card border border-hairline p-5">
+                    <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
                       The Objection
                     </p>
                     <p className="text-sm font-medium italic text-ink leading-snug mb-4">
                       &ldquo;{card.objection}&rdquo;
                     </p>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
+                    <p className="font-mono text-[10px] font-semibold uppercase tracking-wider text-muted mb-1">
                       The Counter
                     </p>
                     <p className="text-sm text-muted leading-relaxed mb-4">{card.counter}</p>
@@ -199,8 +199,8 @@ function ScoreCard({
   positive?: boolean;
 }) {
   return (
-    <div className="rounded-xl bg-white/60 border border-ink/8 p-5">
-      <p className="text-xs text-muted mb-2">{label}</p>
+    <div className="rounded-xl bg-surface-card border border-hairline p-5">
+      <p className="font-mono text-xs font-semibold uppercase tracking-wider text-muted mb-2">{label}</p>
       <p
         className={`font-display text-4xl font-normal tracking-display ${
           positive === undefined

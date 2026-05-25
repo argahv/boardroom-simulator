@@ -1,0 +1,10 @@
+All 7 checks passed:
+- DocumentMeta type defined
+- size_bytes in type
+- createSimulationWithDocuments in api
+- FormData used
+- X-Request-ID header
+- existing createSimulationV2
+- genRequestId usage
+
+Full tsc --noEmit: no errors

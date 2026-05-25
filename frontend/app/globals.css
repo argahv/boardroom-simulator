@@ -1,23 +1,24 @@
 @import "tailwindcss";
 
 :root {
-  --color-canvas: #faf9f5;
-  --color-ink: #141413;
-  --color-primary: #924a31;
-  --color-primary-active: #a9583e;
-  --color-surface-card: #efe9de;
-  --color-surface-dark: #181715;
-  --color-surface-dark-elevated: #252320;
+  /* Open Design — Atelier Zero palette */
+  --color-canvas: #efe7d2;         /* warm parchment */
+  --color-ink: #15140f;            /* near-black */
+  --color-primary: #ed6f5c;        /* coral accent */
+  --color-primary-active: #e05844; /* darker coral */
+  --color-surface-card: #f7f1de;   /* bone */
+  --color-surface-dark: #2a2620;   /* ink-soft */
+  --color-surface-dark-elevated: #3a342e;
   --color-surface-dark-soft: #1f1e1b;
-  --color-surface-container-low: #fff1ed;
-  --color-muted: #6c6a64;
-  --color-hairline: #e6dfd8;
+  --color-surface-container-low: #ece4cf;  /* paper-warm */
+  --color-muted: #5a5448;          /* ink-mute */
+  --color-hairline: rgba(21,20,15,.16);   /* line */
   --color-on-dark: #faf9f5;
-  --color-on-dark-soft: #a09d96;
-  --color-body-strong: #252523;
-  --color-secondary: #006b5c;
+  --color-on-dark-soft: #8b8676;   /* ink-faint */
+  --color-body-strong: #2a2620;    /* ink-soft */
+  --color-secondary: #6e7448;      /* olive */
   --color-error: #ba1a1a;
-  --color-accent-amber: #e8a55a;
+  --color-accent-amber: #e9b94a;   /* mustard */
   --color-accent-teal: #3d9e8c;
 }
 
@@ -41,7 +42,7 @@
   --color-accent-amber: var(--color-accent-amber);
   --color-accent-teal: var(--color-accent-teal);
   --font-display: var(--font-display);
-  --font-newsreader: var(--font-newsreader);
+  --font-sans-tight: var(--font-sans-tight);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
   --tracking-display: -0.04em;
@@ -49,6 +50,20 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Paper grain overlay — Open Design editorial texture */
+html::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  opacity: 0.04;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 128px 128px;
+  background-repeat: repeat;
+  mix-blend-mode: multiply;
 }
 
 html {
@@ -108,9 +123,9 @@ a:focus-visible,
   justify-content: center;
 }
 
-/* Newsreader display utility */
+/* Playfair Display utility — Open Design editorial serif */
 .font-serif-title {
-  font-family: var(--font-newsreader), 'Newsreader', serif;
+  font-family: var(--font-display), 'Playfair Display', Georgia, serif;
   letter-spacing: -0.04em;
 }
 
@@ -121,7 +136,7 @@ a:focus-visible,
 
 /* War room dark gradient */
 .war-room-gradient {
-  background: radial-gradient(circle at center, #1f1e1b 0%, #181715 100%);
+  background: radial-gradient(circle at center, var(--color-surface-dark-soft) 0%, var(--color-surface-dark) 100%);
 }
 
 /* ── Microanimation Keyframes ── */

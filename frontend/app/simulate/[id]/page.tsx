@@ -239,17 +239,24 @@ export default function WarRoomPage({ params }: PageProps) {
   return (
     <AppShell activeTab="War Room">
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
-        <div style={{ padding: "24px 32px", borderBottom: "1px solid var(--color-hairline)" }}>
-          <h1 style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 48, fontWeight: 700, marginBottom: 12 }}>
+        {/* ── The Brief — editorial header stripe ── */}
+        <div style={{ padding: "28px 32px 20px", borderBottom: "1px solid var(--color-hairline)", background: "var(--color-surface-card)" }}>
+          <div style={{ marginBottom: 6 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-muted)" }}>
+              The Brief
+              {isReplay && (
+                <span style={{ marginLeft: 8, display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 9999, background: "var(--color-primary)", color: "var(--color-on-dark)", fontSize: 10, fontWeight: 700, letterSpacing: "0.08em" }}>
+                  <span style={{ width: 5, height: 5, borderRadius: "50%", background: "currentColor", opacity: 0.7 }} />
+                  REPLAY
+                </span>
+              )}
+            </span>
+          </div>
+          <h1 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 42, fontWeight: 700, letterSpacing: "-0.04em", margin: 0, lineHeight: 1.15 }}>
             {subjectName}
-            {isReplay && (
-              <span style={{ marginLeft: 12, fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", verticalAlign: "middle", padding: "4px 10px", borderRadius: 9999, background: "var(--color-primary)", color: "#fff" }}>
-                REPLAY
-              </span>
-            )}
           </h1>
           {config?.subject?.description && (
-            <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: "50%", lineHeight: 1.6 }}>
+            <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: "50%", lineHeight: 1.6, marginTop: 12, marginBottom: 0 }}>
               {config.subject.description}
             </p>
           )}
@@ -357,93 +364,77 @@ export default function WarRoomPage({ params }: PageProps) {
             </div>
           )}
 
-          {/* Outcome Banner — shown when simulation completes */}
-          {outcome && (
+          {/* ── Verdict — outcome banner ── */}
+          {outcome && (() => {
+            const type = outcome.outcome_type;
+            const isAgree = type === "agreement";
+            const isWalkaway = type === "walkaway";
+            const tintBg = isAgree ? "rgba(110,116,72,0.10)" : isWalkaway ? "rgba(233,185,74,0.10)" : "rgba(186,26,26,0.08)";
+            const tintBorder = isAgree ? "rgba(110,116,72,0.20)" : isWalkaway ? "rgba(233,185,74,0.20)" : "rgba(186,26,26,0.15)";
+            const tintText = isAgree ? "var(--color-secondary)" : isWalkaway ? "var(--color-accent-amber)" : "var(--color-error)";
+            return (
             <div style={{
-              padding: "16px 24px",
-              margin: "0 16px 16px",
-              borderRadius: 12,
-              background: outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.12)" 
-                         : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.12)"
-                         : "rgba(186,26,26,0.08)",
-              border: `1px solid ${
-                outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.3)"
-                : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.3)"
-                : "rgba(186,26,26,0.3)"
-              }`,
+              padding: "18px 24px", margin: "0 16px 16px", borderRadius: 12,
+              background: tintBg, border: `1px solid ${tintBorder}`,
+              position: "relative", overflow: "hidden",
             }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
-                <span style={{
-                  fontSize: 24,
-                  color: outcome.outcome_type === "agreement" ? "#22c55e"
-                         : outcome.outcome_type === "walkaway" ? "#eab308"
-                         : "#ba1a1a",
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
+                <div style={{
+                  width: 32, height: 32, borderRadius: 9999, display: "flex", alignItems: "center", justifyContent: "center",
+                  background: tintText, color: "#fff", fontSize: 11, fontWeight: 700,
+                  flexShrink: 0, marginTop: 2,
                 }}>
-                  {outcome.outcome_type === "agreement" ? "✅" : outcome.outcome_type === "walkaway" ? "⚠️" : "❌"}
-                </span>
-                <div>
-                  <span style={{
-                    display: "inline-block",
-                    padding: "2px 10px",
-                    borderRadius: 9999,
-                    fontSize: 11,
-                    fontWeight: 700,
-                    letterSpacing: "0.08em",
-                    textTransform: "uppercase",
-                    background: outcome.outcome_type === "agreement" ? "rgba(34,197,94,0.2)"
-                               : outcome.outcome_type === "walkaway" ? "rgba(234,179,8,0.2)"
-                               : "rgba(186,26,26,0.2)",
-                    color: outcome.outcome_type === "agreement" ? "#22c55e"
-                           : outcome.outcome_type === "walkaway" ? "#eab308"
-                           : "#ba1a1a",
-                    marginBottom: 2,
-                  }}>
-                    {outcome.outcome_type === "agreement" ? "Deal Reached"
-                     : outcome.outcome_type === "walkaway" ? "Walkaway"
-                     : outcome.outcome_type === "judge_ruling" ? "Judge Ruling"
-                     : "No Consensus"}
-                  </span>
-                  <p style={{ fontSize: 13, fontWeight: 600, color: "var(--color-ink)", margin: 0 }}>
+                  {isAgree ? "A" : isWalkaway ? "W" : "X"}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ marginBottom: 4 }}>
+                    <span style={{
+                      fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em",
+                      textTransform: "uppercase", color: tintText,
+                    }}>
+                      {isAgree ? "Deal Reached" : isWalkaway ? "Walkaway" : type === "judge_ruling" ? "Judge Ruling" : "No Consensus"}
+                    </span>
+                  </div>
+                  <p style={{ fontSize: 14, fontWeight: 600, color: "var(--color-ink)", margin: 0, lineHeight: 1.4 }}>
                     {outcome.summary || `Simulation ended via ${outcome.reason || "unknown"}.`}
                   </p>
-                </div>
-                {outcome.confidence !== undefined && (
-                  <div style={{ marginLeft: "auto", textAlign: "right" }}>
-                    <span style={{ fontSize: 11, color: "var(--color-muted)" }}>Confidence</span>
-                    <p style={{ fontSize: 20, fontWeight: 700, fontFamily: "var(--font-mono)", margin: 0 }}>
-                      {Math.round(outcome.confidence * 100)}%
+
+                  {/* Vote breakdown */}
+                  {outcome.vote_breakdown && Object.keys(outcome.vote_breakdown).length > 0 && (
+                    <div style={{ display: "flex", gap: 20, marginTop: 12 }}>
+                      {Object.entries(outcome.vote_breakdown).map(([key, val]) => (
+                        <div key={key} style={{ textAlign: "center" }}>
+                          <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", color: "var(--color-ink)" }}>{String(val)}</div>
+                          <div style={{ fontSize: 9, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 600, marginTop: 1 }}>{key}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {outcome.judge_notes && (
+                    <p style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", lineHeight: 1.5, marginTop: 8, maxWidth: 520 }}>
+                      &ldquo;{outcome.judge_notes}&rdquo;
                     </p>
+                  )}
+                  {outcome.walkaway_party && (
+                    <p style={{ fontSize: 11, color: "var(--color-accent-amber)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
+                      Walked: {outcome.walkaway_party}
+                    </p>
+                  )}
+                </div>
+
+                {outcome.confidence !== undefined && (
+                  <div style={{ textAlign: "right", flexShrink: 0 }}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-muted)" }}>Confidence</span>
+                    <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", color: "var(--color-ink)" }}>
+                      {Math.round(outcome.confidence * 100)}<span style={{ fontSize: 14, color: "var(--color-muted)" }}>%</span>
+                    </div>
                   </div>
                 )}
               </div>
-
-              {/* Vote breakdown */}
-              {outcome.vote_breakdown && Object.keys(outcome.vote_breakdown).length > 0 && (
-                <div style={{ display: "flex", gap: 16, marginTop: 8 }}>
-                  {Object.entries(outcome.vote_breakdown).map(([key, val]) => (
-                    <div key={key} style={{ textAlign: "center" }}>
-                      <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-mono)" }}>{String(val)}</span>
-                      <p style={{ fontSize: 10, color: "var(--color-muted)", textTransform: "capitalize", margin: 0 }}>{key}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Judge notes */}
-              {outcome.judge_notes && (
-                <p style={{ fontSize: 12, color: "var(--color-muted)", fontStyle: "italic", marginTop: 8 }}>
-                  Judge: {outcome.judge_notes}
-                </p>
-              )}
-
-              {/* Walkaway party */}
-              {outcome.walkaway_party && (
-                <p style={{ fontSize: 12, color: "#eab308", marginTop: 4 }}>
-                  Party walked away: {outcome.walkaway_party}
-                </p>
-              )}
             </div>
-          )}
+            );
+          })()}
 
           {postmortem && (
             <>
@@ -466,18 +457,18 @@ export default function WarRoomPage({ params }: PageProps) {
                 </div>
               </div>
               <div style={{ padding: "0 16px 32px", maxWidth: 700, margin: "0 auto" }}>
-              <div style={{ background: "#141312", borderRadius: 12, padding: 24, color: "#fff" }}>
-                <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.28em", textTransform: "uppercase", color: "var(--color-primary)", marginBottom: 4 }}>Post-Mortem</p>
-                <h3 style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 32, fontWeight: 700, marginBottom: 16 }}>{String(postmortem.subject || "Debate")}</h3>
+              <div style={{ background: "var(--color-surface-dark)", borderRadius: 12, padding: 24, color: "var(--color-on-dark)" }}>
+                <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.28em", textTransform: "uppercase", color: "var(--color-primary)", marginBottom: 4 }}>Post-Mortem</p>
+                <h3 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 16 }}>{String(postmortem.subject || "Debate")}</h3>
 
                 {/* Show verdict if available */}
                 {!!postmortem.verdict && (
-                  <div style={{ marginBottom: 16, padding: "8px 12px", borderRadius: 8, background: "rgba(255,255,255,0.05)" }}>
-                    <p style={{ fontSize: 13, color: "rgba(255,255,255,0.7)", margin: 0 }}>
-                      <strong style={{ color: "#fff" }}>Verdict:</strong> {String(postmortem.verdict)}
+                  <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: "var(--color-surface-dark-elevated)" }}>
+                    <p style={{ fontSize: 13, color: "var(--color-on-dark-soft)", margin: 0 }}>
+                      <strong style={{ color: "var(--color-on-dark)" }}>Verdict:</strong> {String(postmortem.verdict)}
                     </p>
                     {!!postmortem.end_reason && (
-                      <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", margin: "4px 0 0" }}>
+                      <p style={{ fontSize: 12, color: "var(--color-on-dark-soft)", margin: "4px 0 0" }}>
                         Ended via: {String(postmortem.end_reason)}
                       </p>
                     )}
@@ -485,33 +476,33 @@ export default function WarRoomPage({ params }: PageProps) {
                 )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
-                  <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
-                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Total turns</p>
-                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.total_turns ?? 0)}</p>
+                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
+                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Total turns</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.total_turns ?? 0)}</p>
                   </div>
-                  <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
-                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Participants</p>
-                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.stakeholder_count ?? 0)}</p>
+                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
+                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Participants</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.stakeholder_count ?? 0)}</p>
                   </div>
-                  <div style={{ borderRadius: 12, background: "rgba(255,255,255,0.05)", padding: 16 }}>
-                    <p style={{ fontSize: 12, color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>Voltage</p>
-                    <p style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 28, fontWeight: 700 }}>{String(postmortem.voltage || 0)}</p>
+                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
+                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Voltage</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.voltage || 0)}</p>
                   </div>
                 </div>
 
                 {/* Summary if available */}
                 {!!postmortem.summary && (
-                  <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "rgba(255,255,255,0.03)" }}>
-                    <p style={{ fontSize: 12, color: "var(--color-primary)", fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 4 }}>Summary</p>
-                    <p style={{ fontSize: 13, lineHeight: 1.6, color: "rgba(255,255,255,0.85)", margin: 0 }}>{String(postmortem.summary)}</p>
+                  <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "var(--color-surface-dark-soft)" }}>
+                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-primary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Summary</p>
+                    <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-on-dark-soft)", margin: 0 }}>{String(postmortem.summary)}</p>
                   </div>
                 )}
 
                 {(postmortem.leaderboard as Array<{ name: string; stance: string; turns: number }>)?.map((entry, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: i === 0 ? "rgba(255,255,255,0.08)" : "transparent", borderRadius: 8, marginBottom: 4 }}>
-                    <span style={{ fontFamily: "var(--font-newsreader), serif", fontSize: 20, width: 24, color: i === 0 ? "#fff" : "rgba(255,255,255,0.4)" }}>#{i + 1}</span>
-                    <div style={{ flex: 1 }}><span style={{ fontWeight: 600 }}>{entry.name}</span><span style={{ marginLeft: 8, fontSize: 12, color: "rgba(255,255,255,0.5)" }}>{entry.stance}</span></div>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 13 }}>{entry.turns} turns</span>
+                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: i === 0 ? "var(--color-surface-dark-elevated)" : "transparent", borderRadius: 8, marginBottom: 4 }}>
+                    <span style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 20, width: 28, letterSpacing: "-0.03em", color: i === 0 ? "var(--color-on-dark)" : "var(--color-on-dark-soft)" }}>#{i + 1}</span>
+                    <div style={{ flex: 1 }}><span style={{ fontWeight: 600 }}>{entry.name}</span><span style={{ marginLeft: 8, fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--color-on-dark-soft)" }}>{entry.stance}</span></div>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-on-dark-soft)" }}>{entry.turns} turns</span>
                   </div>
                 ))}
               </div>

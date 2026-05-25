@@ -5,7 +5,7 @@ import gsap from "gsap";
 type ButtonVariant = "primary" | "ghost" | "dark";
 
 const variants: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-white shadow-[0_16px_30px_rgba(204,120,92,0.28)] hover:bg-primary-active",
+  primary: "bg-primary text-white shadow-[0_16px_30px_rgba(237,111,92,0.28)] hover:bg-primary-active",
   ghost: "border border-ink/10 bg-white/35 text-ink hover:bg-white/60",
   dark: "bg-surface-dark text-canvas hover:bg-ink"
 };

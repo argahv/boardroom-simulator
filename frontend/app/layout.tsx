@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Cormorant_Garamond, Inter, JetBrains_Mono, Newsreader } from "next/font/google";
+import { Inter, Inter_Tight, JetBrains_Mono, Playfair_Display } from "next/font/google";
 import "./globals.css";
 
 const inter = Inter({
@@ -7,17 +7,17 @@ const inter = Inter({
   variable: "--font-sans",
 });
 
-const cormorant = Cormorant_Garamond({
+const interTight = Inter_Tight({
   subsets: ["latin"],
-  weight: ["400", "600"],
-  variable: "--font-display",
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-sans-tight",
 });
 
-const newsreader = Newsreader({
+const playfair = Playfair_Display({
   subsets: ["latin"],
-  weight: ["400", "500"],
+  weight: ["400", "500", "600", "700", "800"],
   style: ["normal", "italic"],
-  variable: "--font-newsreader",
+  variable: "--font-display",
 });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -38,7 +38,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${cormorant.variable} ${newsreader.variable} ${jetbrainsMono.variable}`}
+      className={`${inter.variable} ${interTight.variable} ${playfair.variable} ${jetbrainsMono.variable}`}
     >
       <head>
         <link

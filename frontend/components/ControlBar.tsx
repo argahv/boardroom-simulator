@@ -172,7 +172,7 @@ export function ControlBar({
       ref={barRef}
       style={{
         borderBottom: "1px solid var(--color-hairline)",
-        background: "var(--color-canvas)",
+        background: "var(--color-surface-card)",
         padding: "12px 20px",
         display: "flex",
         alignItems: "center",
@@ -181,6 +181,7 @@ export function ControlBar({
         position: "sticky",
         top: 64,
         zIndex: 40,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.04)",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
@@ -198,6 +199,7 @@ export function ControlBar({
           />
           <span
             style={{
+              fontFamily: "var(--font-mono)",
               fontSize: 10,
               fontWeight: 700,
               letterSpacing: "0.12em",
@@ -328,6 +330,7 @@ export function ControlBar({
       <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
         <span
           style={{
+            fontFamily: "var(--font-mono)",
             fontSize: 10,
             fontWeight: 700,
             letterSpacing: "0.12em",

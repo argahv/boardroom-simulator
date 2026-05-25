@@ -44,11 +44,11 @@ const TAB_CLS = (active: boolean) =>
   }`;
 
 const STANCE_COLORS: Record<string, string> = {
-  champion: "#22c55e",
-  detractor: "#ef4444",
-  neutral: "#a3a3a3",
-  moderator: "#3b82f6",
-  wildcard: "#f59e0b",
+  champion: "var(--color-primary)",
+  detractor: "var(--color-error)",
+  neutral: "var(--color-muted)",
+  moderator: "var(--color-accent-teal)",
+  wildcard: "var(--color-accent-amber)",
 };
 
 const STANCE_LABELS: Record<string, string> = {
@@ -231,12 +231,12 @@ export function GraphLayout({
       ctx.save();
       ctx.globalAlpha = alpha;
 
-      // ── Glow for selected/speaking ──
+      // ── Coral glow for selected/speaking ──
       if (isSelected || node.isSpeaking) {
         const glowR = r + 10;
         const gradient = ctx.createRadialGradient(node.x, node.y, r * 0.5, node.x, node.y, glowR);
-        gradient.addColorStop(0, `rgba(146,74,49,0.25)`);
-        gradient.addColorStop(1, `rgba(146,74,49,0)`);
+        gradient.addColorStop(0, `rgba(237,111,92,0.25)`);
+        gradient.addColorStop(1, `rgba(237,111,92,0)`);
         ctx.beginPath();
         ctx.arc(node.x, node.y, glowR, 0, 2 * Math.PI);
         ctx.fillStyle = gradient;

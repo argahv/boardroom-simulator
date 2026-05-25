@@ -75,7 +75,7 @@ export default function AnalyticsPage() {
             </p>
             <Link
               href="/simulate/new"
-              className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_16px_30px_rgba(204,120,92,0.28)]"
+              className="mt-6 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_16px_30px_rgba(237,111,92,0.28)]"
             >
               Start a Simulation
             </Link>
@@ -157,7 +157,7 @@ export default function AnalyticsPage() {
                 <Tooltip />
                 <Bar
                   dataKey="count"
-                  fill="#924a31"
+                  fill="#ed6f5c"
                   radius={[0, 4, 4, 0]}
                 />
               </BarChart>
@@ -237,7 +237,7 @@ export default function AnalyticsPage() {
         <div className="mt-8 flex justify-center">
           <Link
             href="/simulate"
-            className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_16px_30px_rgba(204,120,92,0.28)]"
+            className="inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_16px_30px_rgba(237,111,92,0.28)]"
           >
             View all simulations
           </Link>

@@ -69,6 +69,10 @@ class Stakeholder(BaseModel):
     hidden_agenda: str = ""
     tag: Optional[str] = None  # SKEPTICAL / AGREEABLE / LOCKED / CALIBRATING / VISIONARY
     tool_profile: ToolProfile = "none"  # determines which tools this agent gets
+    backstory: str = ""
+    stance: str = "neutral"
+    personality: str = "{}"
+    tools: str = "[]"
 
 
 class ScenarioTemplate(BaseModel):
@@ -318,6 +322,41 @@ class SimulationDocument(BaseModel):
     content_type: str = "application/octet-stream"
     extracted_text: str | None = None
     status: str = "pending"  # pending | ready | failed
+    created_at: str = ""
+
+
+class PersonaDocument(BaseModel):
+    """Document attached to a persona for knowledge base."""
+    id: str
+    persona_id: str
+    filename: str = ""
+    filepath: str = ""
+    content_type: str = "application/octet-stream"
+    size_bytes: int = 0
+    status: str = "pending"
+    extracted_text: str | None = None
+    embedding_id: str | None = None
+    created_at: str = ""
+
+
+class PersonaEvolution(BaseModel):
+    """Proposed personality/stance evolution for a persona after simulation."""
+    id: str
+    persona_id: str
+    simulation_id: str = ""
+    proposed_deltas: str = "{}"
+    before_snapshot: str = "{}"
+    status: str = "pending"
+    applied_at: str | None = None
+    created_at: str = ""
+
+
+class PersonaResearch(BaseModel):
+    """Web research result attached to a persona."""
+    id: str
+    persona_id: str
+    query: str = ""
+    results: str = "[]"
     created_at: str = ""
 
 

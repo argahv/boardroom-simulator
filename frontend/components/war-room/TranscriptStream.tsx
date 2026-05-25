@@ -69,8 +69,8 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
       `}</style>
     <div className="flex min-h-[360px] flex-col rounded-xl border border-hairline bg-canvas">
       <div className="flex items-center justify-between border-b border-hairline px-5 py-[14px]">
-        <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Transcript</span>
-        <span className="text-[11px] text-muted">{turns.length} turns</span>
+        <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Transcript</span>
+        <span className="font-mono text-[11px] text-muted">{turns.length} turns</span>
       </div>
       <div ref={scrollRef} className="max-h-[440px] flex-1 overflow-y-auto px-5 py-3">
         {turns.length === 0 && (
@@ -116,14 +116,14 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
                   {t.stance && (
                     <span
                       ref={isCurrent ? latestBadgeRef : null}
-                      className={`text-[11px] uppercase tracking-[0.08em] ${
+                      className={`text-[11px] uppercase tracking-[0.08em] font-mono ${
                         t.stance === "champion" ? "text-primary" : "text-error"
                       }`}
                     >
                       {t.stance}
                     </span>
                   )}
-                  <span className="ml-auto font-mono text-[11px] text-muted">
+                  <span className="ml-auto font-mono text-[11px] text-muted" style={{ fontVariantNumeric: "tabular-nums" }}>
                     T{String(t.turn_index).padStart(2, "0")}
                   </span>
                 </div>

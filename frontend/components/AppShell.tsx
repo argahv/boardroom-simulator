@@ -117,7 +117,7 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
             <span className="text-on-dark font-bold text-sm font-serif-title">V</span>
           </div>
           <span className="font-serif-title text-xl font-bold text-ink tracking-tight">
-            Vantage <span className="text-primary">✦</span>
+            Vantage <span className="text-primary/80" style={{ fontFamily: "var(--font-display)" }}>✦</span>
           </span>
         </Link>
 
@@ -178,8 +178,8 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
         aria-label="Side navigation"
       >
         <div className="px-5 mb-6">
-          <p className="text-xs font-semibold text-body-strong">Strategic Engine</p>
-          <p className="text-[11px] text-muted mt-0.5">Version 4.2 Active</p>
+          <p className="text-[10px] font-mono font-semibold uppercase tracking-[0.18em] text-body-strong">Strategic Engine</p>
+          <p className="text-[10px] font-mono text-muted mt-0.5 tracking-wider">Version 4.2 Active</p>
         </div>
 
         <nav className="flex-1 px-3 space-y-0.5 relative">

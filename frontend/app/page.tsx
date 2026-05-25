@@ -152,7 +152,7 @@ export default function Home() {
           <button
             onClick={handleQuickPlay}
             disabled={quickPlayLoading}
-            className="w-full flex items-center justify-center gap-3 rounded-2xl bg-primary px-8 py-5 text-lg font-semibold text-on-dark shadow-[0_16px_30px_rgba(204,120,92,0.28)] hover:bg-primary-active transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 rounded-2xl bg-primary px-8 py-5 text-lg font-semibold text-on-dark shadow-[0_16px_30px_rgba(237,111,92,0.28)] hover:bg-primary-active transition disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {quickPlayLoading ? (
               <>

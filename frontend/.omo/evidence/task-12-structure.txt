@@ -1,0 +1,8 @@
+PASS imports DocumentUpload
+PASS imports createSimulationWithDocuments
+PASS uploadFiles state
+PASS isUploading state
+PASS DocumentUpload component used
+PASS conditional submit path
+PASS backward compat path
+PASS error handling

@@ -39,3 +39,8 @@ ALLOWED_CONTENT_TYPES: list[str] = [
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     "text/plain",
 ]
+
+# Persona growth system
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
+CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
+EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))

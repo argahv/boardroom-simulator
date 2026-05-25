@@ -20,14 +20,14 @@ interface LeaderboardProps {
 export function Leaderboard({ leaderboard, nameMap }: LeaderboardProps) {
   if (!leaderboard || leaderboard.length === 0) {
     return (
-      <div className="rounded-xl border border-hairline bg-surface-card p-[18px]">
-        <div className="mb-[14px] flex items-baseline justify-between">
-          <span className="text-[13px] font-semibold text-ink">Who's winning</span>
-          <span className="text-[11px] text-muted">Live score</span>
-        </div>
-        <div className="flex h-[80px] items-center justify-center">
-          <span className="text-[12px] italic text-muted">Awaiting data…</span>
-        </div>
+    <div className="rounded-xl border border-hairline bg-surface-card p-[18px]">
+      <div className="mb-[14px] flex items-baseline justify-between">
+        <span className="text-[13px] font-semibold text-ink">Who's winning</span>
+        <span className="font-mono text-[11px] text-muted">Live score</span>
+      </div>
+      <div className="flex h-[80px] items-center justify-center">
+        <span className="text-[12px] italic text-muted">Awaiting data…</span>
+      </div>
       </div>
     );
   }
@@ -36,7 +36,7 @@ export function Leaderboard({ leaderboard, nameMap }: LeaderboardProps) {
     <div className="rounded-xl border border-hairline bg-surface-card p-[18px]">
       <div className="mb-[14px] flex items-baseline justify-between">
         <span className="text-[13px] font-semibold text-ink">Who's winning</span>
-        <span className="text-[11px] text-muted">Live score</span>
+        <span className="font-mono text-[11px] text-muted">Live score</span>
       </div>
       <div className="flex flex-col gap-2">
         {leaderboard.map((row, i) => {
@@ -52,9 +52,10 @@ export function Leaderboard({ leaderboard, nameMap }: LeaderboardProps) {
               }`}
             >
               <div
-                className={`w-6 font-display text-[22px] ${
+                className={`w-6 text-[22px] ${
                   isTop ? "text-canvas/50" : "text-muted"
                 }`}
+                style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", letterSpacing: "-0.04em" }}
               >
                 #{row.rank}
               </div>

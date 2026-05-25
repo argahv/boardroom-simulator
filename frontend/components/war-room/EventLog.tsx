@@ -14,7 +14,7 @@ interface EventLogProps {
 }
 
 const TYPE_COLORS: Record<string, string> = {
-  agent: "text-canvas/85",
+  agent: "text-on-dark",
   tool: "text-accent-teal",
   alert: "text-primary",
 };

@@ -297,7 +297,7 @@ export default function SimulationsPage() {
                               className="w-8 h-8 rounded-full border-2 border-surface-dark flex items-center justify-center text-[10px] font-bold text-white"
                               style={{
                                 backgroundColor:
-                                  i === 0 ? "#924a31" : i === 1 ? "#5db8a6" : "#e8a55a",
+                                  i === 0 ? "#ed6f5c" : i === 1 ? "#5db8a6" : "#e8a55a",
                               }}
                             >
                               {i === 2 && featured.stakeholder_count > 3
@@ -423,7 +423,7 @@ export default function SimulationsPage() {
                             className="w-7 h-7 rounded-full border-2 border-surface-container-low flex items-center justify-center text-[9px] font-bold text-white"
                             style={{
                               backgroundColor:
-                                [ "#924a31", "#5db8a6", "#e8a55a", "#6c6a64" ][idx],
+                                [ "#ed6f5c", "#5db8a6", "#e9b94a", "#6c6a64" ][idx],
                               zIndex: 4 - idx,
                             }}
                           >

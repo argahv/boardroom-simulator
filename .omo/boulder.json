@@ -1,0 +1,71 @@
+{
+  "active_plan": "/Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/.sisyphus/plans/behavior-engine-rearchitecture.md",
+  "started_at": "2026-05-24T00:00:00Z",
+  "session_ids": [
+    "ses_1a95e5bbeffe366bfraIypGFbo",
+    "ses_1a927e49fffeqvnAfB8gt3r9c2",
+    "ses_1a927ddc5ffephnm1QLeev2iQT",
+    "ses_1a927d727ffePfuQCqWb3aXz8V",
+    "ses_1a927d1bfffe0yTrTIe4kHG6nB",
+    "ses_1a927cba0ffeHmiiIrqvWd1K7x",
+    "ses_1a91b20a7ffeS7YneXRn63MctQ",
+    "ses_1a91b1963ffeB2z07gwmeQLwrD",
+    "ses_1a91b1138ffef6N7VuwSv26y5s",
+    "ses_1a91b0799ffePK412Q5iXvhe4t",
+    "ses_1a91afe4cffeRJJ6d9LBubGeFd",
+    "ses_1a918402bffeCyq5bvOezBckvD",
+    "ses_1a9141ac6ffeJvEA1oBlLF9dv3",
+    "ses_1a9121846ffen4UiVcqigbjS9q",
+    "ses_1a912184fffewi0PJe3qA6Q4qr",
+    "ses_1a9123208ffePfnepJ0ByD4a5J",
+    "ses_1a91188c5ffeRHhXHqtytHNVoi",
+    "ses_1a8f714c1ffe0etQ1jrVa9qMQp",
+    "ses_1a8f6f4efffePpoYgzIdScqcSL",
+    "ses_1a8f66936ffeWgTnsVC2LkjNr3",
+    "ses_1a8f736fbffeSavkYr4LV8Kd7a",
+    "ses_1a8ea56ffffe2Bn59Lj71lcn1U",
+    "ses_1a8e94fb5ffe8rYw8xJ7jRqFD6",
+    "ses_1a8e51d89ffeENHuwDHI45T5z0",
+    "ses_1a8e41fb7ffexyKgWv1jfX5uIB",
+    "ses_1a8e30927ffeVso7ABVQh3CNE4",
+    "ses_1a8d8354effe5w7JpTGVGq5MIG"
+  ],
+  "plan_name": "behavior-engine-rearchitecture",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "SocialPhysics State Machine",
+      "session_id": "ses_1a91188c5ffeRHhXHqtytHNVoi",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-23T22:28:16.964Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "Agent Internal State Model",
+      "session_id": "ses_1a8f736fbffeSavkYr4LV8Kd7a",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-05-23T23:05:55.118Z"
+    },
+    "todo:4": {
+      "task_key": "todo:4",
+      "task_label": "4",
+      "task_title": "Behavior Engine Orchestrator",
+      "session_id": "ses_1a8e94fb5ffe8rYw8xJ7jRqFD6",
+      "agent": "explorer",
+      "updated_at": "2026-05-23T23:11:22.262Z"
+    },
+    "todo:6": {
+      "task_key": "todo:6",
+      "task_label": "6",
+      "task_title": "Architecture Documentation",
+      "session_id": "ses_1a8e41fb7ffexyKgWv1jfX5uIB",
+      "agent": "Sisyphus-Junior",
+      "category": "writing",
+      "updated_at": "2026-05-23T23:12:47.838Z"
+    }
+  }
+}

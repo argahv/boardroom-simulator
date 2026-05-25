@@ -2,7 +2,15 @@ from abc import ABC, abstractmethod
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
-from ..models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
+from ..models import (
+    PersonaDocument,
+    PersonaEvolution,
+    PersonaResearch,
+    ScenarioTemplate,
+    SimulationDocument,
+    SimulationState,
+    Stakeholder,
+)
 
 
 class DatabaseBackend(ABC):
@@ -138,6 +146,64 @@ class DatabaseBackend(ABC):
 
     @abstractmethod
     async def delete_documents_by_simulation(self, simulation_id: str) -> None:
+        pass
+
+    # ------------------------------------------------------------------
+    # Persona Growth System (v2)
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def list_personas_v2(self) -> list[dict]:
+        pass
+
+    @abstractmethod
+    async def get_persona_v2(self, persona_id: str) -> dict | None:
+        pass
+
+    # Persona documents
+
+    @abstractmethod
+    async def create_persona_document(self, doc: PersonaDocument) -> PersonaDocument:
+        pass
+
+    @abstractmethod
+    async def get_persona_documents(self, persona_id: str) -> list[PersonaDocument]:
+        pass
+
+    @abstractmethod
+    async def delete_persona_document(self, document_id: str) -> bool:
+        pass
+
+    # Persona evolution
+
+    @abstractmethod
+    async def create_persona_evolution(self, evolution: PersonaEvolution) -> PersonaEvolution:
+        pass
+
+    @abstractmethod
+    async def get_pending_evolutions(self, persona_id: str) -> list[PersonaEvolution]:
+        pass
+
+    @abstractmethod
+    async def approve_evolution(self, evolution_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def reject_evolution(self, evolution_id: str) -> bool:
+        pass
+
+    @abstractmethod
+    async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
+        pass
+
+    # Persona research
+
+    @abstractmethod
+    async def create_persona_research(self, research: PersonaResearch) -> PersonaResearch:
+        pass
+
+    @abstractmethod
+    async def get_persona_research(self, persona_id: str) -> list[PersonaResearch]:
         pass
 
 

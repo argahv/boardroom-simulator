@@ -68,6 +68,7 @@ app.add_middleware(
 
 # Serve uploaded files in dev (auth not required for static mount)
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
+os.makedirs(config.CHROMA_PERSIST_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 
 @app.middleware("http")
@@ -671,6 +672,61 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
     )
 
 
+@app.get("/simulations/analytics")
+async def simulations_analytics() -> dict:
+    """Cross-simulation analytics aggregation."""
+    db = get_database()
+    total_simulations = 0
+    total_turns = 0
+    persona_usage: dict[str, int] = {}
+    stances_count: dict[str, int] = {}
+    voltage_sum = 0
+    sim_count_with_voltage = 0
+
+    # Aggregate from in-memory simulations
+    for sid, entry in _v2_simulations.items():
+        if entry["status"] == "complete":
+            total_simulations += 1
+            cfg = entry["config"]
+            for s in cfg.get("stakeholders", []):
+                n = s.get("name", s.get("id", "unknown"))
+                persona_usage[n] = persona_usage.get(n, 0) + 1
+                st = s.get("stance", "neutral")
+                stances_count[st] = stances_count.get(st, 0) + 1
+            v = cfg.get("voltage", 0)
+            if isinstance(v, (int, float)):
+                voltage_sum += v
+                sim_count_with_voltage += 1
+
+    # Aggregate from DB
+    try:
+        if hasattr(db, 'list_simulations_v2'):
+            db_sims = await db.list_simulations_v2()
+            for s in db_sims:
+                sid = s["simulation_id"]
+                if sid not in _v2_simulations:
+                    total_simulations += 1
+                    cfg = s.get("config", {})
+                    stakeholders = cfg.get("stakeholders", []) if isinstance(cfg, dict) else []
+                    for p in stakeholders:
+                        n = p.get("name", p.get("id", "unknown"))
+                        persona_usage[n] = persona_usage.get(n, 0) + 1
+                        st = p.get("stance", "neutral")
+                        stances_count[st] = stances_count.get(st, 0) + 1
+        if hasattr(db, 'get_all_turns_count'):
+            total_turns = await db.get_all_turns_count()
+    except Exception:
+        pass
+
+    return {
+        "total_simulations": total_simulations,
+        "total_turns": total_turns,
+        "avg_voltage": round(voltage_sum / sim_count_with_voltage, 1) if sim_count_with_voltage else 50,
+        "top_personas": sorted(persona_usage.items(), key=lambda x: -x[1])[:10],
+        "stance_distribution": stances_count,
+    }
+
+
 @app.get("/simulations/{simulation_id}")
 async def get_simulation_v2(simulation_id: str) -> dict:
     entry = _v2_simulations.get(simulation_id)
@@ -1033,61 +1089,6 @@ async def agent_detail(name: str) -> dict:
             "total_memories": len(memories),
             "stances": list(set(s["stance"] for s in sims)),
         },
-    }
-
-
-@app.get("/simulations/analytics")
-async def simulations_analytics() -> dict:
-    """Cross-simulation analytics aggregation."""
-    db = get_database()
-    total_simulations = 0
-    total_turns = 0
-    persona_usage: dict[str, int] = {}
-    stances_count: dict[str, int] = {}
-    voltage_sum = 0
-    sim_count_with_voltage = 0
-
-    # Aggregate from in-memory simulations
-    for sid, entry in _v2_simulations.items():
-        if entry["status"] == "complete":
-            total_simulations += 1
-            cfg = entry["config"]
-            for s in cfg.get("stakeholders", []):
-                n = s.get("name", s.get("id", "unknown"))
-                persona_usage[n] = persona_usage.get(n, 0) + 1
-                st = s.get("stance", "neutral")
-                stances_count[st] = stances_count.get(st, 0) + 1
-            v = cfg.get("voltage", 0)
-            if isinstance(v, (int, float)):
-                voltage_sum += v
-                sim_count_with_voltage += 1
-
-    # Aggregate from DB
-    try:
-        if hasattr(db, 'list_simulations_v2'):
-            db_sims = await db.list_simulations_v2()
-            for s in db_sims:
-                sid = s["simulation_id"]
-                if sid not in _v2_simulations:
-                    total_simulations += 1
-                    cfg = s.get("config", {})
-                    stakeholders = cfg.get("stakeholders", []) if isinstance(cfg, dict) else []
-                    for p in stakeholders:
-                        n = p.get("name", p.get("id", "unknown"))
-                        persona_usage[n] = persona_usage.get(n, 0) + 1
-                        st = p.get("stance", "neutral")
-                        stances_count[st] = stances_count.get(st, 0) + 1
-        if hasattr(db, 'get_all_turns_count'):
-            total_turns = await db.get_all_turns_count()
-    except Exception:
-        pass
-
-    return {
-        "total_simulations": total_simulations,
-        "total_turns": total_turns,
-        "avg_voltage": round(voltage_sum / sim_count_with_voltage, 1) if sim_count_with_voltage else 50,
-        "top_personas": sorted(persona_usage.items(), key=lambda x: -x[1])[:10],
-        "stance_distribution": stances_count,
     }
 
 

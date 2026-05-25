@@ -1,0 +1,7 @@
+PASS DocumentMeta type defined
+PASS size_bytes in type
+PASS createSimulationWithDocuments in api
+PASS FormData used
+PASS X-Request-ID header
+PASS existing createSimulationV2
+PASS genRequestId usage
