@@ -217,7 +217,7 @@ export type AgentStance = "champion" | "detractor" | "neutral" | "moderator" | "
 export type Subject = {
   name: string;
   description: string;
-  attributes: Record<string, string | number>;
+  attributes: Record<string, string | number | boolean>;
   evidence_items: string[];
   stakes_description: string;
 };
@@ -302,6 +302,15 @@ export type SimulationV2Config = {
   player_mode: boolean;
   env_flags: Record<string, boolean>;
   model_temperature: string;
+};
+
+export type DocumentMeta = {
+  id: string;
+  filename: string;
+  size_bytes: number;
+  content_type: string;
+  status: "pending" | "ready" | "failed";
+  created_at: string;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

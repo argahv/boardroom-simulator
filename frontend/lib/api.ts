@@ -1,4 +1,5 @@
 import type {
+  DocumentMeta,
   JobResponse,
   Postmortem,
   SimulationAnalytics,
@@ -199,6 +200,27 @@ export const createSimulationV2 = (payload: SimulationV2Config) =>
     method: "POST",
     body: JSON.stringify(payload),
   });
+
+export const createSimulationWithDocuments = async (
+  config: SimulationV2Config,
+  files: File[]
+): Promise<{ simulation_id: string; config: SimulationV2Config; status: string; documents: DocumentMeta[] }> => {
+  const formData = new FormData();
+  formData.append("config", JSON.stringify(config));
+  files.forEach((f) => formData.append("files", f));
+
+  const response = await fetch(`${API_URL}/simulations/with-documents`, {
+    method: "POST",
+    body: formData,
+    headers: { "X-Request-ID": genRequestId() },
+  });
+  // Note: Do NOT set Content-Type header — browser sets multipart boundary automatically
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Upload failed with ${response.status}`);
+  }
+  return response.json();
+};
 
 export type SimulationListItem = {
   simulation_id: string;
