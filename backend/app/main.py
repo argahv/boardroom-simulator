@@ -22,6 +22,7 @@ _be_spec.loader.exec_module(_be_mod)
 create_engine = _be_mod.make_engine
 
 from . import config
+from . import config as app_config
 from .database import initialize_database, close_database, get_database
 from .models import (
     AlignmentDelta,
@@ -444,14 +445,14 @@ async def create_simulation_v2(payload: SimulationV2Config) -> dict:
 
 @app.post("/simulations/with-documents")
 async def create_simulation_with_documents(
-    raw_config: str = Form(...),
+    config: str = Form(...),
     files: list[UploadFile] = File(default=[]),
 ) -> dict:
     simulation_id = str(uuid4())
 
     # --- Validation ---
     try:
-        config_json = json.loads(raw_config)
+        config_json = json.loads(config)
     except json.JSONDecodeError:
         raise HTTPException(status_code=422, detail="Invalid JSON configuration")
 
@@ -464,7 +465,7 @@ async def create_simulation_with_documents(
 
     for f in files:
         ct = f.content_type or "application/octet-stream"
-        if ct not in config.ALLOWED_CONTENT_TYPES:
+        if ct not in app_config.ALLOWED_CONTENT_TYPES:
             raise HTTPException(
                 status_code=422, detail=f"File type '{ct}' is not allowed"
             )
@@ -494,14 +495,14 @@ async def create_simulation_with_documents(
 
         # Determine filepath on disk
         safe_name = f"{doc_id}_{f.filename or 'unnamed'}"
-        filepath = os.path.join(config.UPLOAD_DIR, safe_name)
+        filepath = os.path.join(app_config.UPLOAD_DIR, safe_name)
 
         # Read + write to disk
         try:
             content = await f.read()
 
             # Validate file size
-            max_bytes = config.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+            max_bytes = app_config.MAX_UPLOAD_SIZE_MB * 1024 * 1024
             if not (0 < len(content) <= max_bytes):
                 raise HTTPException(
                     status_code=413,
@@ -585,6 +586,7 @@ async def create_simulation_with_documents(
         "simulation_id": simulation_id,
         "config": config_json,
         "status": "idle",
+        "documents": _v2_simulations[simulation_id].get("documents", []),
     }
 
 
