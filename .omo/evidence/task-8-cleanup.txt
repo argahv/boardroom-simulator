@@ -1,0 +1,3 @@
+CLEANUP_MODULE_LOADABLE: YES
+cleanup_simulation_files: (db, upload_dir: str, simulation_id: str) -> int
+cleanup_orphaned_pending_files: (documents: list[app.models.SimulationDocument]) -> int

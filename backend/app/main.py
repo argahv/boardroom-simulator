@@ -11,6 +11,7 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import importlib.util as _iu
 from pathlib import Path as _P
@@ -62,6 +63,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Serve uploaded files in dev (auth not required for static mount)
+os.makedirs(config.UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=config.UPLOAD_DIR), name="uploads")
 
 @app.middleware("http")
 async def request_logging_middleware(request: Request, call_next):
