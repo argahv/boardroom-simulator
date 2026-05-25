@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.12.3, pytest-9.0.3, pluggy-1.6.0 -- /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend/.venv/bin/python
+cachedir: .pytest_cache
+rootdir: /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend
+plugins: asyncio-1.3.0, langsmith-0.8.5, anyio-4.13.0
+asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
+collecting ... collected 9 items
+
+tests/test_document_upload.py::test_json_endpoint_unchanged PASSED       [ 11%]
+tests/test_document_upload.py::test_multipart_with_pdf PASSED            [ 22%]
+tests/test_document_upload.py::test_multipart_no_files PASSED            [ 33%]
+tests/test_document_upload.py::test_multipart_reject_invalid_type PASSED [ 44%]
+tests/test_document_upload.py::test_multipart_reject_oversized PASSED    [ 55%]
+tests/test_document_upload.py::test_multipart_exceed_max_count PASSED    [ 66%]
+tests/test_document_upload.py::test_multipart_invalid_json PASSED        [ 77%]
+tests/test_document_upload.py::test_document_metadata_in_get PASSED      [ 88%]
+tests/test_document_upload.py::test_extraction_pdf PASSED                [100%]
+
+=============================== warnings summary ===============================
+app/main.py:160
+  /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend/app/main.py:160: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4495
+.venv/lib/python3.12/site-packages/fastapi/applications.py:4495
+  /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend/.venv/lib/python3.12/site-packages/fastapi/applications.py:4495: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)
+
+app/main.py:174
+  /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend/app/main.py:174: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("shutdown")
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+======================== 9 passed, 4 warnings in 0.36s =========================

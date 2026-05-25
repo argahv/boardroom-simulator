@@ -445,11 +445,32 @@ async def create_simulation_v2(payload: SimulationV2Config) -> dict:
 @app.post("/simulations/with-documents")
 async def create_simulation_with_documents(
     raw_config: str = Form(...),
-    files: list[UploadFile] = File(...),
+    files: list[UploadFile] = File(default=[]),
 ) -> dict:
     simulation_id = str(uuid4())
-    config_json = json.loads(raw_config)
-    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle"}
+
+    # --- Validation ---
+    try:
+        config_json = json.loads(raw_config)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=422, detail="Invalid JSON configuration")
+
+    MAX_DOCUMENT_COUNT = 5
+    if len(files) > MAX_DOCUMENT_COUNT:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Maximum {MAX_DOCUMENT_COUNT} files allowed",
+        )
+
+    for f in files:
+        ct = f.content_type or "application/octet-stream"
+        if ct not in config.ALLOWED_CONTENT_TYPES:
+            raise HTTPException(
+                status_code=422, detail=f"File type '{ct}' is not allowed"
+            )
+    # --- End validation ---
+
+    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle", "documents": []}
     logger.info(
         "DOC_SIM_CREATE simulation_id=%s files=%d subject=%s",
         simulation_id,
@@ -478,14 +499,37 @@ async def create_simulation_with_documents(
         # Read + write to disk
         try:
             content = await f.read()
+
+            # Validate file size
+            max_bytes = config.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+            if not (0 < len(content) <= max_bytes):
+                raise HTTPException(
+                    status_code=413,
+                    detail="File exceeds maximum upload size",
+                )
+
             os.makedirs(os.path.dirname(filepath), exist_ok=True)
             with open(filepath, "wb") as fh:
                 fh.write(content)
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.warning("DOC_WRITE_ERR %s: %s", doc_id, exc)
             continue
 
         size_bytes = len(content)
+
+        # In-memory document metadata (survives even when DB connection fails)
+        from datetime import datetime, timezone
+        _now = datetime.now(timezone.utc).isoformat()
+        _v2_simulations[simulation_id]["documents"].append({
+            "id": doc_id,
+            "filename": f.filename or "unnamed",
+            "size_bytes": size_bytes,
+            "content_type": content_type,
+            "status": "pending",
+            "created_at": _now,
+        })
 
         # DB record
         from .models import SimulationDocument
@@ -506,7 +550,14 @@ async def create_simulation_with_documents(
 
         # Extract text + update status
         extracted = await extract_text(filepath, content_type)
+        # Sync in-memory document status
+        _mem_doc = next(
+            (d for d in _v2_simulations[simulation_id]["documents"] if d["id"] == doc_id),
+            None,
+        )
         if extracted:
+            if _mem_doc is not None:
+                _mem_doc["status"] = "ready"
             try:
                 db = get_database()
                 if hasattr(db, 'update_document_status'):
@@ -515,6 +566,8 @@ async def create_simulation_with_documents(
                 logger.warning("DOC_STATUS_ERR %s: %s", doc_id, exc)
             doc_context_parts.append(f"{f.filename or 'unnamed'}:\n{extracted}")
         else:
+            if _mem_doc is not None:
+                _mem_doc["status"] = "failed"
             try:
                 db = get_database()
                 if hasattr(db, 'update_document_status'):
@@ -635,25 +688,29 @@ async def get_simulation_v2(simulation_id: str) -> dict:
             raise HTTPException(status_code=404, detail="Simulation not found")
 
     # Attach document metadata (exclude extracted_text / filepath)
-    try:
-        db = get_database()
-        if hasattr(db, 'get_documents_by_simulation'):
-            docs = await db.get_documents_by_simulation(simulation_id)
-            response["documents"] = [
-                {
-                    "id": d.id,
-                    "filename": d.filename,
-                    "size_bytes": d.size_bytes,
-                    "content_type": d.content_type,
-                    "status": d.status,
-                    "created_at": d.created_at,
-                }
-                for d in docs
-            ]
-        else:
+    # Prefer in-memory documents when available
+    if entry is not None and entry.get("documents"):
+        response["documents"] = entry["documents"]
+    else:
+        try:
+            db = get_database()
+            if hasattr(db, 'get_documents_by_simulation'):
+                docs = await db.get_documents_by_simulation(simulation_id)
+                response["documents"] = [
+                    {
+                        "id": d.id,
+                        "filename": d.filename,
+                        "size_bytes": d.size_bytes,
+                        "content_type": d.content_type,
+                        "status": d.status,
+                        "created_at": d.created_at,
+                    }
+                    for d in docs
+                ]
+            else:
+                response["documents"] = []
+        except Exception:
             response["documents"] = []
-    except Exception:
-        response["documents"] = []
 
     return response
 
