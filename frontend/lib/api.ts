@@ -355,6 +355,9 @@ export function exportSimulation(id: string): string {
   return `${API_URL}/simulations/${id}/export`;
 }
 
+export const fetchSimulationTurns = (simulationId: string) =>
+  request<Array<Record<string, unknown>>>(`/simulations/${simulationId}/turns`);
+
 export const fetchSimulationReplay = async (simulationId: string): Promise<StateSnapshotEvent[]> => {
   const res = await request<{ snapshots: Array<{ turn_index: number; data: StateSnapshotData }> }>(`/simulations/${simulationId}/replay`);
   return res.snapshots.map((s) => ({
