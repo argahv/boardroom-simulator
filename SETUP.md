@@ -2,8 +2,8 @@
 
 ## Prerequisites
 
-- Python 3.10+
-- Node.js 18+
+- Python 3.11+
+- Node.js 20+
 - npm or yarn
 
 ## Environment Configuration
@@ -27,25 +27,41 @@ Create `frontend/.env.local` with:
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 ```
 
-## Installation & Startup
+## Quick Start
+
+```bash
+make dev
+```
+
+This starts all 4 processes (backend + frontend + 2 workers). See individual sections below for manual setup.
 
 ### Backend
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
-### Redis + Queue Workers (Async Jobs)
+### Docker Services
+
+Start all infrastructure (Redis, Postgres, Neo4j) with one command:
 
 ```bash
-# Start Redis (local)
-docker run --name boardroom-redis -p 6379:6379 -d redis:7
+docker compose up -d
+```
 
-# In backend venv, start simulation worker
+This starts:
+- **Postgres** (pgvector/pgvector:0.8.0-pg16) — primary data store on port 5432
+- **Redis** (redis:7-alpine) — RQ worker queue on port 6379
+- **Neo4j** (neo4j:5) — optional graph analytics on ports 7474/7687
+
+### Background Workers
+
+```bash
+# In backend .venv, start simulation worker
 python -m app.workers.simulation_worker
 
 # In another terminal, start postmortem worker
@@ -59,6 +75,7 @@ REDIS_URL=redis://localhost:6379/0
 RQ_QUEUE_SIMULATION=simulation
 RQ_QUEUE_POSTMORTEM=postmortem
 RQ_JOB_TIMEOUT_SECONDS=300
+DATABASE_URL=postgresql+asyncpg://boardroom:boardroom@localhost:5432/boardroom
 ```
 
 Backend will be available at: http://127.0.0.1:8000
@@ -127,10 +144,10 @@ This verifies:
 
 ### Stakeholders
 
-- `GET /api/stakeholders` - List all personas
-- `POST /api/stakeholders` - Create new persona
-- `PUT /api/stakeholders/{id}` - Update persona
-- `DELETE /api/stakeholders/{id}` - Delete persona
+- `GET /stakeholders` - List all personas
+- `POST /stakeholders` - Create new persona
+- `PUT /stakeholders/{id}` - Update persona
+- `DELETE /stakeholders/{id}` - Delete persona
 
 ### Simulations
 
@@ -149,177 +166,14 @@ This verifies:
 
 ## Multi-Agent Architecture
 
-### System Overview
-
-The simulator uses **LangGraph** for true multi-agent orchestration, replacing the original single-orchestrator pattern with specialized agents for each stakeholder.
-
-### LangGraph Workflow
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    LangGraph StateGraph                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  ┌──────────────────┐       ┌──────────────────┐           │
-│  │ select_speaker   │──────>│ generate_turn    │           │
-│  │ (4 selection     │       │ (BoardroomAgent  │           │
-│  │  algorithms)     │       │  with tools)     │           │
-│  └──────────────────┘       └──────────────────┘           │
-│           │                           │                      │
-│           │                           v                      │
-│           │                  ┌──────────────────┐           │
-│           │                  │ update_heatmap   │           │
-│           │                  │ (tension tracking)│          │
-│           │                  └──────────────────┘           │
-│           │                           │                      │
-│           │                           v                      │
-│           │                  ┌──────────────────┐           │
-│           │<─────── NO ──────│ should_continue  │           │
-│           │                  │ (stop conditions)│           │
-│           │                  └──────────────────┘           │
-│           │                           │                      │
-│           └───────────────────────────┘ YES                 │
-│                                         │                    │
-│                                         v END                │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Speaker Selection (4 algorithms):**
-
-1. **Turn 0**: Random selection
-2. **Coalition-based**: If `coalition_with` set → that person speaks
-3. **Directed-at**: If `directed_at` set → that person responds
-4. **Weighted random**: By `incentive_tuning * (1 + voltage/100)`
-
-**Stop Conditions:**
-
-- Max turns reached (default: 20)
-- **Deadlock**: 3+ consecutive challenges
-- **Consensus**: 2+ coalition signals in last 3 turns
-
-### Agent-Tool Mapping
-
-| Agent Role                         | Tools Available                                                | Purpose                                                                                                                   |
-| ---------------------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| **CFO** (Chief Financial Officer)  | `calculate_roi`<br>`check_financials`<br>`calculate_burn_rate` | Financial analysis using NPV/IRR formulas<br>Company financial health (hashed ratios)<br>Runway and cash flow projections |
-| **Legal** (General Counsel)        | `query_clause`<br>`compliance_check`                           | Legal clause database (33 clauses)<br>GDPR/HIPAA/SOC2 compliance scoring                                                  |
-| **CTO** (Chief Technology Officer) | `assess_tech_stack`<br>`check_integration`                     | Architecture scoring (scalability/security)<br>API compatibility analysis                                                 |
-
-**Tool Binding**: Each `BoardroomAgent` receives role-specific tools via LangChain's tool binding system. Tools are real implementations (not mocks) using financial formulas, legal databases, and tech scoring algorithms.
-
-### Memory Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│              Chroma Vector Store (./chroma_db)               │
-├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  Per-Agent Collections (MD5-hashed names):                   │
-│  ┌────────────────────────────────────────────────────┐     │
-│  │  sim123_cfo_agent  → [turn embeddings]             │     │
-│  │  sim123_legal_agent → [turn embeddings]            │     │
-│  │  sim123_cto_agent  → [turn embeddings]             │     │
-│  └────────────────────────────────────────────────────┘     │
-│                                                               │
-│  Embedding Model: text-embedding-3-small (OpenAI)           │
-│  Retrieval: Top-K semantic search (K=5)                     │
-│  Injection: Retrieved turns → agent prompt context          │
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Memory Retrieval Flow:**
-
-1. Agent generates query from current context
-2. Query embedded via OpenAI embeddings
-3. Chroma performs semantic search in agent's collection
-4. Top-K relevant past turns retrieved
-5. Retrieved context injected into agent prompt
-6. Agent generates response with full history awareness
-
-### State Persistence
-
-**Checkpoint System** (`./checkpoints/{simulation_id}.json`):
-
-- **Saved after each turn**: Complete state snapshot
-- **Includes**: Turn history, heatmap values, voltage, sentiment, conflict timeline
-- **Resume capability**: `POST /simulations/{id}/resume` restores from last checkpoint
-- **Audit trail**: Timestamps and metadata for forensic analysis
-
-**Use cases:**
-
-- Crash recovery
-- Session resume across restarts
-- State replay for debugging
-- Compliance auditing
-
-### Guardrails System
-
-**Input Guardrails:**
-
-- **Content Filter**: Detects offensive/discriminatory/violent language
-  - Severity levels: SAFE / WARNING / BLOCKED
-  - Context exceptions (e.g., "assassinate character", "killer feature")
-- **Jailbreak Detector**: Identifies prompt injection patterns
-  - Patterns: "ignore previous instructions", "you are now", system prompt escapes
-  - Severity: HIGH (blocked) / MEDIUM (flagged)
-
-**Output Guardrails:**
-
-- **Hallucination Detector**: Flags fictional sources/data references
-- **Contradiction Detector**: Identifies conflicting statements (e.g., "increased 25%" + "decreased 30%")
-- **Tool Consistency Validator**: Ensures tool calls reflected in content
-
-**Integration:** Guardrails checked before LLM invocation (input) and after response generation (output).
-
-### Cost Tracking
-
-**SSE Events** (`{"type": "cost", "data": {...}}`):
-
-- **Per-turn tracking**: Token counts (prompt/completion/total)
-- **Cost estimation**: $3.00 per 1M tokens (configurable)
-- **Metadata**: Streamed in real-time alongside turn events
-
-**LangSmith Tracing:**
-
-- **Enhanced metadata**: simulation_id, turn_index, agent_id, token_count, cost_usd
-- **Workflow traces**: Full LangGraph execution paths visible in dashboard
-- **Tool calls**: Captured with inputs/outputs for debugging
-
-### Migration Notes
-
-**Original Architecture** (Single Orchestrator):
-
-- Single LLM call per turn
-- No agent specialization
-- No tool calling
-- No memory retrieval
-- No structured outputs
-
-**Current Architecture** (Multi-Agent):
-
-- LangGraph StateGraph manages workflow
-- Separate BoardroomAgent per stakeholder
-- Role-based tool assignment (7 real tools)
-- Chroma vector memory with semantic retrieval
-- Pydantic structured outputs (`AgentResponse`)
-- Enhanced LangSmith tracing
-- State persistence (checkpointing)
-- Guardrails (input/output validation)
-
-**Key Benefits:**
-
-- ✅ **Specialization**: Agents use domain-specific tools (CFO→financial, Legal→compliance, CTO→tech)
-- ✅ **Memory**: Semantic retrieval provides historical context for informed responses
-- ✅ **Observability**: LangSmith traces show full workflow + tool calls
-- ✅ **Quality**: Structured outputs + guardrails prevent hallucinations/jailbreaks
-- ✅ **Resilience**: Checkpoints enable crash recovery and session resume
+This project uses a v2 Behavior Engine runtime with async AgentRuntime event loop. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture description.
 
 ## Design System
 
 - **Colors**: Cream (`#faf9f5`), Coral (`#cc785c`), Dark Navy (`#181715`)
 - **Typography**: Newsreader (display), Inter (body)
 - **Icons**: Material Symbols
-- **Framework**: Next.js 15 + Tailwind CSS v4
+- **Framework**: Next.js 16 + Tailwind CSS v4
 
 ## Production Readiness Checklist
 
@@ -332,9 +186,9 @@ The simulator uses **LangGraph** for true multi-agent orchestration, replacing t
 - [x] OpenRouter API key verified (200 OK)
 - [x] LangSmith tracing configured
 - [x] Test script validates all endpoints
-- [x] LangGraph multi-agent workflow implemented
-- [x] Tool calling with real implementations (7 tools)
-- [x] Chroma vector memory for semantic retrieval
+- [x] v2 Behavior Engine runtime implemented
+- [x] Persona knowledge base via Chroma RAG
+- [x] Semantic memory for cross-session retrieval
 - [x] Structured outputs via Pydantic models
 - [x] State persistence (checkpoint system)
 - [x] Guardrails (content filter, jailbreak detection, output validation)
@@ -365,13 +219,13 @@ The simulator uses **LangGraph** for true multi-agent orchestration, replacing t
 
 ### Backend won't start
 
-- Check Python version: `python --version` (must be 3.10+)
+- Check Python version: `python --version` (must be 3.11+)
 - Verify virtual environment activated
 - Check port 8000 not already in use: `lsof -i :8000`
 
 ### Frontend won't start
 
-- Check Node version: `node --version` (must be 18+)
+- Check Node version: `node --version` (must be 20+)
 - Delete `node_modules` and `.next`, reinstall: `rm -rf node_modules .next && npm install`
 - Verify port 3000 available: `lsof -i :3000`
 

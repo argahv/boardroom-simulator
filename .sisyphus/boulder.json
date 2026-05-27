@@ -1,49 +1,23 @@
 {
-  "active_plan": "/root/project/boardroom-simulator/.sisyphus/plans/code-review-fixes.md",
-  "started_at": "2026-05-27T16:32:39.776Z",
+  "active_plan": "/root/project/boardroom-simulator/.sisyphus/plans/oss-documentation.md",
+  "started_at": "2026-05-27T17:43:06.690Z",
   "session_ids": [
     "ses_197d60c58ffeaB2SbUe3Fy3dx2"
   ],
-  "plan_name": "code-review-fixes",
-  "worktree_path": null,
   "session_origins": {
     "ses_197d60c58ffeaB2SbUe3Fy3dx2": "direct"
   },
+  "plan_name": "oss-documentation",
+  "agent": "atlas",
   "task_sessions": {
     "todo:1": {
       "task_key": "todo:1",
       "task_label": "1",
-      "task_title": "Fix AgentRuntime — Add `memory_system` parameter to `AgentRuntime.__init__()`",
-      "session_id": "ses_195b65d15ffeLUhsKI4gk5fpks",
+      "task_title": "Create LICENSE (MIT)",
+      "session_id": "ses_19550aa33ffe0BFj024Om3lspG",
       "agent": "Sisyphus-Junior",
-      "category": "deep",
-      "updated_at": "2026-05-27T16:38:06.149Z"
-    },
-    "todo:7": {
-      "task_key": "todo:7",
-      "task_label": "7",
-      "task_title": "Remove 6 Orphaned API Functions",
-      "session_id": "ses_195b0d7edffeq2ZLPG5FJV31Uy",
-      "agent": "Sisyphus-Junior",
-      "category": "quick",
-      "updated_at": "2026-05-27T16:41:34.829Z"
-    },
-    "todo:15": {
-      "task_key": "todo:15",
-      "task_label": "15",
-      "task_title": "Add Human Turn Input to War Room",
-      "session_id": "ses_195aea355ffeVxgIi61c47uSxn",
-      "agent": "Sisyphus-Junior",
-      "category": "visual-engineering",
-      "updated_at": "2026-05-27T16:44:42.721Z"
-    },
-    "final-wave:f1": {
-      "task_key": "final-wave:f1",
-      "task_label": "F1",
-      "task_title": "**Plan Compliance Audit** — `oracle`",
-      "session_id": "ses_195a69a7cffePRGrSTqmtLfkNa",
-      "agent": "oracle",
-      "updated_at": "2026-05-27T16:56:06.115Z"
+      "category": "writing",
+      "updated_at": "2026-05-27T18:26:45.023Z"
     }
   }
 }

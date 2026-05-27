@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATION NOTICE**: This document references v1 architecture (LangGraph StateGraph, Chroma memory). The current runtime is v2 Behavior Engine. See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the current architecture.
+
 # Tech Stack — AI Boardroom Simulator
 
 This document describes the technology stack for the AI Boardroom Simulator: a multi-agent negotiation system where autonomous persona agents (CEO, CTO, Legal, Finance, Skeptical Partner, etc.) deliberate, interrupt, form coalitions, and converge on decisions inside a simulated boardroom.

@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATION NOTICE**: This document references v1 architecture (LangGraph StateGraph, Chroma memory). The current runtime is v2 Behavior Engine. See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the current architecture.
+
 # Boardroom Simulator — MVP
 
 ## 1. What the MVP is

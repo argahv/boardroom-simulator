@@ -37,18 +37,18 @@ fi
 echo ""
 echo "3️⃣  Testing backend endpoints..."
 
-# GET /api/stakeholders
-echo "   → GET /api/stakeholders"
-if curl -s -f http://127.0.0.1:8000/api/stakeholders > /dev/null; then
+# GET /stakeholders
+echo "   → GET /stakeholders"
+if curl -s -f http://127.0.0.1:8000/stakeholders > /dev/null; then
     echo -e "     ${GREEN}✓ Stakeholder list endpoint works${NC}"
 else
     echo -e "     ${RED}✗ Failed to fetch stakeholders${NC}"
     exit 1
 fi
 
-# POST /api/stakeholders (create)
-echo "   → POST /api/stakeholders"
-CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8000/api/stakeholders \
+# POST /stakeholders (create)
+echo "   → POST /stakeholders"
+CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8000/stakeholders \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Test Persona",
@@ -72,10 +72,10 @@ else
     exit 1
 fi
 
-# PUT /api/stakeholders/{id} (update)
+# PUT /stakeholders/{id} (update)
 if [ -n "$PERSONA_ID" ]; then
-    echo "   → PUT /api/stakeholders/$PERSONA_ID"
-    UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://127.0.0.1:8000/api/stakeholders/$PERSONA_ID \
+    echo "   → PUT /stakeholders/$PERSONA_ID"
+    UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://127.0.0.1:8000/stakeholders/$PERSONA_ID \
       -H "Content-Type: application/json" \
       -d '{
         "name": "Updated Test Persona",
@@ -95,9 +95,9 @@ if [ -n "$PERSONA_ID" ]; then
         exit 1
     fi
 
-    # DELETE /api/stakeholders/{id}
-    echo "   → DELETE /api/stakeholders/$PERSONA_ID"
-    DELETE_HTTP_CODE=$(curl -s -w "%{http_code}" -X DELETE http://127.0.0.1:8000/api/stakeholders/$PERSONA_ID -o /dev/null)
+    # DELETE /stakeholders/{id}
+    echo "   → DELETE /stakeholders/$PERSONA_ID"
+    DELETE_HTTP_CODE=$(curl -s -w "%{http_code}" -X DELETE http://127.0.0.1:8000/stakeholders/$PERSONA_ID -o /dev/null)
     if [ "$DELETE_HTTP_CODE" = "204" ]; then
         echo -e "     ${GREEN}✓ Delete persona endpoint works${NC}"
     else
@@ -110,7 +110,7 @@ fi
 echo ""
 echo "4️⃣  Testing simulation creation..."
 echo "   → POST /simulations"
-SIM_RESPONSE=$(curl -s http://127.0.0.1:8000/api/stakeholders | head -c 5000)
+SIM_RESPONSE=$(curl -s http://127.0.0.1:8000/stakeholders | head -c 5000)
 FIRST_STAKEHOLDER=$(echo "$SIM_RESPONSE" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"\([^"]*\)"/\1/')
 
 if [ -n "$FIRST_STAKEHOLDER" ]; then

@@ -1,3 +1,5 @@
+> ⚠️ **DEPRECATION NOTICE**: This document references v1 architecture (LangGraph StateGraph, Chroma memory). The current runtime is v2 Behavior Engine. See [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) for the current architecture.
+
 # Boardroom Simulator — Roadmap
 
 The roadmap is sequenced by evidence, not by feature ambition. Each phase has a success gate that must hold before the next phase begins. The dataset moat (Phase 6) runs in parallel from Phase 2 onward.
