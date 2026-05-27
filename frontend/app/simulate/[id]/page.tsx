@@ -21,6 +21,10 @@ type V2Turn = {
   stance?: string;
   reasoning?: string;
   action_type?: string;
+  _index?: number;
+  agent_name?: string;
+  agent_role?: string;
+  internal_reasoning?: string;
 };
 
 export default function WarRoomPage({ params }: PageProps) {

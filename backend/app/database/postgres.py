@@ -1327,6 +1327,16 @@ class PostgresBackend(DatabaseBackend):
             )
         return result == "UPDATE 1"
 
+    async def get_all_turns_count(self, simulation_id: str | None = None) -> int:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            if simulation_id:
+                row = await conn.fetchval(
+                    "SELECT COUNT(*) FROM v2_turns WHERE simulation_id = $1", simulation_id)
+            else:
+                row = await conn.fetchval("SELECT COUNT(*) FROM v2_turns")
+            return row or 0
+
 
 def _extract_emotion(content: str, action_type: str) -> dict:
     """Simple rule-based emotional state extraction from turn content."""

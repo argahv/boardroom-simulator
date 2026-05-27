@@ -218,4 +218,12 @@ class DatabaseBackend(ABC):
     async def update_persona_research(self, research_id: str, results: str) -> bool:
         pass
 
+    # ------------------------------------------------------------------
+    # Analytics / Aggregates
+    # ------------------------------------------------------------------
+
+    @abstractmethod
+    async def get_all_turns_count(self, simulation_id: str | None = None) -> int:
+        pass
+
 

@@ -374,7 +374,7 @@ Wave FINAL (verification):
   - Message: `fix: apply personality deltas on evolution approval`
 
 
-- [ ] 7. Remove 6 Orphaned API Functions
+- [x] 7. Remove 6 Orphaned API Functions
 
   **What to do**:
   - In `frontend/lib/api.ts`, remove these exported functions:
@@ -406,7 +406,7 @@ Wave FINAL (verification):
   - Message: `chore: remove orphaned API functions with no backend routes`
 
 
-- [ ] 8. Sync Frontend Postmortem Type with Backend
+- [x] 8. Sync Frontend Postmortem Type with Backend
 
   **What to do**:
   - Update `frontend/lib/types.ts` `Postmortem` interface to match backend's `Postmortem` model
@@ -433,7 +433,7 @@ Wave FINAL (verification):
   - Message: `fix: sync frontend Postmortem type with backend model`
 
 
-- [ ] 9. Add Missing SimulationV2Config Fields to Frontend
+- [x] 9. Add Missing SimulationV2Config Fields to Frontend
 
   **What to do**:
   - Add `auto_research: boolean` (default true)
@@ -459,7 +459,7 @@ Wave FINAL (verification):
   **Commit**: YES (with task 8)
 
 
-- [ ] 10. Add get_all_turns_count to DatabaseBackend
+- [x] 10. Add get_all_turns_count to DatabaseBackend
 
   **What to do**:
   - Add `get_all_turns_count()` as abstract method to `base.py`
@@ -488,7 +488,7 @@ Wave FINAL (verification):
   - Message: `fix: add get_all_turns_count to all DB backends for analytics`
 
 
-- [ ] 11. Fix Export for DB-Only Simulations
+- [x] 11. Fix Export for DB-Only Simulations
 
   **What to do**:
   - In `backend/app/main.py` `export_simulation_v2()` (line 1153-1202)
@@ -516,7 +516,7 @@ Wave FINAL (verification):
   - Message: `fix: export for DB-only simulations (add DB fallback)`
 
 
-- [ ] 12. Fix SQLite Agent Detail Crash
+- [x] 12. Fix SQLite Agent Detail Crash
 
   **What to do**:
   - In `backend/app/main.py` agents detail route (line ~1350-1433)
@@ -544,7 +544,7 @@ Wave FINAL (verification):
   - Message: `fix: add SQLite fallback for get_agent_memories_by_id`
 
 
-- [ ] 13. Remove 13 Unused Component Files
+- [x] 13. Remove 13 Unused Component Files
 
   **What to do**:
   - Delete these files from `frontend/components/` (confirmed unused in audit):
@@ -580,7 +580,7 @@ Wave FINAL (verification):
   - Message: `chore: remove 13 unused component files`
 
 
-- [ ] 14. Remove Dead v1 streamSimulation Function
+- [x] 14. Remove Dead v1 streamSimulation Function
 
   **What to do**:
   - In `frontend/lib/api.ts`, remove `streamSimulation()` function (lines ~471-557)

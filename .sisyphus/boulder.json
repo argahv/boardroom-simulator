@@ -18,6 +18,15 @@
       "agent": "Sisyphus-Junior",
       "category": "deep",
       "updated_at": "2026-05-27T16:38:06.149Z"
+    },
+    "todo:7": {
+      "task_key": "todo:7",
+      "task_label": "7",
+      "task_title": "Remove 6 Orphaned API Functions",
+      "session_id": "ses_195b0d7edffeq2ZLPG5FJV31Uy",
+      "agent": "Sisyphus-Junior",
+      "category": "quick",
+      "updated_at": "2026-05-27T16:41:34.829Z"
     }
   }
 }

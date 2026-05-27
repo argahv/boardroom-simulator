@@ -893,5 +893,18 @@ class SQLiteBackend(DatabaseBackend):
         self.conn.commit()
         return cursor.rowcount > 0
 
+    # ------------------------------------------------------------------
+    # Analytics / Aggregates
+    # ------------------------------------------------------------------
+
+    async def get_all_turns_count(self, simulation_id: str | None = None) -> int:
+        cursor = self.conn.cursor()
+        if simulation_id:
+            cursor.execute("SELECT COUNT(*) FROM v2_turns WHERE simulation_id = ?", (simulation_id,))
+        else:
+            cursor.execute("SELECT COUNT(*) FROM v2_turns")
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
 
 

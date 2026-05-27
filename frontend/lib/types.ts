@@ -42,7 +42,9 @@ export type ActionType =
   | "compromise"
   | "coalition_signal"
   | "interrupt"
-  | "escalate";
+  | "escalate"
+  | "vote"
+  | "walkaway";
 
 export type InterruptType = "cut_off" | "reframe" | "pile_on" | "deflect";
 
@@ -140,6 +142,57 @@ export type TopologyNode = {
   parents: string[];
 };
 
+export type TerminationResult = {
+  reason: string;
+  outcome_type: string;
+  total_turns: number;
+  vote_breakdown?: Record<string, string>;
+  judge_notes?: string;
+};
+
+export type TopicSummary = {
+  topic: string;
+  positions: { stakeholder: string; position: string }[];
+  agreement?: number;
+};
+
+export type StakeholderReport = {
+  name: string;
+  role: string;
+  stance: string;
+  position_shifts: { from: string; to: string; turn: number }[];
+  key_arguments: string[];
+  effectiveness_score?: number;
+};
+
+export type KeyMoment = {
+  turn: number;
+  type: string;
+  description: string;
+  stakeholders: string[];
+};
+
+export type SocialDynamicsSummary = {
+  trust_arc: { turn: number; trust: number }[];
+  tension_arc: { turn: number; tension: number }[];
+  dominance_arc: { turn: number; dominance: number }[];
+  coalition_formation: { turn: number; coalition: string[] }[];
+};
+
+export type VoteEvent = {
+  turn: number;
+  agent_id: string;
+  position: string;
+  rationale: string;
+};
+
+export type JudgeEvent = {
+  turn: number;
+  verdict: string;
+  reasoning: string;
+  criteria_evaluations: Record<string, string>;
+};
+
 export type Postmortem = {
   simulation_id: string;
   confidence_score: number;
@@ -151,6 +204,21 @@ export type Postmortem = {
   alignment_deltas: AlignmentDelta[];
   strategy_cards: StrategyCard[];
   mocked?: boolean;
+  summary?: string;
+  verdict?: string;
+  end_reason?: string;
+  termination?: TerminationResult;
+  topics?: TopicSummary[];
+  stakeholder_reports?: StakeholderReport[];
+  key_moments?: KeyMoment[];
+  social_dynamics?: SocialDynamicsSummary;
+  lessons_learned?: string[];
+  vote_events?: VoteEvent[];
+  judge_events?: JudgeEvent[];
+  narrative_arc?: string;
+  what_could_have_changed?: string;
+  topic_agreement_rate?: number;
+  graph_analytics?: Record<string, unknown>;
 };
 
 // SSE event types from /stream
@@ -308,6 +376,9 @@ export type SimulationV2Config = {
   player_mode: boolean;
   env_flags: Record<string, boolean>;
   model_temperature: string;
+  auto_research?: boolean;
+  research_topics?: string[];
+  inject_knowledge?: boolean;
 };
 
 export type DocumentMeta = {

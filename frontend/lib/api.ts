@@ -1,7 +1,6 @@
 import type {
   DocumentMeta,
   EvolutionProposal,
-  JobResponse,
   KnowledgeQueryResult,
   Postmortem,
   SimulationAnalytics,
@@ -11,7 +10,6 @@ import type {
   Stakeholder,
   StateSnapshotData,
   StateSnapshotEvent,
-  StreamEvent,
 } from "@/lib/types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -76,20 +74,6 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
   });
 
   return response.json() as Promise<T>;
-};
-
-type LibraryResponse = {
-  default_library: Stakeholder[];
-  partnership_defaults: Stakeholder[];
-};
-
-export const fetchLibrary = async (): Promise<Stakeholder[]> => {
-  const data = await request<LibraryResponse>("/library");
-  const merged = new Map<string, Stakeholder>();
-  for (const stakeholder of [...data.partnership_defaults, ...data.default_library]) {
-    merged.set(stakeholder.id, stakeholder);
-  }
-  return Array.from(merged.values());
 };
 
 export const fetchStakeholders = () =>
@@ -433,128 +417,9 @@ export const injectHumanTurn = (
     body: JSON.stringify(payload),
   });
 
-export const runSimulation = (simulationId: string, maxTurns?: number) =>
-  request<SimulationState>(`/simulations/${simulationId}/run`, {
-    method: "POST",
-    body: JSON.stringify({ max_turns: maxTurns ?? null }),
-  });
-
 export const fetchPostmortem = (simulationId: string) =>
   request<Postmortem>(`/simulations/${simulationId}/postmortem`, {
     method: "POST",
   });
 
-export const runSimulationAsync = (simulationId: string, maxTurns?: number) =>
-  request<JobResponse>(`/simulations/${simulationId}/run-async`, {
-    method: "POST",
-    body: JSON.stringify({ max_turns: maxTurns ?? null }),
-  });
 
-export const createPostmortemAsync = (simulationId: string) =>
-  request<JobResponse>(`/simulations/${simulationId}/postmortem-async`, {
-    method: "POST",
-  });
-
-export const fetchJob = (jobId: string) =>
-  request<JobResponse>(`/jobs/${jobId}`);
-
-export const fetchSimulationJobs = (simulationId: string) =>
-  request<{ jobs: JobResponse["job"][] }>(`/simulations/${simulationId}/jobs`);
-
-export const retryJob = (jobId: string) =>
-  request<JobResponse>(`/jobs/${jobId}/retry`, {
-    method: "POST",
-  });
-
-/**
- * Opens an SSE connection to stream simulation turns as they are generated.
- * Calls onEvent for each parsed event, onError on parse/network errors.
- * Returns an AbortController so the caller can cancel the stream.
- */
-export function streamSimulation(
-  simulationId: string,
-  maxTurns: number,
-  onEvent: (event: StreamEvent) => void,
-  onError: (err: Error) => void,
-  onDone: () => void
-): AbortController {
-  const controller = new AbortController();
-  let retryCount = 0;
-  const maxRetries = 3;
-  let lastSuccessfulTurn = 0;
-
-  const getBackoffDelay = (attempt: number) => {
-    return Math.min(1000 * Math.pow(2, attempt), 10000);
-  };
-
-  const run = async (): Promise<void> => {
-    if (controller.signal.aborted) return;
-
-    const timeoutId = setTimeout(() => {
-      controller.abort();
-    }, 60000);
-
-    try {
-      const response = await fetch(
-        `${API_URL}/simulations/${simulationId}/stream?max_turns=${maxTurns}&from_turn=${lastSuccessfulTurn}`,
-        { signal: controller.signal }
-      );
-      if (!response.ok || !response.body) {
-        throw new Error(`Stream failed with ${response.status}`);
-      }
-      
-      retryCount = 0;
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith("data: ")) {
-            const jsonStr = trimmed.slice(6);
-            try {
-              const event = JSON.parse(jsonStr) as StreamEvent;
-              onEvent(event);
-              if (event.type === "turn") {
-                lastSuccessfulTurn = event.turn.turn_index + 1;
-              }
-              if (event.type === "done") {
-                clearTimeout(timeoutId);
-                onDone();
-                return;
-              }
-            } catch {
-              throw new Error(`Failed to parse SSE event: ${jsonStr}`);
-            }
-          }
-        }
-      }
-      clearTimeout(timeoutId);
-      onDone();
-    } catch (err) {
-      clearTimeout(timeoutId);
-      if ((err as Error).name === "AbortError") {
-        return;
-      }
-
-      if (retryCount < maxRetries) {
-        retryCount++;
-        const delay = getBackoffDelay(retryCount - 1);
-        setTimeout(run, delay);
-      } else {
-        onError(err instanceof Error ? err : new Error(String(err)));
-      }
-    }
-  };
-
-  run();
-  return controller;
-}

@@ -1212,7 +1212,20 @@ async def export_simulation_v2(simulation_id: str) -> Response:
     """Export complete simulation data as JSON download."""
     entry = _v2_simulations.get(simulation_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail="Simulation not found")
+        db = get_database()
+        try:
+            if hasattr(db, 'get_simulation_config'):
+                cfg = await db.get_simulation_config(simulation_id)
+                if cfg:
+                    entry = {"config": cfg, "status": "complete"}
+                else:
+                    raise HTTPException(status_code=404, detail="Simulation not found")
+            else:
+                raise HTTPException(status_code=404, detail="Simulation not found")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=404, detail="Simulation not found")
 
     cfg = entry["config"]
     db = get_database()
@@ -1423,8 +1436,11 @@ async def agent_detail(name: str) -> dict:
 
     sims = await db.get_agent_simulations_by_id(persona_id)
     turns = await db.get_agent_turns_by_id(persona_id)
-    from .database.postgres import get_agent_memories_by_id as _get_memories
-    memories = await _get_memories(db, persona_id)
+    try:
+        from .database.postgres import get_agent_memories_by_id as _get_memories
+        memories = await _get_memories(db, persona_id)
+    except ImportError:
+        memories = []
 
     # Compute emotional arc across all turns
     emotional_arc = []
