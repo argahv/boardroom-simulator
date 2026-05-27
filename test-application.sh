@@ -51,9 +51,9 @@ echo "   → POST /stakeholders"
 CREATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:8000/stakeholders \
   -H "Content-Type: application/json" \
   -d '{
+    "id": "test-persona-001",
     "name": "Test Persona",
     "role": "Tester",
-    "archetype": "technical",
     "tag": "TEST-001",
     "focus": "Quality assurance",
     "incentive_tuning": 50,
@@ -78,9 +78,9 @@ if [ -n "$PERSONA_ID" ]; then
     UPDATE_RESPONSE=$(curl -s -w "\n%{http_code}" -X PUT http://127.0.0.1:8000/stakeholders/$PERSONA_ID \
       -H "Content-Type: application/json" \
       -d '{
+        "id": "'"$PERSONA_ID"'",
         "name": "Updated Test Persona",
         "role": "Senior Tester",
-        "archetype": "technical",
         "tag": "TEST-001",
         "focus": "Advanced quality assurance",
         "incentive_tuning": 75,
@@ -117,26 +117,23 @@ if [ -n "$FIRST_STAKEHOLDER" ]; then
     SIM_CREATE=$(curl -s -X POST http://127.0.0.1:8000/simulations \
       -H "Content-Type: application/json" \
       -d "{
-        \"background\": \"Test simulation for E2E verification\",
-        \"primary_goal\": \"Verify all components work together\",
-        \"stakeholders\": [{
-          \"id\": \"$FIRST_STAKEHOLDER\",
-          \"name\": \"Test Stakeholder\",
-          \"role\": \"Tester\",
-          \"archetype\": \"technical\",
-          \"tag\": \"TEST\",
-          \"focus\": \"Testing\",
-          \"incentive_tuning\": 50,
-          \"hidden_agenda\": \"\"
-        }],
-        \"voltage\": 50,
-        \"env_flags\": {
-          \"hidden_motives\": true,
-          \"time_pressure\": false,
-          \"external_leaks\": false,
-          \"deadlock_risk\": false
+        \"subject\": {
+          \"name\": \"Test Simulation\",
+          \"description\": \"E2E verification\",
+          \"stakes_description\": \"Testing\",
+          \"attributes\": {},
+          \"evidence_items\": []
         },
-        \"model_temperature\": \"stable\"
+        \"stakeholders\": [
+          {\"id\":\"simtest_1\",\"name\":\"Alice\",\"role\":\"CEO\",\"stance\":\"champion\",\"backstory\":\"\",\"hidden_agenda\":\"\",\"personality\":{\"aggressiveness\":50,\"empathy\":50,\"stubbornness\":50,\"verbosity\":50}},
+          {\"id\":\"simtest_2\",\"name\":\"Bob\",\"role\":\"CFO\",\"stance\":\"detractor\",\"backstory\":\"\",\"hidden_agenda\":\"\",\"personality\":{\"aggressiveness\":50,\"empathy\":50,\"stubbornness\":50,\"verbosity\":50}}
+        ],
+        \"voltage\": 50,
+        \"model_temperature\": \"stable\",
+        \"max_turns\": 3,
+        \"action_space\": {\"actions\": []},
+        \"auto_research\": false,
+        \"inject_knowledge\": false
       }")
     
     SIM_ID=$(echo "$SIM_CREATE" | grep -o '"simulation_id":"[^"]*"' | sed 's/"simulation_id":"\([^"]*\)"/\1/')
