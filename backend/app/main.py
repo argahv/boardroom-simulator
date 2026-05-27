@@ -1312,7 +1312,7 @@ async def postmortem_v2(simulation_id: str) -> dict:
             return cached_d
 
     cfg = entry["config"]
-    config_obj = _cfg_to_v2_config(cfg) if not isinstance(cfg.get("subject"), dict) else cfg
+    config_obj = cfg
 
     # Build SharedSpace from persisted turns if available
     from app.runtime.space import SharedSpace
@@ -1415,10 +1415,6 @@ def _ensure_v2_config(raw: dict | Any, subject_name: str) -> Any:
         )
     return raw
 
-
-def _cfg_to_v2_config(cfg: dict) -> dict:
-    """Normalize config dict to expected shape."""
-    return cfg
 
 
 @app.get("/agents/{name}/detail")

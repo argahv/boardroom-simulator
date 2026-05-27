@@ -603,7 +603,7 @@ Wave FINAL (verification):
   **Commit**: YES (groups with 7, 13)
 
 
-- [ ] 15. Add Human Turn Input to War Room
+- [x] 15. Add Human Turn Input to War Room
 
   **What to do**:
   - Add an input field in the War Room (`frontend/app/simulate/[id]/page.tsx`)
@@ -633,7 +633,7 @@ Wave FINAL (verification):
   - Message: `feat: add human turn input UI to War Room`
 
 
-- [ ] 16. Add Loading State to Wizard Submit
+- [x] 16. Add Loading State to Wizard Submit
 
   **What to do**:
   - In `frontend/app/simulate/new/page.tsx`, add loading/spinner state
@@ -660,7 +660,7 @@ Wave FINAL (verification):
   - Message: `fix: add loading state to wizard submit`
 
 
-- [ ] 17. Fix Analytics Font Reference
+- [x] 17. Fix Analytics Font Reference
 
   **What to do**:
   - In `frontend/app/analytics/page.tsx`, replace `var(--font-newsreader)` with a font that's actually loaded
@@ -686,7 +686,7 @@ Wave FINAL (verification):
   **Commit**: YES (groups with 16, 20)
 
 
-- [ ] 18. Bump Postmortem Detail Page to Show Full Data
+- [x] 18. Bump Postmortem Detail Page to Show Full Data
 
   **What to do**:
   - Update `frontend/app/simulate/[id]/postmortem/page.tsx` to render ALL backend fields
@@ -717,7 +717,7 @@ Wave FINAL (verification):
   - Message: `feat: expand postmortem detail page to show full data`
 
 
-- [ ] 19. Sync ActionType with Backend
+- [x] 19. Sync ActionType with Backend
 
   **What to do**:
   - Update `frontend/lib/types.ts` `ActionType` to include `vote` and `walkaway`
@@ -742,7 +742,7 @@ Wave FINAL (verification):
   - Message: `fix: sync ActionType with backend (add vote, walkaway)`
 
 
-- [ ] 20. Add App-Level Error Boundary
+- [x] 20. Add App-Level Error Boundary
 
   **What to do**:
   - Create `frontend/components/ErrorBoundary.tsx` (class component with `componentDidCatch`)
@@ -767,7 +767,7 @@ Wave FINAL (verification):
   - Message: `fix: add app-level error boundary`
 
 
-- [ ] 21. Add player_mode UI Toggle
+- [x] 21. Add player_mode UI Toggle
 
   **What to do**:
   - In wizard Step 3 or 4, add toggle for player mode
@@ -794,7 +794,7 @@ Wave FINAL (verification):
   - Message: `feat: add player_mode toggle to simulation wizard`
 
 
-- [ ] 22. Fix V2Turn Type with Fallback Fields
+- [x] 22. Fix V2Turn Type with Fallback Fields
 
   **What to do**:
   - Update `frontend/lib/types.ts` `V2Turn` interface
@@ -819,7 +819,7 @@ Wave FINAL (verification):
   **Commit**: YES (groups with 8, 9, 19)
 
 
-- [ ] 23. Remove Dead _cfg_to_v2_config Function
+- [x] 23. Remove Dead _cfg_to_v2_config Function
 
   **What to do**:
   - In `backend/app/main.py`, around line 1325-1352

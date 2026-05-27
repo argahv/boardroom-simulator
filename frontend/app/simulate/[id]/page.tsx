@@ -7,7 +7,7 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulationV2, fetchSimulationTurns, streamSimulationV2, postmortemV2, exportSimulation } from "@/lib/api";
+import { fetchSimulationV2, fetchSimulationTurns, streamSimulationV2, postmortemV2, injectV2Turn, exportSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
 import type { SimulationV2Config } from "@/lib/types";
 
@@ -51,6 +51,11 @@ export default function WarRoomPage({ params }: PageProps) {
     judge_notes?: string;
     walkaway_party?: string;
   } | null>(null);
+
+  const [humanContent, setHumanContent] = useState("");
+  const [selectedStakeholder, setSelectedStakeholder] = useState("");
+  const [sendingHumanTurn, setSendingHumanTurn] = useState(false);
+  const [humanError, setHumanError] = useState("");
 
   const streamCtrl = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -218,6 +223,32 @@ export default function WarRoomPage({ params }: PageProps) {
       setError(err instanceof Error ? err.message : "Postmortem failed");
     } finally {
       setLoadingPostmortem(false);
+    }
+  };
+
+  const handleSendHumanTurn = async () => {
+    if (!humanContent.trim() || !selectedStakeholder) return;
+    setSendingHumanTurn(true);
+    setHumanError("");
+    const stakeholder = config?.stakeholders.find((s) => s.id === selectedStakeholder);
+    const optimisticTurn: V2Turn = {
+      turn_index: turns.length,
+      speaker: stakeholder?.name ?? "Human",
+      speaker_role: stakeholder?.role,
+      content: humanContent.trim(),
+      action_type: "human_input",
+    };
+    setTurns((prev) => [...prev, optimisticTurn]);
+    setPlayTurn((t) => t + 1);
+    setHumanContent("");
+    try {
+      await injectV2Turn(id, selectedStakeholder, humanContent.trim());
+    } catch (err) {
+      setHumanError(err instanceof Error ? err.message : "Failed to send");
+      setTurns((prev) => prev.filter((t) => t !== optimisticTurn));
+      setPlayTurn((t) => Math.max(0, t - 1));
+    } finally {
+      setSendingHumanTurn(false);
     }
   };
 
@@ -524,6 +555,94 @@ export default function WarRoomPage({ params }: PageProps) {
               </div>
             </div>
             </>
+          )}
+        </div>
+
+        {/* ── Human Turn Input ── */}
+        <div style={{
+          padding: "8px 16px",
+          borderTop: "1px solid var(--color-hairline)",
+          background: "var(--color-surface-card)",
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
+            <select
+              value={selectedStakeholder}
+              onChange={(e) => setSelectedStakeholder(e.target.value)}
+              style={{
+                width: 160,
+                flexShrink: 0,
+                padding: "8px 10px",
+                borderRadius: 8,
+                border: "1px solid var(--color-hairline)",
+                background: "var(--color-canvas)",
+                color: "var(--color-ink)",
+                fontSize: 12,
+                fontFamily: "var(--font-mono)",
+                outline: "none",
+                cursor: "pointer",
+              }}
+            >
+              <option value="">Speak as…</option>
+              {config?.stakeholders.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <textarea
+              value={humanContent}
+              onChange={(e) => setHumanContent(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendHumanTurn(); } }}
+              placeholder="Type your intervention…"
+              rows={1}
+              style={{
+                flex: 1,
+                padding: "8px 12px",
+                borderRadius: 8,
+                border: "1px solid var(--color-hairline)",
+                background: "var(--color-canvas)",
+                color: "var(--color-ink)",
+                fontSize: 13,
+                fontFamily: "var(--font-body), Newsreader, Georgia, serif",
+                outline: "none",
+                resize: "none",
+                minHeight: 36,
+                lineHeight: 1.5,
+              }}
+            />
+            <button
+              onClick={handleSendHumanTurn}
+              disabled={sendingHumanTurn || !humanContent.trim() || !selectedStakeholder}
+              style={{
+                padding: "8px 20px",
+                borderRadius: 8,
+                border: "none",
+                background: !humanContent.trim() || !selectedStakeholder
+                  ? "var(--color-hairline)"
+                  : "var(--color-ink)",
+                color: !humanContent.trim() || !selectedStakeholder
+                  ? "var(--color-muted)"
+                  : "var(--color-on-dark)",
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: !humanContent.trim() || !selectedStakeholder ? "not-allowed" : "pointer",
+                fontFamily: "var(--font-mono)",
+                letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+                transition: "all 0.15s ease",
+              }}
+            >
+              {sendingHumanTurn ? (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  Sending
+                </span>
+              ) : "Send"}
+            </button>
+          </div>
+          {humanError && (
+            <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-error)", fontFamily: "var(--font-mono)" }}>
+              {humanError}
+            </div>
           )}
         </div>
       </div>

@@ -56,13 +56,7 @@ export default function AnalyticsPage() {
     return (
       <AppShell activeTab="Analytics">
         <div className="px-8 py-8">
-          <h1
-            style={{
-              fontFamily: "var(--font-newsreader)",
-              fontSize: 48,
-              fontWeight: 700,
-            }}
-          >
+          <h1 className="font-display text-5xl font-bold">
             Analytics
           </h1>
           <p className="text-sm text-muted mt-1">Cross-simulation insights</p>
@@ -99,13 +93,7 @@ export default function AnalyticsPage() {
   return (
     <AppShell activeTab="Analytics">
       <div className="px-8 py-8">
-        <h1
-          style={{
-            fontFamily: "var(--font-newsreader)",
-            fontSize: 48,
-            fontWeight: 700,
-          }}
-        >
+        <h1 className="font-display text-5xl font-bold">
           Analytics
         </h1>
         <p className="text-sm text-muted mt-1">Cross-simulation insights</p>

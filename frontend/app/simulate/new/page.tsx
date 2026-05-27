@@ -95,6 +95,7 @@ export default function NewSimulationPage() {
   const [actions, setActions] = useState<CustomActionDef[]>([]);
   const [newAction, setNewAction] = useState<CustomActionDef>({ name: "", description: "", trust_delta: 0, leverage_delta: 0 });
   const [showActions, setShowActions] = useState(false);
+  const [playerMode, setPlayerMode] = useState(false);
 
   useEffect(() => {
     fetchStakeholders()
@@ -155,7 +156,7 @@ export default function NewSimulationPage() {
     end_condition: buildEndCondition(),
     system_prompt_template: "",
     voltage,
-    player_mode: false,
+    player_mode: playerMode,
     env_flags: envFlags,
     model_temperature: modelTemp,
   });
@@ -895,6 +896,20 @@ export default function NewSimulationPage() {
                   ))}
                 </div>
 
+                {/* Human Player Toggle */}
+                <div className="rounded-xl border border-primary/20 bg-primary/[0.03] p-4 mb-4">
+                  <label className="flex items-start gap-3 cursor-pointer">
+                    <input type="checkbox" checked={playerMode} onChange={(e) => setPlayerMode(e.target.checked)}
+                      className="rounded border-hairline text-primary focus:ring-primary h-4 w-4 mt-0.5 shrink-0" />
+                    <div>
+                      <span className="flex items-center gap-2 text-sm font-semibold text-ink">Enable Human Player</span>
+                      <p className="text-[10px] text-muted/70 mt-0.5 leading-relaxed">
+                        Allows injecting turns mid-simulation from the War Room
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
                 {/* Model Temperature — stamps */}
                 <div>
                   <h3 className="font-mono text-[10px] font-bold uppercase tracking-[0.15em] text-muted mb-3">Model Temperature</h3>
@@ -1078,6 +1093,8 @@ export default function NewSimulationPage() {
                   <span className="text-sm font-semibold text-ink">{voltage}%</span>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted/60">Model Temp</span>
                   <span className="text-sm font-semibold text-ink capitalize">{modelTemp}</span>
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-muted/60">Human Player</span>
+                  <span className="text-sm font-semibold text-ink">{playerMode ? "Enabled" : "Disabled"}</span>
                 </div>
                 {actions.length > 0 && (
                   <div className="mt-4 pt-4 border-t border-hairline">

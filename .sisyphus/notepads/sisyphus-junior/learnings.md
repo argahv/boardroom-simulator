@@ -9,3 +9,15 @@
 - **TTL logic**: Uses `last_reinforced_turn` not `created_turn` so reinforcing extends goal life
 - **Decay**: Both priority AND confidence decay at full `decay_rate` (0.05), floored at 0.0
 - **Score**: `priority * confidence` for ranking active goals
+
+## 2026-05-27: Human turn input (T15)
+
+- Added human turn input bar to War Room (`frontend/app/simulate/[id]/page.tsx`)
+- Uses existing `injectV2Turn(simulationId, stakeholderId, content)` from api.ts
+- Optimistic update: appends turn to state immediately, rolls back on error
+- Stakeholder selector dropdown populated from `config.stakeholders`
+- Textarea with Enter-to-send (Shift+Enter for newline)
+- Loading spinner on button while sending
+- Error display below input bar
+- TypeScript check passes: `npx tsc --noEmit` (0 errors)
+- Standing section marker comment pattern matches existing codebase convention

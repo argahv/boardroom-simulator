@@ -146,37 +146,63 @@ export type TerminationResult = {
   reason: string;
   outcome_type: string;
   total_turns: number;
-  vote_breakdown?: Record<string, string>;
+  summary?: string;
+  confidence?: number;
+  vote_breakdown?: Record<string, number>;
   judge_notes?: string;
+  walkaway_party?: string;
+  agreed_issues?: Array<{ issue?: string; value?: string; parties?: string[] }>;
 };
 
 export type TopicSummary = {
   topic: string;
-  positions: { stakeholder: string; position: string }[];
-  agreement?: number;
+  first_raised_turn?: number;
+  last_discussed_turn?: number;
+  mention_count?: number;
+  proposers?: string[];
+  positions?: Record<string, string>;
+  resolved?: boolean;
+  resolution?: string;
 };
 
 export type StakeholderReport = {
+  agent_id?: string;
   name: string;
-  role: string;
-  stance: string;
-  position_shifts: { from: string; to: string; turn: number }[];
-  key_arguments: string[];
-  effectiveness_score?: number;
+  role?: string;
+  stance?: string;
+  initial_position?: string;
+  final_position?: string;
+  position_shifts?: number;
+  total_turns?: number;
+  dominant_action?: string;
+  alignment_delta?: number;
+  leverage_trajectory?: string;
+  key_statements?: string[];
+  goals_achieved?: string[];
+  goals_unmet?: string[];
 };
 
 export type KeyMoment = {
   turn: number;
-  type: string;
-  description: string;
-  stakeholders: string[];
+  kind?: string;
+  type?: string;
+  description?: string;
+  actors?: string[];
+  stakeholders?: string[];
+  impact?: string;
 };
 
 export type SocialDynamicsSummary = {
-  trust_arc: { turn: number; trust: number }[];
-  tension_arc: { turn: number; tension: number }[];
-  dominance_arc: { turn: number; dominance: number }[];
-  coalition_formation: { turn: number; coalition: string[] }[];
+  trust_arc?: { turn: number; value: number }[];
+  tension_arc?: { turn: number; value: number }[];
+  leverage_arc?: { turn: number; value: number }[];
+  avg_trust?: number;
+  avg_tension?: number;
+  peak_tension?: number;
+  peak_tension_turn?: number;
+  coalition_count?: number;
+  deadlock_episodes?: number;
+  dominant_agent?: string;
 };
 
 export type VoteEvent = {
@@ -215,8 +241,8 @@ export type Postmortem = {
   lessons_learned?: string[];
   vote_events?: VoteEvent[];
   judge_events?: JudgeEvent[];
-  narrative_arc?: string;
-  what_could_have_changed?: string;
+  narrative_arc?: string[];
+  what_could_have_changed?: string[];
   topic_agreement_rate?: number;
   graph_analytics?: Record<string, unknown>;
 };

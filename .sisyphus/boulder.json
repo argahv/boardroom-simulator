@@ -27,6 +27,15 @@
       "agent": "Sisyphus-Junior",
       "category": "quick",
       "updated_at": "2026-05-27T16:41:34.829Z"
+    },
+    "todo:15": {
+      "task_key": "todo:15",
+      "task_label": "15",
+      "task_title": "Add Human Turn Input to War Room",
+      "session_id": "ses_195aea355ffeVxgIi61c47uSxn",
+      "agent": "Sisyphus-Junior",
+      "category": "visual-engineering",
+      "updated_at": "2026-05-27T16:44:42.721Z"
     }
   }
 }
