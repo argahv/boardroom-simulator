@@ -37,6 +37,7 @@ class AgentRuntime:
         behavior_engine: Any = None,
         private_thought: Any = None,
         plan_manager: Any = None,
+        memory_system: Any = None,
     ) -> None:
         self.agent_id = config.id
         self.config = config
@@ -47,6 +48,7 @@ class AgentRuntime:
         self.behavior_engine = behavior_engine
         self.private_thought = private_thought
         self.plan_manager = plan_manager
+        self.memory_system = memory_system
 
         self.memory: list[dict] = []
         self._last_event_index = -1
