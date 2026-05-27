@@ -1,6 +1,8 @@
 import type {
   DocumentMeta,
+  EvolutionProposal,
   JobResponse,
+  KnowledgeQueryResult,
   Postmortem,
   SimulationAnalytics,
   SimulationCreate,
@@ -130,6 +132,46 @@ export const deleteStakeholderV2 = (id: string) =>
     method: "DELETE",
   });
 
+// ── Persona Documents ──────────────────────────────────────────────
+
+export async function uploadPersonaDocument(personaId: string, file: File): Promise<DocumentMeta> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const res = await fetch(`${API_URL}/personas/${personaId}/documents`, {
+    method: "POST",
+    body: formData,
+  });
+  // Don't set Content-Type — browser sets multipart boundary automatically
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Upload failed with ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function listPersonaDocuments(personaId: string): Promise<DocumentMeta[]> {
+  const res = await fetch(`${API_URL}/personas/${personaId}/documents`);
+  if (!res.ok) throw new Error("Failed to fetch documents");
+  return res.json();
+}
+
+export async function deletePersonaDocument(personaId: string, docId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/personas/${personaId}/documents/${docId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete document");
+}
+
+export async function queryPersonaKnowledge(personaId: string, query: string): Promise<KnowledgeQueryResult> {
+  const res = await fetch(`${API_URL}/personas/${personaId}/query-knowledge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) throw new Error("Knowledge query failed");
+  return res.json();
+}
+
 // ── Templates ──────────────────────────────────────────────────────
 
 export type TemplateListItem = {
@@ -188,6 +230,66 @@ export type AgentDetailResponse = {
 
 export const fetchAgentDetail = (name: string) =>
   request<AgentDetailResponse>(`/agents/${encodeURIComponent(name)}/detail`);
+
+// ── Persona Research ──────────────────────────────────────────────────
+
+export type PersonaResearchEntry = {
+  id: string;
+  persona_id: string;
+  query: string;
+  results: string;
+  created_at: string;
+};
+
+export type ResearchStatusResponse = {
+  status: "none" | "running" | "complete";
+  research_id: string | null;
+  query?: string;
+  count?: number;
+};
+
+export type ResearchConfigResponse = {
+  tavily_configured: boolean;
+};
+
+export const fetchPersonaResearch = (personaId: string) =>
+  request<PersonaResearchEntry[]>(`/personas/${personaId}/research-history`);
+
+export const triggerPersonaResearch = (personaId: string, topic?: string) =>
+  request<{ research_id: string; topic: string; status: string }>(`/personas/${personaId}/research`, {
+    method: "POST",
+    body: JSON.stringify({ topic }),
+  });
+
+export const fetchPersonaResearchStatus = (personaId: string) =>
+  request<ResearchStatusResponse>(`/personas/${personaId}/research-status`);
+
+export const fetchPersonaResearchConfig = (personaId: string) =>
+  request<ResearchConfigResponse>(`/personas/${personaId}/research-config`);
+
+// ── Evolution ─────────────────────────────────────────────────────────
+
+export async function fetchPendingEvolutions(personaId: string): Promise<EvolutionProposal[]> {
+  const res = await fetch(`${API_URL}/personas/${personaId}/evolutions/pending`);
+  if (!res.ok) throw new Error("Failed to fetch evolutions");
+  return res.json();
+}
+
+export async function approveEvolution(evolutionId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/evolutions/${evolutionId}/approve`, { method: "POST" });
+  if (!res.ok) throw new Error("Approve failed");
+}
+
+export async function rejectEvolution(evolutionId: string): Promise<void> {
+  const res = await fetch(`${API_URL}/evolutions/${evolutionId}/reject`, { method: "POST" });
+  if (!res.ok) throw new Error("Reject failed");
+}
+
+export async function fetchEvolutionHistory(personaId: string): Promise<EvolutionProposal[]> {
+  const res = await fetch(`${API_URL}/personas/${personaId}/evolutions`);
+  if (!res.ok) throw new Error("Failed to fetch evolution history");
+  return res.json();
+}
 
 export const createSimulation = (payload: SimulationCreate) =>
   request<SimulationState>("/simulations", {

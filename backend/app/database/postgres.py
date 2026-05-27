@@ -15,7 +15,15 @@ from typing import Any, Optional
 
 import asyncpg
 
-from app.models import ScenarioTemplate, SimulationDocument, SimulationState, Stakeholder
+from app.models import (
+    PersonaDocument,
+    PersonaEvolution,
+    PersonaResearch,
+    ScenarioTemplate,
+    SimulationDocument,
+    SimulationState,
+    Stakeholder,
+)
 from .base import DatabaseBackend
 
 logger = logging.getLogger("boardroom.db.postgres")
@@ -31,6 +39,10 @@ CREATE TABLE IF NOT EXISTS stakeholders (
     hidden_agenda TEXT NOT NULL DEFAULT '',
     tag           TEXT,
     tool_profile  TEXT NOT NULL DEFAULT 'none',
+    backstory     TEXT NOT NULL DEFAULT '',
+    stance        TEXT NOT NULL DEFAULT 'neutral',
+    personality   JSONB NOT NULL DEFAULT '{}'::jsonb,
+    tools         JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -116,6 +128,45 @@ CREATE TABLE IF NOT EXISTS v2_agent_goals (
 CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id);
 CREATE INDEX IF NOT EXISTS idx_agent_goals_sim  ON v2_agent_goals(simulation_id);
 
+CREATE TABLE IF NOT EXISTS persona_documents (
+    id            TEXT PRIMARY KEY,
+    persona_id    TEXT NOT NULL REFERENCES stakeholders(id),
+    filename      TEXT NOT NULL DEFAULT '',
+    filepath      TEXT NOT NULL DEFAULT '',
+    content_type  TEXT NOT NULL DEFAULT 'application/octet-stream',
+    size_bytes    INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    extracted_text TEXT,
+    embedding_id  TEXT,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_persona_docs_pid ON persona_documents(persona_id);
+
+CREATE TABLE IF NOT EXISTS persona_evolution (
+    id              TEXT PRIMARY KEY,
+    persona_id      TEXT NOT NULL REFERENCES stakeholders(id),
+    simulation_id   TEXT NOT NULL DEFAULT '',
+    proposed_deltas JSONB NOT NULL DEFAULT '{}'::jsonb,
+    before_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    applied_at      TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_persona_evo_pid    ON persona_evolution(persona_id);
+CREATE INDEX IF NOT EXISTS idx_persona_evo_status ON persona_evolution(status);
+
+CREATE TABLE IF NOT EXISTS persona_research (
+    id          TEXT PRIMARY KEY,
+    persona_id  TEXT NOT NULL REFERENCES stakeholders(id),
+    query       TEXT NOT NULL DEFAULT '',
+    results     JSONB NOT NULL DEFAULT '[]'::jsonb,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_persona_research_pid ON persona_research(persona_id);
+
 CREATE TABLE IF NOT EXISTS document_uploads (
     id            TEXT PRIMARY KEY,
     simulation_id TEXT NOT NULL,
@@ -165,7 +216,24 @@ class PostgresBackend(DatabaseBackend):
         )
         async with self._pool.acquire() as conn:
             await conn.execute(_SCHEMA_SQL)
+            await self._migrate(conn)
         logger.info("PostgreSQL schema initialised.")
+
+    async def _migrate(self, conn: asyncpg.Connection) -> None:
+        """Idempotent column additions for existing tables created before schema updates."""
+        for col_name, col_def in [
+            ("tool_profile", "TEXT NOT NULL DEFAULT 'none'"),
+            ("backstory", "TEXT NOT NULL DEFAULT ''"),
+            ("stance", "TEXT NOT NULL DEFAULT 'neutral'"),
+            ("personality", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            ("tools", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
+        ]:
+            try:
+                await conn.execute(
+                    f"ALTER TABLE stakeholders ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                )
+            except Exception as exc:
+                logger.warning("Migration ALTER TABLE stakeholders %s skipped: %s", col_name, exc)
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -257,11 +325,14 @@ class PostgresBackend(DatabaseBackend):
         now = self._now()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO stakeholders (id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, created_at, updated_at)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+                """INSERT INTO stakeholders (id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13, $14)""",
                 stakeholder.id, stakeholder.name, stakeholder.role, stakeholder.focus,
                 stakeholder.incentive_tuning, stakeholder.hidden_agenda or "",
-                stakeholder.tag, stakeholder.tool_profile, now, now,
+                stakeholder.tag, stakeholder.tool_profile,
+                stakeholder.backstory or "", stakeholder.stance or "neutral",
+                stakeholder.personality or "{}", stakeholder.tools or "[]",
+                now, now,
             )
         return stakeholder
 
@@ -269,7 +340,7 @@ class PostgresBackend(DatabaseBackend):
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile FROM stakeholders WHERE id = $1",
+                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = $1",
                 stakeholder_id,
             )
         return self._row_to_stakeholder(row) if row else None
@@ -280,10 +351,15 @@ class PostgresBackend(DatabaseBackend):
         async with pool.acquire() as conn:
             await conn.execute(
                 """UPDATE stakeholders SET name = $1, role = $2, focus = $3, incentive_tuning = $4,
-                   hidden_agenda = $5, tag = $6, tool_profile = $7, updated_at = $8 WHERE id = $9""",
+                   hidden_agenda = $5, tag = $6, tool_profile = $7,
+                   backstory = $8, stance = $9, personality = $10::jsonb, tools = $11::jsonb,
+                   updated_at = $12 WHERE id = $13""",
                 stakeholder.name, stakeholder.role, stakeholder.focus,
                 stakeholder.incentive_tuning, stakeholder.hidden_agenda or "",
-                stakeholder.tag, stakeholder.tool_profile, now, stakeholder.id,
+                stakeholder.tag, stakeholder.tool_profile,
+                stakeholder.backstory or "", stakeholder.stance or "neutral",
+                stakeholder.personality or "{}", stakeholder.tools or "[]",
+                now, stakeholder.id,
             )
         return stakeholder
 
@@ -291,7 +367,7 @@ class PostgresBackend(DatabaseBackend):
         self, limit: int = 100, offset: int = 0, tag: Optional[str] = None
     ) -> list[Stakeholder]:
         pool = self._pool_or_raise()
-        query = "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile FROM stakeholders"
+        query = "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders"
         params: list[Any] = []
         if tag:
             query += " WHERE tag = $1"
@@ -317,7 +393,7 @@ class PostgresBackend(DatabaseBackend):
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile FROM stakeholders ORDER BY created_at DESC LIMIT 1000",
+                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders ORDER BY created_at DESC LIMIT 1000",
             )
         return [self._row_to_stakeholder(r) for r in rows]
 
@@ -332,6 +408,10 @@ class PostgresBackend(DatabaseBackend):
             hidden_agenda=row["hidden_agenda"] or "",
             tag=row["tag"],
             tool_profile=row["tool_profile"] or "none",
+            backstory=row.get("backstory") or "",
+            stance=row.get("stance") or "neutral",
+            personality=json.dumps(row.get("personality") or {}),
+            tools=json.dumps(row.get("tools") or []),
         )
 
     # ------------------------------------------------------------------
@@ -577,15 +657,22 @@ class PostgresBackend(DatabaseBackend):
             return result
 
     async def get_agent_by_id(self, persona_id: str) -> Optional[dict]:
-        """Look up persona by UUID primary key."""
+        """Look up persona by UUID primary key.
+        
+        Returns None when *persona_id* is not a valid UUID (allows callers
+        to fall back to slug/name lookup without a UUID parse error).
+        """
         pool = self._pool_or_raise()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT id, slug, name, role, focus, backstory, hidden_agenda, tags, personality, metadata "
-                "FROM personas WHERE id = $1::uuid LIMIT 1",
-                persona_id,
-            )
-            return dict(row) if row else None
+        try:
+            async with pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT id, slug, name, role, focus, backstory, hidden_agenda, tags, personality, metadata "
+                    "FROM personas WHERE id = $1::uuid LIMIT 1",
+                    persona_id,
+                )
+                return dict(row) if row else None
+        except asyncpg.exceptions.DataError:
+            return None  # invalid UUID — caller should fall back to name/slug lookup
 
     async def get_agent_by_name(self, name: str) -> Optional[dict]:
         pool = self._pool_or_raise()
@@ -960,6 +1047,212 @@ class PostgresBackend(DatabaseBackend):
             extracted_text=row["extracted_text"],
             created_at=str(row["created_at"]) if row.get("created_at") else "",
         )
+
+    # ------------------------------------------------------------------
+    # Persona Growth System (v2)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _row_to_persona_v2(row: asyncpg.Record) -> dict:
+        personality = row.get("personality") or {}
+        if isinstance(personality, str):
+            personality = json.loads(personality)
+        tools = row.get("tools") or []
+        if isinstance(tools, str):
+            tools = json.loads(tools)
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "role": row["role"],
+            "focus": row["focus"],
+            "incentive_tuning": row["incentive_tuning"],
+            "hidden_agenda": row["hidden_agenda"] or "",
+            "tag": row["tag"],
+            "tool_profile": row["tool_profile"] or "none",
+            "backstory": row.get("backstory") or "",
+            "stance": row.get("stance") or "neutral",
+            "personality": json.dumps(personality),
+            "tools": json.dumps(tools),
+        }
+
+    async def list_personas_v2(self) -> list[dict]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders ORDER BY created_at DESC LIMIT 1000"
+            )
+        return [self._row_to_persona_v2(r) for r in rows]
+
+    async def get_persona_v2(self, persona_id: str) -> dict | None:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = $1",
+                persona_id,
+            )
+        return self._row_to_persona_v2(row) if row else None
+
+    # ── Persona documents ──────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_persona_document(row: asyncpg.Record) -> PersonaDocument:
+        return PersonaDocument(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            filename=row.get("filename") or "",
+            filepath=row.get("filepath") or "",
+            content_type=row.get("content_type") or "application/octet-stream",
+            size_bytes=row.get("size_bytes") or 0,
+            status=row.get("status") or "pending",
+            extracted_text=row.get("extracted_text"),
+            embedding_id=row.get("embedding_id"),
+            created_at=str(row.get("created_at") or ""),
+        )
+
+    async def create_persona_document(self, doc: PersonaDocument) -> PersonaDocument:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO persona_documents (id, persona_id, filename, filepath, content_type, size_bytes, status, extracted_text, embedding_id, created_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+                doc.id, doc.persona_id, doc.filename, doc.filepath, doc.content_type,
+                doc.size_bytes, doc.status, doc.extracted_text, doc.embedding_id, now,
+            )
+        return doc
+
+    async def get_persona_documents(self, persona_id: str) -> list[PersonaDocument]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, persona_id, filename, filepath, content_type, size_bytes, status, extracted_text, embedding_id, created_at FROM persona_documents WHERE persona_id = $1 ORDER BY created_at ASC",
+                persona_id,
+            )
+        return [self._row_to_persona_document(r) for r in rows]
+
+    async def delete_persona_document(self, document_id: str) -> bool:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "DELETE FROM persona_documents WHERE id = $1",
+                document_id,
+            )
+        return result != "DELETE 0"
+
+    # ── Persona evolution ──────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_persona_evolution(row: asyncpg.Record) -> PersonaEvolution:
+        proposed = row.get("proposed_deltas") or {}
+        if isinstance(proposed, str):
+            proposed = json.loads(proposed)
+        before = row.get("before_snapshot") or {}
+        if isinstance(before, str):
+            before = json.loads(before)
+        return PersonaEvolution(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            simulation_id=row.get("simulation_id") or "",
+            proposed_deltas=json.dumps(proposed),
+            before_snapshot=json.dumps(before),
+            status=row.get("status") or "pending",
+            applied_at=str(row["applied_at"]) if row.get("applied_at") else None,
+            created_at=str(row.get("created_at") or ""),
+        )
+
+    async def create_persona_evolution(self, evolution: PersonaEvolution) -> PersonaEvolution:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO persona_evolution (id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at)
+                   VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7, $8)""",
+                evolution.id, evolution.persona_id, evolution.simulation_id,
+                evolution.proposed_deltas, evolution.before_snapshot,
+                evolution.status, evolution.applied_at, now,
+            )
+        return evolution
+
+    async def get_pending_evolutions(self, persona_id: str) -> list[PersonaEvolution]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE persona_id = $1 AND status = 'pending' ORDER BY created_at DESC",
+                persona_id,
+            )
+        return [self._row_to_persona_evolution(r) for r in rows]
+
+    async def approve_evolution(self, evolution_id: str) -> bool:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE persona_evolution SET status = 'approved', applied_at = $1 WHERE id = $2 AND status = 'pending'",
+                now, evolution_id,
+            )
+        return result != "UPDATE 0"
+
+    async def reject_evolution(self, evolution_id: str) -> bool:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE persona_evolution SET status = 'rejected' WHERE id = $1 AND status = 'pending'",
+                evolution_id,
+            )
+        return result != "UPDATE 0"
+
+    async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE persona_id = $1 ORDER BY created_at DESC",
+                persona_id,
+            )
+        return [self._row_to_persona_evolution(r) for r in rows]
+
+    # ── Persona research ───────────────────────────────────────────────
+
+    @staticmethod
+    def _row_to_persona_research(row: asyncpg.Record) -> PersonaResearch:
+        results = row.get("results") or []
+        if isinstance(results, str):
+            results = json.loads(results)
+        return PersonaResearch(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            query=row.get("query") or "",
+            results=json.dumps(results),
+            created_at=str(row.get("created_at") or ""),
+        )
+
+    async def create_persona_research(self, research: PersonaResearch) -> PersonaResearch:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO persona_research (id, persona_id, query, results, created_at)
+                   VALUES ($1, $2, $3, $4::jsonb, $5)""",
+                research.id, research.persona_id, research.query, research.results, now,
+            )
+        return research
+
+    async def get_persona_research(self, persona_id: str) -> list[PersonaResearch]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT id, persona_id, query, results, created_at FROM persona_research WHERE persona_id = $1 ORDER BY created_at DESC",
+                persona_id,
+            )
+        return [self._row_to_persona_research(r) for r in rows]
+
+    async def update_persona_research(self, research_id: str, results: str) -> bool:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            result = await conn.execute(
+                "UPDATE persona_research SET results = $1::jsonb WHERE id = $2",
+                results, research_id,
+            )
+        return result == "UPDATE 1"
 
 
 def _extract_emotion(content: str, action_type: str) -> dict:

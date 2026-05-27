@@ -18,6 +18,12 @@ export type Stakeholder = {
   sim_count?: number;
   total_turns?: number;
   templates?: string[];
+  evolution_pending?: boolean;
+  // v2 persona fields (optional for backwards compat with v1 records)
+  backstory?: string;
+  stance?: AgentStance;
+  personality?: PersonalityProfile;
+  tools?: string[];
 };
 
 export type SimulationCreate = {
@@ -306,11 +312,21 @@ export type SimulationV2Config = {
 
 export type DocumentMeta = {
   id: string;
+  persona_id: string;
   filename: string;
   size_bytes: number;
   content_type: string;
   status: "pending" | "ready" | "failed";
   created_at: string;
+};
+
+export type KnowledgeQueryResult = {
+  results: Array<{
+    chunk_id: string;
+    text: string;
+    score: number;
+    metadata: any;
+  }>;
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -384,4 +400,19 @@ export type SimulationAnalytics = {
   avg_voltage: number;
   top_personas: [string, number][];
   stance_distribution: Record<string, number>;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Evolution
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type EvolutionProposal = {
+  id: string;
+  persona_id: string;
+  simulation_id: string;
+  proposed_deltas: string;  // JSON-serialized trait deltas
+  before_snapshot: string;  // JSON-serialized current personality
+  status: "pending" | "approved" | "rejected";
+  applied_at: string | null;
+  created_at: string;
 };

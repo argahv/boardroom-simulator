@@ -276,6 +276,60 @@ class SQLiteBackend(DatabaseBackend):
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
             self.conn.commit()
 
+        cursor.execute("PRAGMA table_info(persona_documents)")
+        if not cursor.fetchall():
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS persona_documents (
+                    id TEXT PRIMARY KEY,
+                    persona_id TEXT NOT NULL,
+                    filename TEXT NOT NULL DEFAULT '',
+                    filepath TEXT NOT NULL DEFAULT '',
+                    content_type TEXT NOT NULL DEFAULT 'application/octet-stream',
+                    size_bytes INTEGER NOT NULL DEFAULT 0,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    extracted_text TEXT,
+                    embedding_id TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_docs_pid ON persona_documents(persona_id)")
+            self.conn.commit()
+
+        cursor.execute("PRAGMA table_info(persona_evolution)")
+        if not cursor.fetchall():
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS persona_evolution (
+                    id TEXT PRIMARY KEY,
+                    persona_id TEXT NOT NULL,
+                    simulation_id TEXT NOT NULL DEFAULT '',
+                    proposed_deltas TEXT NOT NULL DEFAULT '{}',
+                    before_snapshot TEXT NOT NULL DEFAULT '{}',
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    applied_at TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_evo_pid ON persona_evolution(persona_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_evo_status ON persona_evolution(status)")
+            self.conn.commit()
+
+        cursor.execute("PRAGMA table_info(persona_research)")
+        if not cursor.fetchall():
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS persona_research (
+                    id TEXT PRIMARY KEY,
+                    persona_id TEXT NOT NULL,
+                    query TEXT NOT NULL DEFAULT '',
+                    results TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY (persona_id) REFERENCES stakeholders(id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_research_pid ON persona_research(persona_id)")
+            self.conn.commit()
+
     # ------------------------------------------------------------------
     # Simulations
     # ------------------------------------------------------------------
@@ -474,21 +528,25 @@ class SQLiteBackend(DatabaseBackend):
             hidden_agenda=row["hidden_agenda"] or "",
             tag=row["tag"],
             tool_profile=row["tool_profile"] or "none",
+            backstory=row["backstory"] or "",
+            stance=row["stance"] or "neutral",
+            personality=row["personality"] or "{}",
+            tools=row["tools"] or "[]",
         )
 
     async def create_stakeholder(self, stakeholder: Stakeholder) -> Stakeholder:
         cursor = self.conn.cursor()
         now = datetime.utcnow().isoformat()
         cursor.execute(
-            "INSERT INTO stakeholders (id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (stakeholder.id, stakeholder.name, stakeholder.role, stakeholder.focus, stakeholder.incentive_tuning, stakeholder.hidden_agenda or "", stakeholder.tag, stakeholder.tool_profile, now, now),
+            "INSERT INTO stakeholders (id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (stakeholder.id, stakeholder.name, stakeholder.role, stakeholder.focus, stakeholder.incentive_tuning, stakeholder.hidden_agenda or "", stakeholder.tag, stakeholder.tool_profile, stakeholder.backstory or "", stakeholder.stance or "neutral", stakeholder.personality or "{}", stakeholder.tools or "[]", now, now),
         )
         self.conn.commit()
         return stakeholder
 
     async def get_stakeholder(self, stakeholder_id: str) -> Optional[Stakeholder]:
         cursor = self.conn.cursor()
-        cursor.execute("SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile FROM stakeholders WHERE id = ?", (stakeholder_id,))
+        cursor.execute("SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = ?", (stakeholder_id,))
         row = cursor.fetchone()
         return self._row_to_stakeholder(row) if row else None
 
@@ -496,15 +554,15 @@ class SQLiteBackend(DatabaseBackend):
         cursor = self.conn.cursor()
         now = datetime.utcnow().isoformat()
         cursor.execute(
-            "UPDATE stakeholders SET name = ?, role = ?, focus = ?, incentive_tuning = ?, hidden_agenda = ?, tag = ?, tool_profile = ?, updated_at = ? WHERE id = ?",
-            (stakeholder.name, stakeholder.role, stakeholder.focus, stakeholder.incentive_tuning, stakeholder.hidden_agenda or "", stakeholder.tag, stakeholder.tool_profile, now, stakeholder.id),
+            "UPDATE stakeholders SET name = ?, role = ?, focus = ?, incentive_tuning = ?, hidden_agenda = ?, tag = ?, tool_profile = ?, backstory = ?, stance = ?, personality = ?, tools = ?, updated_at = ? WHERE id = ?",
+            (stakeholder.name, stakeholder.role, stakeholder.focus, stakeholder.incentive_tuning, stakeholder.hidden_agenda or "", stakeholder.tag, stakeholder.tool_profile, stakeholder.backstory or "", stakeholder.stance or "neutral", stakeholder.personality or "{}", stakeholder.tools or "[]", now, stakeholder.id),
         )
         self.conn.commit()
         return stakeholder
 
     async def list_stakeholders(self, limit: int = 100, offset: int = 0, tag: Optional[str] = None) -> List[Stakeholder]:
         cursor = self.conn.cursor()
-        query = "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile FROM stakeholders"
+        query = "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders"
         params: list = []
         if tag:
             query += " WHERE tag = ?"
@@ -636,3 +694,179 @@ class SQLiteBackend(DatabaseBackend):
             (simulation_id,),
         )
         self.conn.commit()
+
+    # ------------------------------------------------------------------
+    # Persona Growth System (v2)
+    # ------------------------------------------------------------------
+
+    def _row_to_persona_v2(self, row: sqlite3.Row) -> dict:
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "role": row["role"],
+            "focus": row["focus"],
+            "incentive_tuning": row["incentive_tuning"],
+            "hidden_agenda": row["hidden_agenda"] or "",
+            "tag": row["tag"],
+            "tool_profile": row["tool_profile"] or "none",
+            "backstory": row["backstory"] or "",
+            "stance": row["stance"] or "neutral",
+            "personality": row["personality"] or "{}",
+            "tools": row["tools"] or "[]",
+        }
+
+    async def list_personas_v2(self) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders ORDER BY created_at DESC LIMIT 1000"
+        )
+        return [self._row_to_persona_v2(row) for row in cursor.fetchall()]
+
+    async def get_persona_v2(self, persona_id: str) -> dict | None:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = ?",
+            (persona_id,),
+        )
+        row = cursor.fetchone()
+        return self._row_to_persona_v2(row) if row else None
+
+    # ── Persona documents ──────────────────────────────────────────────
+
+    def _row_to_persona_document(self, row: sqlite3.Row) -> PersonaDocument:
+        return PersonaDocument(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            filename=row["filename"] or "",
+            filepath=row["filepath"] or "",
+            content_type=row["content_type"] or "application/octet-stream",
+            size_bytes=row["size_bytes"] or 0,
+            status=row["status"] or "pending",
+            extracted_text=row["extracted_text"],
+            embedding_id=row["embedding_id"],
+            created_at=row["created_at"] or "",
+        )
+
+    async def create_persona_document(self, doc: PersonaDocument) -> PersonaDocument:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO persona_documents (id, persona_id, filename, filepath, content_type, size_bytes, status, extracted_text, embedding_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (doc.id, doc.persona_id, doc.filename, doc.filepath, doc.content_type, doc.size_bytes, doc.status, doc.extracted_text, doc.embedding_id, now),
+        )
+        self.conn.commit()
+        return doc
+
+    async def get_persona_documents(self, persona_id: str) -> list[PersonaDocument]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, persona_id, filename, filepath, content_type, size_bytes, status, extracted_text, embedding_id, created_at FROM persona_documents WHERE persona_id = ? ORDER BY created_at ASC",
+            (persona_id,),
+        )
+        return [self._row_to_persona_document(row) for row in cursor.fetchall()]
+
+    async def delete_persona_document(self, document_id: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute("DELETE FROM persona_documents WHERE id = ?", (document_id,))
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    # ── Persona evolution ──────────────────────────────────────────────
+
+    def _row_to_persona_evolution(self, row: sqlite3.Row) -> PersonaEvolution:
+        return PersonaEvolution(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            simulation_id=row["simulation_id"] or "",
+            proposed_deltas=row["proposed_deltas"] or "{}",
+            before_snapshot=row["before_snapshot"] or "{}",
+            status=row["status"] or "pending",
+            applied_at=row["applied_at"],
+            created_at=row["created_at"] or "",
+        )
+
+    async def create_persona_evolution(self, evolution: PersonaEvolution) -> PersonaEvolution:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO persona_evolution (id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (evolution.id, evolution.persona_id, evolution.simulation_id, evolution.proposed_deltas, evolution.before_snapshot, evolution.status, evolution.applied_at, now),
+        )
+        self.conn.commit()
+        return evolution
+
+    async def get_pending_evolutions(self, persona_id: str) -> list[PersonaEvolution]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE persona_id = ? AND status = 'pending' ORDER BY created_at DESC",
+            (persona_id,),
+        )
+        return [self._row_to_persona_evolution(row) for row in cursor.fetchall()]
+
+    async def approve_evolution(self, evolution_id: str) -> bool:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "UPDATE persona_evolution SET status = 'approved', applied_at = ? WHERE id = ? AND status = 'pending'",
+            (now, evolution_id),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def reject_evolution(self, evolution_id: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE persona_evolution SET status = 'rejected' WHERE id = ? AND status = 'pending'",
+            (evolution_id,),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE persona_id = ? ORDER BY created_at DESC",
+            (persona_id,),
+        )
+        return [self._row_to_persona_evolution(row) for row in cursor.fetchall()]
+
+    # ── Persona research ───────────────────────────────────────────────
+
+    def _row_to_persona_research(self, row: sqlite3.Row) -> PersonaResearch:
+        return PersonaResearch(
+            id=row["id"],
+            persona_id=row["persona_id"],
+            query=row["query"] or "",
+            results=row["results"] or "[]",
+            created_at=row["created_at"] or "",
+        )
+
+    async def create_persona_research(self, research: PersonaResearch) -> PersonaResearch:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        cursor.execute(
+            "INSERT INTO persona_research (id, persona_id, query, results, created_at) VALUES (?, ?, ?, ?, ?)",
+            (research.id, research.persona_id, research.query, research.results, now),
+        )
+        self.conn.commit()
+        return research
+
+    async def get_persona_research(self, persona_id: str) -> list[PersonaResearch]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, persona_id, query, results, created_at FROM persona_research WHERE persona_id = ? ORDER BY created_at DESC",
+            (persona_id,),
+        )
+        return [self._row_to_persona_research(row) for row in cursor.fetchall()]
+
+    async def update_persona_research(self, research_id: str, results: str) -> bool:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "UPDATE persona_research SET results = ? WHERE id = ?",
+            (results, research_id),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+
+

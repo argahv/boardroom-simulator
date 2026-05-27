@@ -24,9 +24,11 @@ create_engine = _be_mod.make_engine
 from . import config
 from . import config as app_config
 from .database import initialize_database, close_database, get_database
+from .knowledge import get_knowledge_store
 from .models import (
     AlignmentDelta,
     PersonalityProfile,
+    PersonaDocument,
     Postmortem,
     ScenarioTemplate,
     SimulationV2Config,
@@ -36,6 +38,7 @@ from .models import (
     TopologyNode,
 )
 from .runtime import run_simulation_v2
+from .upload.utils import sanitize_filename
 
 from .llm import openrouter_completion, parse_json_object
 
@@ -227,9 +230,15 @@ def health() -> dict[str, str | bool]:
 async def list_stakeholders_api() -> list[dict]:
     db = get_database()
     try:
+        if hasattr(db, 'list_personas_v2'):
+            personas = await db.list_personas_v2()
+            logger.info("list_stakeholders (v2): %d personas", len(personas))
+            return personas
         if hasattr(db, 'list_personas'):
             return await db.list_personas()
-        return [s.model_dump() for s in await db.list_stakeholders(limit=500)]
+        result = [s.model_dump() for s in await db.list_stakeholders(limit=500)]
+        logger.info("list_stakeholders (v1): %d stakeholders", len(result))
+        return result
     except Exception:
         return []
 
@@ -239,6 +248,8 @@ async def create_stakeholder_api(payload: Stakeholder) -> dict:
     sid = str(uuid4())
     s = payload.model_copy(update={"id": sid})
     await db.create_stakeholder(s)
+    has_v2 = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
+    logger.info("create_stakeholder %s (v2=%s): name=%s role=%s", sid, has_v2, s.name, s.role)
     return s.model_dump()
 
 @app.put("/stakeholders/{stakeholder_id}")
@@ -249,6 +260,8 @@ async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> d
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     s = payload.model_copy(update={"id": stakeholder_id})
     await db.update_stakeholder(s)
+    has_v2 = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
+    logger.info("update_stakeholder %s (v2=%s): name=%s role=%s", stakeholder_id, has_v2, s.name, s.role)
     return s.model_dump()
 
 @app.delete("/stakeholders/{stakeholder_id}", status_code=204)
@@ -258,6 +271,257 @@ async def delete_stakeholder_api(stakeholder_id: str) -> Response:
     if not deleted:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     return Response(status_code=204)
+
+
+# ── Persona v2 Detail ─────────────────────────────────────────────────
+
+
+@app.get("/personas/{persona_id}")
+async def get_persona_api(persona_id: str) -> dict:
+    db = get_database()
+    if not hasattr(db, 'get_persona_v2'):
+        raise HTTPException(status_code=501, detail="Persona v2 detail not supported by this database backend")
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    docs = await db.get_persona_documents(persona_id)
+    persona["document_count"] = len(docs)
+    return persona
+
+
+# ── Persona Document Upload ────────────────────────────────────────────
+
+PERSONA_DOCUMENT_LIMIT = 10
+
+
+@app.post("/personas/{persona_id}/documents", status_code=201)
+async def upload_persona_document(persona_id: str, file: UploadFile = File(...)):
+    """Upload a document for a persona. Extracts text, embeds via Chroma, stores metadata."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    existing_docs = await db.get_persona_documents(persona_id)
+    if len(existing_docs) >= PERSONA_DOCUMENT_LIMIT:
+        raise HTTPException(status_code=422, detail=f"Maximum {PERSONA_DOCUMENT_LIMIT} documents per persona")
+
+    ct = file.content_type or "application/octet-stream"
+    if ct not in app_config.ALLOWED_CONTENT_TYPES:
+        raise HTTPException(status_code=422, detail=f"File type '{ct}' not allowed. Allowed: PDF, DOCX, TXT")
+
+    doc_id = str(uuid4())
+    safe_name = sanitize_filename(file.filename or "unnamed")
+    filename = f"{doc_id}_{safe_name}"
+    filepath = os.path.join(app_config.UPLOAD_DIR, "personas", persona_id, filename)
+
+    content = await file.read()
+    max_bytes = app_config.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+    if not (0 < len(content) <= max_bytes):
+        raise HTTPException(status_code=413, detail=f"File exceeds {app_config.MAX_UPLOAD_SIZE_MB}MB limit")
+
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, "wb") as fh:
+        fh.write(content)
+
+    extracted = await extract_text(filepath, ct)
+
+    ks = get_knowledge_store()
+    await ks.add_document(
+        persona_id=persona_id,
+        doc_id=doc_id,
+        text=extracted,
+        metadata={"filename": file.filename or "unnamed", "content_type": ct},
+    )
+
+    now = datetime.now(timezone.utc).isoformat()
+    doc = PersonaDocument(
+        id=doc_id,
+        persona_id=persona_id,
+        filename=file.filename or "unnamed",
+        filepath=filepath,
+        content_type=ct,
+        size_bytes=len(content),
+        status="ready" if extracted else "failed",
+        extracted_text=extracted[:500] if extracted else None,
+        created_at=now,
+    )
+    await db.create_persona_document(doc)
+
+    logger.info("DOC_UPLOAD persona=%s doc=%s filename=%s size=%d", persona_id, doc_id, doc.filename, len(content),
+                extra={"persona_id": persona_id, "doc_id": doc_id, "event": "persona_document_uploaded"})
+
+    return doc.model_dump()
+
+
+@app.get("/personas/{persona_id}/documents")
+async def list_persona_documents(persona_id: str):
+    """List all uploaded documents for a persona."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    docs = await db.get_persona_documents(persona_id)
+    return [d.model_dump() for d in docs]
+
+
+@app.delete("/personas/{persona_id}/documents/{doc_id}", status_code=204)
+async def delete_persona_document(persona_id: str, doc_id: str):
+    """Delete a persona document and remove from Chroma."""
+    db = get_database()
+    docs = await db.get_persona_documents(persona_id)
+    doc = next((d for d in docs if d.id == doc_id), None)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    ks = get_knowledge_store()
+    ks.delete_document(persona_id, doc_id)
+
+    if doc.filepath and os.path.exists(doc.filepath):
+        os.remove(doc.filepath)
+
+    await db.delete_persona_document(doc_id)
+    logger.info("DOC_DELETE persona=%s doc=%s", persona_id, doc_id,
+                extra={"persona_id": persona_id, "doc_id": doc_id, "event": "persona_document_deleted"})
+    return Response(status_code=204)
+
+
+@app.post("/personas/{persona_id}/query-knowledge")
+async def query_persona_knowledge(persona_id: str, payload: dict):
+    """Query persona's Chroma knowledge base with a text query."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    query = (payload or {}).get("query", "")
+    if not query:
+        raise HTTPException(status_code=422, detail="query field is required")
+
+    ks = get_knowledge_store()
+    results = await ks.query_knowledge(persona_id, query, top_k=3)
+    return {"results": results}
+
+
+# ── Persona Research ────────────────────────────────────────────────────
+
+
+@app.get("/personas/{persona_id}/research-history")
+async def get_persona_research_history(persona_id: str):
+    """Return past research entries for a persona."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    history = await db.get_persona_research(persona_id)
+    return [r.model_dump() for r in history]
+
+
+@app.post("/personas/{persona_id}/research", status_code=202)
+async def trigger_persona_research(persona_id: str, payload: dict = {}):
+    """Trigger web research for a persona and store results."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    from app.config import TAVILY_API_KEY as _tavily_key
+    if not _tavily_key:
+        raise HTTPException(status_code=400, detail="TAVILY_API_KEY not configured")
+
+    from app.research import TavilyResearchService
+    from app.models import PersonaResearch
+    topic = (payload or {}).get("topic", "") or persona.get("focus", "") or persona.get("role", "")
+
+    research_id = str(uuid4())
+    research_entry = PersonaResearch(
+        id=research_id,
+        persona_id=persona_id,
+        query=topic,
+        results="[]",
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+    await db.create_persona_research(research_entry)
+
+    async def _do_research():
+        try:
+            rs = TavilyResearchService()
+            results = await rs.research_topic(persona_id, topic, max_results=5)
+            import json
+            if results:
+                await db.update_persona_research(research_id, json.dumps(results))
+            logger.info("Research done persona=%s topic='%s' results=%d", persona_id, topic, len(results))
+        except Exception as exc:
+            logger.warning("Research failed persona=%s topic='%s': %s", persona_id, topic, exc)
+
+    asyncio.ensure_future(_do_research())
+
+    return {"research_id": research_id, "topic": topic, "status": "started"}
+
+
+@app.get("/personas/{persona_id}/research-status")
+async def get_persona_research_status(persona_id: str):
+    """Check research status — returns latest entry state."""
+    db = get_database()
+    history = await db.get_persona_research(persona_id)
+    if not history:
+        return {"status": "none", "research_id": None}
+    latest = history[0]
+    import json
+    results_raw = json.loads(latest.results) if isinstance(latest.results, str) else (latest.results or [])
+    if not results_raw:
+        return {"status": "running", "research_id": latest.id, "query": latest.query}
+    return {"status": "complete", "research_id": latest.id, "query": latest.query, "count": len(results_raw)}
+
+
+@app.get("/personas/{persona_id}/research-config")
+async def get_persona_research_config(persona_id: str):
+    """Return research configuration status (Tavily availability)."""
+    db = get_database()
+    persona = await db.get_persona_v2(persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    from app.config import TAVILY_API_KEY as _tavily_key
+    return {"tavily_configured": bool(_tavily_key)}
+
+
+# ── Persona Evolution Approval ────────────────────────────────────────
+
+
+@app.get("/personas/{persona_id}/evolutions/pending")
+async def get_pending_evolutions(persona_id: str):
+    """List pending evolution proposals for a persona."""
+    db = get_database()
+    evos = await db.get_pending_evolutions(persona_id)
+    return [e.model_dump() for e in evos]
+
+
+@app.post("/evolutions/{evolution_id}/approve")
+async def approve_evolution(evolution_id: str):
+    """Approve an evolution — apply deltas to persona personality."""
+    db = get_database()
+    success = await db.approve_evolution(evolution_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Evolution not found or already processed")
+    return {"status": "approved", "evolution_id": evolution_id}
+
+
+@app.post("/evolutions/{evolution_id}/reject")
+async def reject_evolution(evolution_id: str):
+    """Reject an evolution — no personality change."""
+    db = get_database()
+    success = await db.reject_evolution(evolution_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Evolution not found or already processed")
+    return {"status": "rejected", "evolution_id": evolution_id}
+
+
+@app.get("/personas/{persona_id}/evolutions")
+async def get_evolution_history_api(persona_id: str):
+    """List all evolution history for a persona."""
+    db = get_database()
+    evos = await db.get_evolution_history(persona_id)
+    return [e.model_dump() for e in evos]
 
 
 # ── Templates (DB-backed) ─────────────────────────────────────────────
@@ -419,6 +683,31 @@ async def list_simulations_v2() -> list[dict]:
     return active
 
 
+async def _trigger_pre_simulation_research(config: SimulationV2Config, simulation_id: str) -> None:
+    """Fire-and-forget Tavily research for each stakeholder (if enabled)."""
+    if not config.auto_research:
+        return
+    if not hasattr(config, 'subject') or not config.subject:
+        return
+
+    from app.research import TavilyResearchService
+    rs = TavilyResearchService()
+    subject_dict = {
+        "name": config.subject.name if hasattr(config.subject, 'name') else "",
+        "description": config.subject.description if hasattr(config.subject, 'description') else "",
+    }
+
+    for stakeholder in config.stakeholders:
+        if config.research_topics:
+            for topic in config.research_topics:
+                asyncio.ensure_future(rs.research_topic(stakeholder.id, topic))
+        else:
+            asyncio.ensure_future(rs.research_subject(stakeholder.id, subject_dict))
+
+    logger.info("Pre-sim research triggered for %d stakeholders (sim=%s)",
+                len(config.stakeholders), simulation_id)
+
+
 @app.post("/simulations")
 async def create_simulation_v2(payload: SimulationV2Config) -> dict:
     simulation_id = str(uuid4())
@@ -437,6 +726,10 @@ async def create_simulation_v2(payload: SimulationV2Config) -> dict:
             await db.create_new_simulation(simulation_id, config_json)
     except Exception as exc:
         logger.warning("V2_NEW_SCHEMA_SAVE_ERR %s: %s", simulation_id, exc)
+
+    # Trigger pre-simulation research (fire-and-forget)
+    asyncio.ensure_future(_trigger_pre_simulation_research(payload, simulation_id))
+
     return {
         "simulation_id": simulation_id,
         "config": config_json,
@@ -583,6 +876,11 @@ async def create_simulation_with_documents(
         combined = truncate_to_token_limit(combined, max_tokens=4000)
         _v2_simulations[simulation_id]["_document_context"] = combined
 
+    # Trigger pre-simulation research (fire-and-forget)
+    asyncio.ensure_future(_trigger_pre_simulation_research(
+        SimulationV2Config(**config_json), simulation_id
+    ))
+
     return {
         "simulation_id": simulation_id,
         "config": config_json,
@@ -642,6 +940,49 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
                             await _db.update_participant_stats(simulation_id)
                     except Exception as exc:
                         logger.warning("V2_NEW_STATUS_ERR %s: %s", simulation_id, exc)
+
+                    # ── Evolution trigger (fire-and-forget) ──
+                    try:
+                        config_obj = SimulationV2Config(**entry["config"])
+                        db = get_database()
+                        from app.evolution import EvolutionService
+                        evo_svc = EvolutionService(db)
+                        for s in config_obj.stakeholders:
+                            pd = {
+                                "aggressiveness": s.personality.aggressiveness,
+                                "empathy": s.personality.empathy,
+                                "stubbornness": s.personality.stubbornness,
+                                "verbosity": s.personality.verbosity,
+                            }
+                            sim_result = {
+                                "outcome_type": event.get("reason", "timeout"),
+                                "total_turns": event.get("total_turns", 0),
+                            }
+                            asyncio.ensure_future(evo_svc.compute_and_store(
+                                persona_id=s.id, simulation_id=simulation_id,
+                                current_personality=pd, current_stance=s.stance,
+                                simulation_result=sim_result,
+                            ))
+                    except Exception as exc:
+                        logger.warning("Evolution trigger sim=%s err=%s", simulation_id, exc)
+
+                    # ── Cross-session memory (fire-and-forget) ──
+                    try:
+                        subject_name = ""
+                        if hasattr(config_obj, 'subject'):
+                            subject_name = getattr(config_obj.subject, 'name', '')
+                        from app.cross_session_memory import store_cross_session_memory
+                        for s in config_obj.stakeholders:
+                            asyncio.ensure_future(store_cross_session_memory(
+                                persona_id=s.id,
+                                simulation_id=simulation_id,
+                                subject=subject_name,
+                                outcome_type=event.get("reason", "timeout"),
+                                total_turns=event.get("total_turns", 0),
+                            ))
+                    except Exception as exc:
+                        logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
+
                     yield f"data: {json.dumps(event)}\n\n"
                     return
                 yield f"data: {json.dumps(event)}\n\n"

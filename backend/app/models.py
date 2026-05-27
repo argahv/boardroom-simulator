@@ -293,6 +293,7 @@ class StakeholderV2(BaseModel):
     personality: PersonalityProfile = Field(default_factory=PersonalityProfile)
     hidden_agenda: str = ""
     tools: list[str] = Field(default_factory=list)
+    inject_knowledge: bool | None = None  # Per-agent override (None = use global config)
 
 
 class SimulationV2Config(BaseModel):
@@ -310,6 +311,9 @@ class SimulationV2Config(BaseModel):
         "external_leaks": False, "deadlock_risk": False,
     })
     model_temperature: str = "volatile"
+    auto_research: bool = True
+    research_topics: list[str] = Field(default_factory=list)
+    inject_knowledge: bool = True  # Global toggle for Chroma RAG injection
 
 
 class SimulationDocument(BaseModel):

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable
 
+from app.knowledge import get_knowledge_store
 from app.models import AgentStance, SimulationV2Config, StakeholderV2
 from app.runtime.space import SharedSpace
 
@@ -33,7 +35,6 @@ class AgentRuntime:
         system_prompt_template: str,
         simulation_id: str,
         behavior_engine: Any = None,
-        memory_system: Any = None,
         private_thought: Any = None,
         plan_manager: Any = None,
     ) -> None:
@@ -44,7 +45,6 @@ class AgentRuntime:
         self.system_prompt_template = system_prompt_template
         self.simulation_id = simulation_id
         self.behavior_engine = behavior_engine
-        self.memory_system = memory_system
         self.private_thought = private_thought
         self.plan_manager = plan_manager
 
@@ -230,7 +230,7 @@ class AgentRuntime:
 
     # ── prompt building ──────────────────────────────────────────────
 
-    def _build_system_prompt(self) -> str:
+    async def _build_system_prompt(self) -> str:
         stance_descriptions = {
             "champion": "You are a STRONG supporter of this position. You MUST defend it enthusiastically against any criticism. You believe in it completely.",
             "detractor": "You are a STRONG opponent of this position. You MUST challenge and criticize it at every opportunity. You believe it is fundamentally wrong.",
@@ -290,10 +290,72 @@ class AgentRuntime:
             plan_summary = self.plan_manager.get_plan_summary(self.agent_id)
             if plan_summary:
                 system_content += f"\n\n{plan_summary}"
+
+        # ── Knowledge Base injection (Chroma RAG) ──
+        # Check per-agent override first, then global config
+        agent_override = getattr(self.config, 'inject_knowledge', None)
+        global_flag = getattr(self.space.config, 'inject_knowledge', True)
+        if (agent_override is None and global_flag) or agent_override is True:
+            try:
+                # Build query from recent conversation context + subject
+                recent_texts = []
+                for e in self.memory[-3:]:
+                    if e.get("type") == "turn" and e.get("content"):
+                        recent_texts.append(e["content"][:100])
+                subject = self.space.config.subject
+                query_parts = recent_texts + [subject.name, subject.description]
+                query = " ".join(q for q in query_parts if q)
+
+                if query.strip():
+                    ks = get_knowledge_store()
+                    knowledge = await asyncio.wait_for(
+                        ks.query_knowledge(self.agent_id, query, top_k=3),
+                        timeout=2.0,
+                    )
+                    if knowledge:
+                        kb_lines = ["\n\n## Your Knowledge Base"]
+                        for i, chunk in enumerate(knowledge):
+                            text = chunk.get("text", "")[:500]
+                            src = chunk.get("metadata", {}).get("filename", "")
+                            kb_lines.append(f"\n[{i+1}] {text}")
+                            if src:
+                                kb_lines.append(f"   (Source: {src})")
+                        kb_text = "\n".join(kb_lines)
+                        kb_text = kb_text[:2000]
+                        system_content += kb_text
+
+                        # Cross-session memory extraction
+                        cross_chunks = [k for k in knowledge if k.get("metadata", {}).get("source_type") == "cross_session"]
+                        if cross_chunks:
+                            from app.cross_session_memory import format_memory_injection
+                            cm_text = format_memory_injection(self.agent_id, cross_chunks)
+                            if cm_text:
+                                system_content += cm_text
+
+                    # Separate query with metadata filter so research chunks aren't
+                    # buried by higher-similarity non-research content in the general top-k.
+                    try:
+                        research_knowledge = await asyncio.wait_for(
+                            ks.query_knowledge(self.agent_id, query, top_k=3, where={"source_type": "research"}),
+                            timeout=2.0,
+                        )
+                        if research_knowledge:
+                            research_lines = ["\n\n## Recent Research"]
+                            for i, chunk in enumerate(research_knowledge):
+                                text = chunk.get("text", "")[:300]
+                                research_lines.append(f"\n- {text}")
+                            research_text = "".join(research_lines)
+                            system_content += research_text[:1000]
+                    except asyncio.TimeoutError:
+                        pass
+            except asyncio.TimeoutError:
+                logger.debug("Knowledge query timeout for %s (skipping)", self.agent_id)
+            except Exception as exc:
+                logger.debug("Knowledge query failed for %s: %s", self.agent_id, exc)
         return system_content
 
-    def _build_turn_prompt(self) -> list[dict[str, Any]]:
-        system_content = self._build_system_prompt()
+    async def _build_turn_prompt(self) -> list[dict[str, Any]]:
+        system_content = await self._build_system_prompt()
         if self.behavior_engine is not None:
             state = self.behavior_engine.get_state_for_llm(self.agent_id)
             if state.get("social_physics"):
@@ -366,7 +428,7 @@ class AgentRuntime:
     # ── turn generation ──────────────────────────────────────────────
 
     async def _generate_turn(self) -> dict:
-        messages = self._build_turn_prompt()
+        messages = await self._build_turn_prompt()
         temperature = min(1.0, max(0.3, self.space.config.voltage / 100.0))
         if getattr(self.space.config, "model_temperature", "volatile") == "stable":
             temperature *= 0.7
@@ -407,15 +469,6 @@ class AgentRuntime:
                 "speaker_id": self.agent_id,
             }
             self.behavior_engine.process_turn(be_turn)
-        if self.memory_system is not None:
-            self.memory_system.record_event(
-                event_type="turn",
-                agent_id=self.agent_id,
-                content=turn_event.get("content", ""),
-                action_type=turn_event.get("action_type", "statement"),
-                turn=self._turn_count,
-            )
-            self.memory_system.compress(self.agent_id)
         logger.debug("Agent %s published turn %d", self.agent_id, self._turn_count, extra={"agent": self.agent_id, "turn": self._turn_count, "action_type": turn_event.get("action_type", "statement"), "event": "turn_generated"})
         return turn_event
 

@@ -206,4 +206,8 @@ class DatabaseBackend(ABC):
     async def get_persona_research(self, persona_id: str) -> list[PersonaResearch]:
         pass
 
+    @abstractmethod
+    async def update_persona_research(self, research_id: str, results: str) -> bool:
+        pass
+
 
