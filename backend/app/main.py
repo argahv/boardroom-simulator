@@ -161,6 +161,10 @@ async def _load_seeds() -> None:
                     logger.warning("SEED_TEMPLATE_ERR %s: %s", t["id"], exc)
         logger.info("SEED loaded %d templates from %s", len(templates), templates_path)
 
+    migrated = await db.migrate_legacy_templates()
+    if migrated:
+        logger.info("MIGRATED %d legacy templates to new schema", migrated)
+
 
 @app.on_event("startup")
 async def startup_event() -> None:
@@ -500,9 +504,36 @@ async def get_pending_evolutions(persona_id: str):
 async def approve_evolution(evolution_id: str):
     """Approve an evolution — apply deltas to persona personality."""
     db = get_database()
+    if not hasattr(db, 'get_evolution') or not hasattr(db, 'update_persona_v2'):
+        raise HTTPException(status_code=501, detail="Evolution apply not supported by this database backend")
+
+    evo = await db.get_evolution(evolution_id)
+    if evo is None or evo.status != "pending":
+        raise HTTPException(status_code=404, detail="Evolution not found or already processed")
+
+    persona = await db.get_persona_v2(evo.persona_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Persona not found")
+
+    deltas = json.loads(evo.proposed_deltas) if isinstance(evo.proposed_deltas, str) else evo.proposed_deltas
+    current = json.loads(persona["personality"]) if isinstance(persona["personality"], str) else persona["personality"]
+
+    updated = {}
+    for trait in ("aggressiveness", "empathy", "stubbornness", "verbosity"):
+        cur = current.get(trait, 50)
+        delta = deltas.get(trait, 0)
+        updated[trait] = max(0, min(100, cur + delta))
+
+    new_personality_json = json.dumps(updated)
+    await db.update_persona_v2(evo.persona_id, new_personality_json)
+
     success = await db.approve_evolution(evolution_id)
     if not success:
-        raise HTTPException(status_code=404, detail="Evolution not found or already processed")
+        raise HTTPException(status_code=500, detail="Failed to update evolution status")
+
+    logger.info("Evolution approved & applied persona=%s evolution=%s deltas=%s personality_after=%s",
+                evo.persona_id, evolution_id, evo.proposed_deltas, new_personality_json)
+
     return {"status": "approved", "evolution_id": evolution_id}
 
 
@@ -1148,6 +1179,32 @@ async def replay_simulation_v2(simulation_id: str) -> dict:
         "last_snapshot_turn": max((s["turn_index"] for s in parsed), default=-1),
         "snapshots": parsed,
     }
+
+
+@app.get("/simulations/{simulation_id}/turns")
+async def get_simulation_turns(simulation_id: str) -> list[dict]:
+    """Return all turns for a simulation, ordered by turn index."""
+    db = get_database()
+    entry = _v2_simulations.get(simulation_id)
+    if entry is None:
+        # Check DB for completed sim not in memory
+        try:
+            if hasattr(db, 'get_simulation_config'):
+                cfg = await db.get_simulation_config(simulation_id)
+                if not cfg:
+                    raise HTTPException(status_code=404, detail="Simulation not found")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+    try:
+        if hasattr(db, 'get_turns_by_simulation'):
+            turns = await db.get_turns_by_simulation(simulation_id)
+        else:
+            turns = []
+    except Exception:
+        turns = []
+    return turns
 
 
 @app.get("/simulations/{simulation_id}/export")

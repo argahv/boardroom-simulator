@@ -421,7 +421,14 @@ class PostgresBackend(DatabaseBackend):
     async def create_template(self, template: ScenarioTemplate) -> ScenarioTemplate:
         pool = self._pool_or_raise()
         now = self._now()
+        config = json.dumps({
+            "default_background": template.default_background,
+            "default_primary_goal": template.default_primary_goal,
+            "default_model_temperature": template.default_model_temperature,
+            "suggested_persona_ids": template.suggested_persona_ids,
+        })
         async with pool.acquire() as conn:
+            # Write to legacy table (unchanged, backward compat)
             await conn.execute(
                 """INSERT INTO scenario_templates (id, name, description, default_background, default_primary_goal,
                    default_voltage, default_model_temperature, suggested_persona_ids, created_at, updated_at)
@@ -431,7 +438,48 @@ class PostgresBackend(DatabaseBackend):
                 template.default_voltage, template.default_model_temperature,
                 json.dumps(template.suggested_persona_ids), now, now,
             )
+            # Also write to new templates table (dual-write for v2 API)
+            await conn.execute(
+                """INSERT INTO templates (slug, name, description, category, difficulty,
+                   estimated_duration, stakeholder_count, voltage, config, created_at, updated_at)
+                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                   ON CONFLICT (slug) DO NOTHING""",
+                template.id, template.name, template.description,
+                "", "medium", "",
+                len(template.suggested_persona_ids),
+                template.default_voltage,
+                config,
+                now, now,
+            )
         return template
+
+    async def migrate_legacy_templates(self) -> int:
+        """Copy legacy scenario_templates rows to new templates table where missing."""
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("SELECT * FROM scenario_templates")
+            migrated = 0
+            for row in rows:
+                suggested = json.loads(row["suggested_persona_ids"]) if isinstance(row["suggested_persona_ids"], str) else row["suggested_persona_ids"]
+                config = json.dumps({
+                    "default_background": row["default_background"],
+                    "default_primary_goal": row["default_primary_goal"],
+                    "default_model_temperature": row["default_model_temperature"],
+                    "suggested_persona_ids": suggested,
+                })
+                result = await conn.execute(
+                    """INSERT INTO templates (slug, name, description, category, difficulty,
+                       estimated_duration, stakeholder_count, voltage, config, created_at, updated_at)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                       ON CONFLICT (slug) DO NOTHING""",
+                    row["id"], row["name"], row["description"],
+                    "", "medium", "",
+                    len(suggested), row["default_voltage"],
+                    config, row["created_at"], row["updated_at"],
+                )
+                if "INSERT 0 1" in result:
+                    migrated += 1
+            return migrated
 
     async def get_template(self, template_id: str) -> Optional[ScenarioTemplate]:
         pool = self._pool_or_raise()
@@ -1201,6 +1249,15 @@ class PostgresBackend(DatabaseBackend):
             )
         return result != "UPDATE 0"
 
+    async def get_evolution(self, evolution_id: str) -> Optional[PersonaEvolution]:
+        pool = self._pool_or_raise()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE id = $1",
+                evolution_id,
+            )
+        return self._row_to_persona_evolution(row) if row else None
+
     async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
@@ -1209,6 +1266,22 @@ class PostgresBackend(DatabaseBackend):
                 persona_id,
             )
         return [self._row_to_persona_evolution(r) for r in rows]
+
+    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
+        pool = self._pool_or_raise()
+        now = self._now()
+        async with pool.acquire() as conn:
+            if stance is not None:
+                result = await conn.execute(
+                    "UPDATE stakeholders SET personality = $1::jsonb, stance = $2, updated_at = $3 WHERE id = $4",
+                    personality, stance, now, persona_id,
+                )
+            else:
+                result = await conn.execute(
+                    "UPDATE stakeholders SET personality = $1::jsonb, updated_at = $2 WHERE id = $3",
+                    personality, now, persona_id,
+                )
+        return result != "UPDATE 0"
 
     # ── Persona research ───────────────────────────────────────────────
 
