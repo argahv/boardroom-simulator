@@ -181,6 +181,10 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
+    async def get_evolution(self, evolution_id: str) -> Optional[PersonaEvolution]:
+        pass
+
+    @abstractmethod
     async def get_pending_evolutions(self, persona_id: str) -> list[PersonaEvolution]:
         pass
 
@@ -194,6 +198,10 @@ class DatabaseBackend(ABC):
 
     @abstractmethod
     async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
+        pass
+
+    @abstractmethod
+    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
         pass
 
     # Persona research

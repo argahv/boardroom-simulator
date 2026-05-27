@@ -822,6 +822,15 @@ class SQLiteBackend(DatabaseBackend):
         self.conn.commit()
         return cursor.rowcount > 0
 
+    async def get_evolution(self, evolution_id: str) -> Optional[PersonaEvolution]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT id, persona_id, simulation_id, proposed_deltas, before_snapshot, status, applied_at, created_at FROM persona_evolution WHERE id = ?",
+            (evolution_id,),
+        )
+        row = cursor.fetchone()
+        return self._row_to_persona_evolution(row) if row else None
+
     async def get_evolution_history(self, persona_id: str) -> list[PersonaEvolution]:
         cursor = self.conn.cursor()
         cursor.execute(
@@ -829,6 +838,22 @@ class SQLiteBackend(DatabaseBackend):
             (persona_id,),
         )
         return [self._row_to_persona_evolution(row) for row in cursor.fetchall()]
+
+    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
+        cursor = self.conn.cursor()
+        now = datetime.utcnow().isoformat()
+        if stance is not None:
+            cursor.execute(
+                "UPDATE stakeholders SET personality = ?, stance = ?, updated_at = ? WHERE id = ?",
+                (personality, stance, now, persona_id),
+            )
+        else:
+            cursor.execute(
+                "UPDATE stakeholders SET personality = ?, updated_at = ? WHERE id = ?",
+                (personality, now, persona_id),
+            )
+        self.conn.commit()
+        return cursor.rowcount > 0
 
     # ── Persona research ───────────────────────────────────────────────
 
