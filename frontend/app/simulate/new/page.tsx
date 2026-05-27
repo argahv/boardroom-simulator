@@ -111,10 +111,10 @@ export default function NewSimulationPage() {
       id: `p${nextPersonaId++}`,
       name: st.name,
       role: st.role,
-      backstory: st.hidden_agenda || "",
+      backstory: st.focus || "",
       stance: "neutral",
       personality: { ...EMPTY_PERSONALITY },
-      hidden_agenda: "",
+      hidden_agenda: st.hidden_agenda || "",
       tools: [],
     }]);
   };
