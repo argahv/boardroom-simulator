@@ -7,7 +7,7 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulationV2, streamSimulationV2, postmortemV2, exportSimulation } from "@/lib/api";
+import { fetchSimulationV2, fetchSimulationTurns, streamSimulationV2, postmortemV2, exportSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
 import type { SimulationV2Config } from "@/lib/types";
 
@@ -100,6 +100,18 @@ export default function WarRoomPage({ params }: PageProps) {
         setConfig(data.config ?? null);
         if (data.status === "complete") {
           setIsReplay(true);
+          fetchSimulationTurns(id).then((turns) => {
+            const mapped = (turns as Array<Record<string, unknown>>).map((t) => ({
+              turn_index: Number(t.turn_index ?? 0),
+              speaker: String(t.speaker ?? ""),
+              speaker_role: t.speaker_role ? String(t.speaker_role) : t.role ? String(t.role) : undefined,
+              content: String(t.content ?? ""),
+              stance: t.stance ? String(t.stance) : undefined,
+              reasoning: t.internal_reasoning ? String(t.internal_reasoning) : undefined,
+              action_type: t.action_type ? String(t.action_type) : undefined,
+            }));
+            setTurns(mapped);
+          }).catch(() => {});
         } else {
           startStream();
         }
@@ -136,12 +148,12 @@ export default function WarRoomPage({ params }: PageProps) {
         const evt = event as Record<string, unknown>;
         if (evt.type === "turn") {
           const turn: V2Turn = {
-            turn_index: Number(evt.turn_index ?? turns.length),
-            speaker: String(evt.speaker ?? ""),
-            speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : undefined,
+            turn_index: Number(evt.turn_index ?? evt._index ?? turns.length),
+            speaker: String(evt.speaker ?? evt.agent_name ?? ""),
+            speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : evt.agent_role ? String(evt.agent_role) : undefined,
             content: String(evt.content ?? ""),
             stance: evt.stance ? String(evt.stance) : undefined,
-            reasoning: evt.reasoning ? String(evt.reasoning) : undefined,
+            reasoning: evt.reasoning ? String(evt.reasoning) : evt.internal_reasoning ? String(evt.internal_reasoning) : undefined,
             action_type: evt.action_type ? String(evt.action_type) : undefined,
           };
           setTurns((prev) => {
