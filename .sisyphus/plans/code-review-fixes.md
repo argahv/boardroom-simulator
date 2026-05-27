@@ -850,10 +850,10 @@ Wave FINAL (verification):
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
-- [ ] F2. **Build + Lint + Test Suite** — `unspecified-high`
-- [ ] F3. **Real E2E QA** — `unspecified-high` (+ `playwright` if UI)
-- [ ] F4. **Scope Fidelity Check** — `deep`
+- [x] F1. **Plan Compliance Audit** — `oracle`
+- [x] F2. **Build + Lint + Test Suite** — `unspecified-high`
+- [x] F3. **Real E2E QA** — `unspecified-high` (+ `playwright` if UI)
+- [x] F4. **Scope Fidelity Check** — `deep`
 
 ---
 

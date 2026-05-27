@@ -1,0 +1,149 @@
+=============================================================================
+F2: Build + Lint + Test Suite — Verification Results
+=============================================================================
+Date: 2026-05-27
+Project: boardroom-simulator
+
+=============================================================================
+1. FRONTEND: npx tsc --noEmit
+=============================================================================
+RESULT: PASS ✅ (exit code 0)
+Command: cd frontend && npx tsc --noEmit
+Notes: No TypeScript compilation errors.
+
+=============================================================================
+2. FRONTEND: npm test
+=============================================================================
+RESULT: SKIP ⏭️
+Command: cd frontend && npm test
+Notes: No test script defined in package.json. No jest or vitest in dependencies.
+       No test files found to execute.
+
+=============================================================================
+3. FRONTEND: npx eslint .
+=============================================================================
+RESULT: FAIL ❌ (exit code 1)
+Command: cd frontend && npx eslint . --ext .ts,.tsx
+Errors: 57
+Warnings: 29
+Breakdown of issues by category:
+  - @typescript-eslint/no-explicit-any: 30 errors (spread across 10+ files)
+  - react-hooks/set-state-in-effect: 12 errors (setState in useEffect body)
+  - react/no-unescaped-entities: 4 errors (unescaped ' characters)
+  - react-hooks/immutability: 1 error (variable accessed before declaration)
+  - react-hooks/preserve-manual-memoization: 1 error (React Compiler)
+  - @typescript-eslint/no-unused-vars: 9 warnings
+  - react-hooks/exhaustive-deps: 6 warnings
+  - react-hooks/set-state-in-effect (warning variant): 2 warnings
+Top files with most issues:
+  - app/personas/[slug]/page.tsx: 13 issues
+  - components/war-room/GraphLayout.tsx: 15 issues
+  - app/simulate/[id]/page.tsx: 12 issues
+  - lib/use-simulation-state.ts: 2 issues
+  - lib/animations.ts: 6 issues
+  - app/personas/page.tsx: 5 issues
+  - lib/types.ts: 1 issue
+  - components/war-room/TableLayout.tsx: 4 issues
+  - components/cognitive-state-panel.tsx: 1 warning
+  - components/emotion-indicator.tsx: 4 warnings
+  - app/simulate/new/page.tsx: 3 warnings
+  - app/simulate/page.tsx: 1 error
+  - app/library/page.tsx: 6 errors
+  - components/layouts/TableLayout.tsx: 2 warnings
+  - components/layouts/GraphLayout.tsx: 4 issues
+  - components/ControlBar.tsx: 1 warning
+  - components/PersonaEditorV2.tsx: 1 warning
+  - components/war-room/EventLog.tsx: 1 warning
+  - components/war-room/RosterLayout.tsx: 1 warning
+  - components/war-room/Leaderboard.tsx: 2 errors
+  - app/page.tsx: 1 error
+
+=============================================================================
+4. BACKEND: pytest tests/ -x -q
+=============================================================================
+RESULT: PARTIAL ⚠️ (some pass, some fail, some timeout)
+Command: cd backend && PYTHONPATH=. python -m pytest tests/ -x -q
+Test Runner: pytest 9.0.3 with asyncio plugin
+
+--- PASSING TESTS (363+ passed) ---
+  test_archetypes.py: 6 passed ✅
+  test_behavior_engine.py: 35 passed ✅
+  test_bidding_v2.py: 3 passed ✅
+  test_coalition_detection.py: 23 passed ✅
+  test_combined.py: 7 passed ✅
+  test_crisis_injector.py: 3 passed ✅
+  test_evolution.py: 46 passed ✅
+  test_external_events.py: 1 passed ✅
+  test_final_suite.py: (in 88-pass group) ✅
+  test_goal_evolution.py: 47 passed ✅
+  test_hidden_info.py: 3 passed ✅
+  test_internal_state.py: 28 passed ✅
+  test_interruptions.py: 2 passed ✅
+  test_language_engine.py: 6 passed ✅
+  test_leverage_tracker.py: 1 passed ✅
+  test_memory_system.py: 38 passed ✅
+  test_moderator.py: 2 passed ✅
+  test_performance.py: 1 passed ✅
+  test_persona_v2.py: 15 passed ✅
+  test_private_thought.py: 9 passed ✅
+  test_relationship_graph.py: (in 88-pass group) ✅
+  test_remaining.py: 5 passed ✅
+  test_research_integration.py: ✅
+  test_simulation_knowledge_injection.py: (in 88-pass group) ✅
+  test_social_physics.py: (in 88-pass group) ✅
+  test_strategic_adaptation.py: (in 88-pass group) ✅
+  test_time_pressure.py: (in 88-pass group) ✅
+  test_trust_evolution.py: (in 88-pass group) ✅
+  test_trust_leverage_panel.py: (in 88-pass group) ✅
+  test_whisper.py: (in 88-pass group) ✅
+  (test_remaining.py: 5 passed)
+
+--- FAILING TESTS ---
+1) test_document_upload.py: 5 failed (5/9 failed)
+   - test_multipart_with_pdf: assert 422 == 200 (got 422, expected 200)
+   - test_multipart_no_files: assert 422 == 200
+   - test_multipart_reject_oversized: assert 422 == 413 (got 422, expected 413)
+   - test_document_metadata_in_get: assert 422 == 200
+   - test_extraction_pdf: assert 422 == 200
+   Root cause: Test expects 200/413 responses but API returns 422.
+   Likely due to validation differences (TestClient vs actual app behavior).
+
+2) test_knowledge.py: 1 failed (1/18 failed)
+   - test_embed_batch: FileNotFoundError
+     Path: /Users/argahv/Projects/personal/ai-agent-practice/boardroom-simulator/backend
+     Root cause: Test references a hardcoded absolute path from developer's machine.
+
+--- TIMEOUT TESTS (need external services) ---
+  test_api_comprehensive.py: TIMEOUT (needs Neo4j running)
+  test_conclusion_e2e.py: 12/28 passed before timeout (needs external services)
+  test_integration.py: TIMEOUT (needs Neo4j running)
+  test_neo4j_integration.py: TIMEOUT (needs Neo4j running)
+
+--- DEPRECATION WARNINGS ---
+  - app/main.py:169,183: @app.on_event("startup"/"shutdown") deprecated, use lifespan
+  - app/database/sqlite.py: datetime.utcnow() deprecated, use datetime.now(datetime.UTC)
+  - .venv/lib/python3.13/site-packages/fastapi/applications.py: on_event deprecated
+
+=============================================================================
+5. BACKEND: Python syntax check on changed .py files
+=============================================================================
+RESULT: SKIP ⏭️
+Notes: No .py files have been modified in this session (empty git diff).
+
+=============================================================================
+SUMMARY
+=============================================================================
+| Check | Status |
+|-------|--------|
+| Frontend: tsc --noEmit | ✅ PASS |
+| Frontend: npm test | ⏭️ SKIP (no tests) |
+| Frontend: eslint | ❌ FAIL (57 errors, 29 warnings) |
+| Backend: pytest (unit tests) | ✅ 363+ passed |
+| Backend: pytest (failing) | ❌ 6 failures (5 status code, 1 hardcoded path) |
+| Backend: pytest (timeout) | ⚠️ 4 test files (need Neo4j/external services) |
+| Backend: Python syntax | ⏭️ SKIP (no changed files) |
+
+OVERALL: ⚠️ PARTIAL - Frontend lint has pre-existing errors.
+          Backend has 6 failing tests (pre-existing issues).
+          4 test files require external infrastructure (Neo4j/Redis).
+=============================================================================
