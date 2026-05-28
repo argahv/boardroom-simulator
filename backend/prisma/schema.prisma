@@ -256,7 +256,7 @@ model turns {
 
 model agent_goals {
   id            String       @id
-  simulation_id String
+  simulation_id String       @db.Uuid
   agent_id      String
   turn_index    Int
   goal_text     String
@@ -270,7 +270,7 @@ model agent_goals {
 }
 
 model postmortems {
-  simulation_id   String       @id
+  simulation_id   String       @id @db.Uuid
   postmortem_json Json
   created_at      DateTime     @default(now()) @db.Timestamptz(6)
   simulation      simulations  @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
@@ -278,7 +278,7 @@ model postmortems {
 
 model state_snapshots {
   id            String       @id
-  simulation_id String
+  simulation_id String       @db.Uuid
   turn_index    Int
   snapshot_json Json
   version       Int          @default(1)

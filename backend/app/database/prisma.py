@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import prisma.errors
-from prisma import PrismaClient
+from prisma import Prisma
 from prisma.fields import Json as PrismaJson
 
 from app.models import (
@@ -57,14 +57,14 @@ class PrismaBackend(DatabaseBackend):
     """Prisma-based implementation of DatabaseBackend using prisma-client-py."""
 
     def __init__(self) -> None:
-        self._client: Optional[PrismaClient] = None
+        self._client: Optional[Prisma] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def initialize(self) -> None:
-        self._client = PrismaClient()
+        self._client = Prisma()
         await self._client.connect()
         logger.info("PrismaBackend connected to PostgreSQL")
 
@@ -74,7 +74,7 @@ class PrismaBackend(DatabaseBackend):
             self._client = None
             logger.info("PrismaBackend disconnected")
 
-    def _client_or_raise(self) -> PrismaClient:
+    def _client_or_raise(self) -> Prisma:
         if self._client is None:
             raise RuntimeError("PrismaBackend not initialised — call initialize() first")
         return self._client
@@ -930,11 +930,64 @@ class PrismaBackend(DatabaseBackend):
         count = await client.scenario_templates.count(where={"id": template_id})
         return count > 0
 
+    async def _lookup_stakeholders(self, persona_ids: list[str]) -> list[dict]:
+        client = self._client_or_raise()
+        rows = []
+        for pid in persona_ids:
+            row = await client.stakeholders.find_first(where={"id": pid})
+            if row:
+                rows.append(row)
+        return [
+            {
+                "id": r.id,
+                "name": r.name,
+                "role": r.role or "",
+                "backstory": r.backstory or "",
+                "stance": r.stance or "neutral",
+                "personality": {
+                    "aggressiveness": 50,
+                    "empathy": 50,
+                    "stubbornness": 50,
+                    "verbosity": 50,
+                },
+                "hidden_agenda": r.hidden_agenda or "",
+                "tools": [],
+                "inject_knowledge": None,
+            }
+            for r in rows
+        ]
+
     async def list_templates_catalog(self) -> list[dict]:
         client = self._client_or_raise()
         rows = await client.templates.find_many(order=[{"category": "asc"}, {"name": "asc"}])
         result = []
         for r in rows:
+            cfg = r.config
+            if isinstance(cfg, str):
+                cfg = json.loads(cfg)
+            if "default_background" in cfg:
+                stakeholder_data = await self._lookup_stakeholders(cfg.get("suggested_persona_ids", []))
+                cfg = {
+                    "subject": {
+                        "name": r.name,
+                        "description": cfg.get("default_background", ""),
+                        "attributes": {},
+                        "evidence_items": [],
+                        "stakes_description": cfg.get("default_primary_goal", ""),
+                    },
+                    "stakeholders": stakeholder_data,
+                    "action_space": {"actions": [], "default_trust_deltas": {}, "default_leverage_deltas": {}},
+                    "speaker_rules": {"mode": "weighed_random"},
+                    "end_condition": {"type": "timeout", "max_normal_turns": 20},
+                    "voltage": r.voltage,
+                    "model_temperature": cfg.get("default_model_temperature", "volatile"),
+                    "player_mode": False,
+                    "env_flags": {"hidden_motives": True, "time_pressure": False, "external_leaks": False, "deadlock_risk": False},
+                    "auto_research": True,
+                    "research_topics": [],
+                    "inject_knowledge": True,
+                    "system_prompt_template": "",
+                }
             d = {
                 "slug": r.slug,
                 "name": r.name,
@@ -944,10 +997,8 @@ class PrismaBackend(DatabaseBackend):
                 "estimated_duration": r.estimated_duration,
                 "stakeholder_count": r.stakeholder_count,
                 "voltage": r.voltage,
-                "config": r.config,
+                "config": cfg,
             }
-            if isinstance(d["config"], str):
-                d["config"] = json.loads(d["config"])
             result.append(d)
         return result
 
@@ -956,6 +1007,32 @@ class PrismaBackend(DatabaseBackend):
         row = await client.templates.find_first(where={"slug": slug})
         if not row:
             return None
+        cfg = row.config
+        if isinstance(cfg, str):
+            cfg = json.loads(cfg)
+        if "default_background" in cfg:
+            stakeholder_data = await self._lookup_stakeholders(cfg.get("suggested_persona_ids", []))
+            cfg = {
+                "subject": {
+                    "name": row.name,
+                    "description": cfg.get("default_background", ""),
+                    "attributes": {},
+                    "evidence_items": [],
+                    "stakes_description": cfg.get("default_primary_goal", ""),
+                },
+                "stakeholders": stakeholder_data,
+                "action_space": {"actions": [], "default_trust_deltas": {}, "default_leverage_deltas": {}},
+                "speaker_rules": {"mode": "weighed_random"},
+                "end_condition": {"type": "timeout", "max_normal_turns": 20},
+                "voltage": row.voltage,
+                "model_temperature": cfg.get("default_model_temperature", "volatile"),
+                "player_mode": False,
+                "env_flags": {"hidden_motives": True, "time_pressure": False, "external_leaks": False, "deadlock_risk": False},
+                "auto_research": True,
+                "research_topics": [],
+                "inject_knowledge": True,
+                "system_prompt_template": "",
+            }
         return {
             "slug": row.slug,
             "name": row.name,
@@ -965,7 +1042,7 @@ class PrismaBackend(DatabaseBackend):
             "estimated_duration": row.estimated_duration,
             "stakeholder_count": row.stakeholder_count,
             "voltage": row.voltage,
-            "config": row.config,
+            "config": cfg,
         }
 
     # ------------------------------------------------------------------
@@ -1114,7 +1191,17 @@ class PrismaBackend(DatabaseBackend):
         row = await client.stakeholders.find_first(
             where={"id": persona_id},
         )
-        return self._row_to_persona_detail(row) if row else None
+        if row:
+            return self._row_to_persona_detail(row)
+        p = await client.personas.find_first(where={"id": persona_id})
+        if p:
+            row = await client.stakeholders.find_first(where={"name": p.name})
+            if row:
+                return self._row_to_persona_detail(row)
+        row = await client.stakeholders.find_first(where={"name": persona_id})
+        if row:
+            return self._row_to_persona_detail(row)
+        return None
 
     async def list_personas(self) -> list[dict]:
         """List all personas from the stakeholders table (hasattr-discovered by main.py)."""
