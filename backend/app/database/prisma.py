@@ -1053,9 +1053,19 @@ class PrismaBackend(DatabaseBackend):
         self, simulation_id: str, turn_index: int, snapshot_json: str, version: int = 1
     ) -> str:
         client = self._client_or_raise()
+        sj = json.loads(snapshot_json) if isinstance(snapshot_json, str) else snapshot_json
+        # Upsert: replace any existing snapshot for the same turn
+        existing = await client.state_snapshots.find_first(
+            where={"simulation_id": simulation_id, "turn_index": turn_index},
+        )
+        if existing:
+            await client.state_snapshots.update(
+                where={"id": existing.id},
+                data={"snapshot_json": PrismaJson(sj), "version": version},
+            )
+            return existing.id
         snapshot_id = str(uuid.uuid4())
         now = self._now()
-        sj = json.loads(snapshot_json) if isinstance(snapshot_json, str) else snapshot_json
         await client.state_snapshots.create(data={
             "id": snapshot_id,
             "simulation_id": simulation_id,
@@ -1070,10 +1080,14 @@ class PrismaBackend(DatabaseBackend):
         client = self._client_or_raise()
         rows = await client.state_snapshots.find_many(
             where={"simulation_id": simulation_id},
-            order={"turn_index": "asc"},
+            order={"turn_index": "asc", "created_at": "asc"},
         )
+        seen: set[int] = set()
         result = []
         for r in rows:
+            if r.turn_index in seen:
+                continue
+            seen.add(r.turn_index)
             sj = r.snapshot_json
             if isinstance(sj, str):
                 sj = json.loads(sj)
