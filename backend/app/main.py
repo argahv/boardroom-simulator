@@ -945,9 +945,9 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
         entry = _active_simulations.get(simulation_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Simulation not found")
+        already_complete = entry["status"] == "complete" or entry["status"] == "running"
         if entry["status"] == "running":
-            raise HTTPException(status_code=409, detail="Simulation is already running")
-        already_complete = entry["status"] == "complete"
+            logger.info("SIM_REJOIN simulation_id=%s — client reconnecting to running sim", simulation_id)
         if not already_complete:
             entry["status"] = "running"
 
@@ -982,10 +982,7 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             _be = create_engine([s.id for s in config.stakeholders])
             async for event in run_simulation(config, simulation_id, behavior_engine=_be):
                 if event.get("type") == "done":
-                    # Must yield done AFTER status updates — generator may be cancelled post-yield
                     entry["status"] = "complete"
-                    # Clean up from active simulations to prevent memory leak
-                    _active_simulations.pop(simulation_id, None)
                     try:
                         _db = get_database()
                         if hasattr(_db, 'update_simulation_status'):
@@ -1038,7 +1035,6 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                         logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
 
                     yield f"data: {json.dumps(event)}\n\n"
-                    # Cleanup: remove from active simulations 30s after completion
                     asyncio.create_task(_cleanup_simulation(simulation_id))
                     return
                 yield f"data: {json.dumps(event)}\n\n"
@@ -1058,6 +1054,11 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
         except Exception as exc:
             logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
+        finally:
+            async with _simulations_lock:
+                entry = _active_simulations.get(simulation_id)
+                if entry and entry["status"] == "running":
+                    entry["status"] = "idle"
 
     return StreamingResponse(
         event_stream(),
@@ -1460,6 +1461,12 @@ async def agent_detail(name: str) -> dict:
 
     # Use the persona UUID for all downstream queries
     persona_id = profile["id"]
+    if "slug" not in profile:
+        p_row = await db._client_or_raise().personas.find_first(
+            where={"name": profile.get("name", "")},
+        )
+        if p_row:
+            persona_id = p_row.id
 
     try:
         sims = await db.get_agent_simulations_by_id(persona_id)

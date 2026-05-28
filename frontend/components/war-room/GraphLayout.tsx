@@ -44,11 +44,11 @@ const TAB_CLS = (active: boolean) =>
   }`;
 
 const STANCE_COLORS: Record<string, string> = {
-  champion: "var(--color-primary)",
-  detractor: "var(--color-error)",
-  neutral: "var(--color-muted)",
-  moderator: "var(--color-accent-teal)",
-  wildcard: "var(--color-accent-amber)",
+  champion: "#ed6f5c",
+  detractor: "#ba1a1a",
+  neutral: "#5a5448",
+  moderator: "#3d9e8c",
+  wildcard: "#e9b94a",
 };
 
 const STANCE_LABELS: Record<string, string> = {

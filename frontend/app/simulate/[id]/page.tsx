@@ -58,6 +58,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const [humanError, setHumanError] = useState("");
 
   const streamCtrl = useRef<AbortController | null>(null);
+  const streamStartedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const persistKey = `wr-session-${id}`;
@@ -147,7 +148,8 @@ export default function WarRoomPage({ params }: PageProps) {
   }, [playTurn]);
 
   const startStream = () => {
-    if (status === "running" || isReplay) return;
+    if (status === "running" || isReplay || streamStartedRef.current) return;
+    streamStartedRef.current = true;
     setError("");
     setStatus("running");
     setPlaying(true);

@@ -1184,7 +1184,34 @@ class PrismaBackend(DatabaseBackend):
             order={"created_at": "desc"},
             take=1000,
         )
-        return [self._row_to_persona_detail(r) for r in rows]
+        # Fetch persona stats (sim_count, total_turns) for each stakeholder
+        persona_rows = await client.personas.find_many(take=1000)
+        persona_by_name: dict[str, str] = {p.name: p.id for p in persona_rows if p.name}
+        persona_ids = list(persona_by_name.values())
+        participants = await client.simulation_participants.find_many(
+            where={"persona_id": {"in": persona_ids}},
+            take=10000,
+        )
+        stats_by_pid: dict[str, dict] = {}
+        for p in participants:
+            pid = p.persona_id
+            if pid not in stats_by_pid:
+                stats_by_pid[pid] = {"sim_count": 0, "total_turns": 0}
+            stats_by_pid[pid]["sim_count"] += 1
+            stats_by_pid[pid]["total_turns"] += p.turn_count or 0
+
+        result = []
+        for r in rows:
+            d = self._row_to_persona_detail(r)
+            pid = persona_by_name.get(r.name)
+            if pid and pid in stats_by_pid:
+                d["sim_count"] = stats_by_pid[pid]["sim_count"]
+                d["total_turns"] = stats_by_pid[pid]["total_turns"]
+            else:
+                d["sim_count"] = 0
+                d["total_turns"] = 0
+            result.append(d)
+        return result
 
     async def get_persona_detail(self, persona_id: str) -> dict | None:
         client = self._client_or_raise()
