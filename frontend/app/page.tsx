@@ -69,7 +69,7 @@ export default function Home() {
         clearProps: "transform",
       });
     },
-    { scope: heroRef },
+    { scope: heroRef, dependencies: [loading], revertOnUpdate: true },
   );
 
   // Scenario cards staggered entrance
