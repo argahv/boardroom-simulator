@@ -161,6 +161,14 @@ model simulations {
   total_participants  Int        @default(0)
   created_at          DateTime   @default(now()) @db.Timestamptz(6)
   updated_at          DateTime   @default(now()) @db.Timestamptz(6)
+
+  // ── v1 columns (nullable — used for v1 schema_version rows) ──
+  simulation_id     String?   @unique
+  active_speaker_id String?
+  state_json        Json?
+  runtime_status    String    @default("idle")
+  state_version     Int       @default(0)
+
   templates           templates? @relation(fields: [template_id], references: [id], onUpdate: NoAction)
 
   @@index([created_at(sort: Desc)], map: "idx_simulations_created")
