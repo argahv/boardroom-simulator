@@ -1,4 +1,7 @@
 {
+  "scripts": {
+    "generate": "prisma generate && python scripts/patch_prisma_client.py"
+  },
   "devDependencies": {
     "prisma": "^5.17.0"
   }

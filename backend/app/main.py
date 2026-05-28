@@ -1443,7 +1443,7 @@ async def agent_detail(name: str) -> dict:
     except AttributeError:
         sims, turns = [], []
     try:
-        from .database.postgres import get_agent_memories_by_id as _get_memories
+        from .database import get_agent_memories_by_id as _get_memories
         memories = await _get_memories(db, persona_id)
     except Exception:
         memories = []
