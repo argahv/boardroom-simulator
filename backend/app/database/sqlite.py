@@ -338,7 +338,7 @@ class SQLiteBackend(DatabaseBackend):
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
-    # v2 State Snapshots
+    # State Snapshots
     # ------------------------------------------------------------------
 
     async def create_state_snapshot(
@@ -588,7 +588,7 @@ class SQLiteBackend(DatabaseBackend):
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    # Persona Growth System (v2)
+    # Persona Growth System
     # ------------------------------------------------------------------
 
     def _row_to_persona_detail(self, row: sqlite3.Row) -> dict:

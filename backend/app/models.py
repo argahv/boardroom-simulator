@@ -203,7 +203,7 @@ class SimulationState(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# v2 — Agentic Architecture Models (user-defined config, engine has zero opinions)
+# Agentic Architecture Models (user-defined config, engine has zero opinions)
 # ═══════════════════════════════════════════════════════════════════════
 
 class Subject(BaseModel):

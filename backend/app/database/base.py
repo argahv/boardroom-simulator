@@ -101,7 +101,7 @@ class DatabaseBackend(ABC):
         pass
 
     # ------------------------------------------------------------------
-    # v2 State Snapshots
+    # State Snapshots
     # ------------------------------------------------------------------
 
     @abstractmethod

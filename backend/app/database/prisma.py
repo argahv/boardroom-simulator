@@ -969,7 +969,7 @@ class PrismaBackend(DatabaseBackend):
         }
 
     # ------------------------------------------------------------------
-    # v2 State Snapshots
+    # State Snapshots
     # ------------------------------------------------------------------
 
     async def create_state_snapshot(
@@ -1098,7 +1098,7 @@ class PrismaBackend(DatabaseBackend):
         await client.document_uploads.delete_many(where={"simulation_id": simulation_id})
 
     # ------------------------------------------------------------------
-    # Persona Growth System (v2)
+    # Persona Growth System
     # ------------------------------------------------------------------
 
     async def list_personas_v2(self) -> list[dict]:

@@ -196,7 +196,7 @@ class PostgresBackend(DatabaseBackend):
         async with self._pool.acquire() as conn:
             await conn.execute(_SCHEMA_SQL)
             await self._migrate(conn)
-            await self._migrate_v2_schema(conn)
+            await self._migrate_unified_schema(conn)
         logger.info("PostgreSQL schema initialised.")
 
     async def _migrate(self, conn: asyncpg.Connection) -> None:
@@ -215,9 +215,9 @@ class PostgresBackend(DatabaseBackend):
             except Exception as exc:
                 logger.warning("Migration ALTER TABLE stakeholders %s skipped: %s", col_name, exc)
 
-    async def _migrate_v2_schema(self, conn: asyncpg.Connection) -> None:
-        """Idempotent additions for v2 unified schema (simulation_participants, turns, v2 columns)."""
-        # Add v2 columns to simulations table
+    async def _migrate_unified_schema(self, conn: asyncpg.Connection) -> None:
+        """Idempotent additions for unified schema (simulation_participants, turns, new columns)."""
+        # Add columns to simulations table
         for col_name, col_def in [
             ("id", "UUID DEFAULT gen_random_uuid()"),
             ("subject_name", "TEXT NOT NULL DEFAULT ''"),
@@ -258,7 +258,7 @@ class PostgresBackend(DatabaseBackend):
             )
         """)
 
-        # Create turns table (v2 unified)
+        # Create turns table (unified)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS turns (
                 id                      BIGSERIAL PRIMARY KEY,
@@ -493,7 +493,7 @@ class PostgresBackend(DatabaseBackend):
                 template.default_voltage, template.default_model_temperature,
                 json.dumps(template.suggested_persona_ids), now, now,
             )
-            # Also write to new templates table (dual-write for v2 API)
+            # Also write to new templates table (dual-write for API)
             await conn.execute(
                 """INSERT INTO templates (slug, name, description, category, difficulty,
                    estimated_duration, stakeholder_count, voltage, config, created_at, updated_at)
@@ -938,7 +938,7 @@ class PostgresBackend(DatabaseBackend):
 
 
     # ------------------------------------------------------------------
-    # v2 State Snapshots
+    # State Snapshots
     # ------------------------------------------------------------------
 
     async def create_state_snapshot(
@@ -1073,7 +1073,7 @@ class PostgresBackend(DatabaseBackend):
         )
 
     # ------------------------------------------------------------------
-    # Persona Growth System (v2)
+    # Persona Growth System
     # ------------------------------------------------------------------
 
     @staticmethod

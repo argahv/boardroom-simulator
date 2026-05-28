@@ -241,7 +241,7 @@ def _transcript(state: SimulationState, max_turns: int = 30) -> str:
 
 @app.get("/health")
 def health() -> dict[str, str | bool]:
-    return {"status": "ok", "v2": True}
+    return {"status": "ok", "unified": True}
 
 
 # ── Stakeholders (DB-backed) ─────────────────────────────────────────────
@@ -252,7 +252,7 @@ async def list_stakeholders_api() -> list[dict]:
     try:
         if hasattr(db, 'list_personas_v2'):
             personas = await db.list_personas_v2()
-            logger.info("list_stakeholders (v2): %d personas", len(personas))
+            logger.info("list_stakeholders (detail): %d personas", len(personas))
             return personas
         if hasattr(db, 'list_personas'):
             return await db.list_personas()
@@ -268,8 +268,8 @@ async def create_stakeholder_api(payload: Stakeholder) -> dict:
     sid = str(uuid4())
     s = payload.model_copy(update={"id": sid})
     await db.create_stakeholder(s)
-    has_v2 = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
-    logger.info("create_stakeholder %s (v2=%s): name=%s role=%s", sid, has_v2, s.name, s.role)
+    has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
+    logger.info("create_stakeholder %s (detail=%s): name=%s role=%s", sid, has_detail, s.name, s.role)
     return s.model_dump()
 
 @app.put("/stakeholders/{stakeholder_id}")
@@ -280,8 +280,8 @@ async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> d
         raise HTTPException(status_code=404, detail="Stakeholder not found")
     s = payload.model_copy(update={"id": stakeholder_id})
     await db.update_stakeholder(s)
-    has_v2 = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
-    logger.info("update_stakeholder %s (v2=%s): name=%s role=%s", stakeholder_id, has_v2, s.name, s.role)
+    has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
+    logger.info("update_stakeholder %s (detail=%s): name=%s role=%s", stakeholder_id, has_detail, s.name, s.role)
     return s.model_dump()
 
 @app.delete("/stakeholders/{stakeholder_id}", status_code=204)
@@ -615,6 +615,7 @@ from .database import get_database
 
 # Active streams — in-memory tracking for live SSE sessions
 _active_simulations: dict[str, dict] = {}
+_simulations_lock = asyncio.Lock()
 
 def _extract_memory_type(content: str, action_type: str) -> str | None:
     """Extract memory type from a negotiation turn.
@@ -759,7 +760,8 @@ async def _trigger_pre_simulation_research(config: SimulationConfig, simulation_
 async def create_simulation_handler(payload: SimulationConfig) -> dict:
     simulation_id = str(uuid4())
     config_json = payload.model_dump(mode="json")
-    _active_simulations[simulation_id] = {"config": config_json, "status": "idle"}
+    async with _simulations_lock:
+        _active_simulations[simulation_id] = {"config": config_json, "status": "idle"}
     logger.info(
         "SIM_CREATE simulation_id=%s stakeholders=%d subject=%s",
         simulation_id,
@@ -812,7 +814,8 @@ async def create_simulation_with_documents(
             )
     # --- End validation ---
 
-    _active_simulations[simulation_id] = {"config": config_json, "status": "idle", "documents": []}
+    async with _simulations_lock:
+        _active_simulations[simulation_id] = {"config": config_json, "status": "idle", "documents": []}
     logger.info(
         "DOC_SIM_CREATE simulation_id=%s files=%d subject=%s",
         simulation_id,
@@ -938,11 +941,16 @@ async def create_simulation_with_documents(
 
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
-    entry = _active_simulations.get(simulation_id)
-    if entry is None:
-        raise HTTPException(status_code=404, detail="Simulation not found")
+    async with _simulations_lock:
+        entry = _active_simulations.get(simulation_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+        if entry["status"] == "running":
+            raise HTTPException(status_code=409, detail="Simulation is already running")
+        already_complete = entry["status"] == "complete"
+        if not already_complete:
+            entry["status"] = "running"
 
-    already_complete = entry["status"] == "complete"
     config = SimulationConfig(**entry["config"])
 
     # Inject document context into system prompt if available
@@ -953,9 +961,6 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             if config.system_prompt_template
             else doc_ctx
         )
-
-    if not already_complete:
-        entry["status"] = "running"
 
     async def event_stream():
         try:
@@ -979,6 +984,8 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                 if event.get("type") == "done":
                     # Must yield done AFTER status updates — generator may be cancelled post-yield
                     entry["status"] = "complete"
+                    # Clean up from active simulations to prevent memory leak
+                    _active_simulations.pop(simulation_id, None)
                     try:
                         _db = get_database()
                         if hasattr(_db, 'update_simulation_status'):
@@ -1031,6 +1038,8 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                         logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
 
                     yield f"data: {json.dumps(event)}\n\n"
+                    # Cleanup: remove from active simulations 30s after completion
+                    asyncio.create_task(_cleanup_simulation(simulation_id))
                     return
                 yield f"data: {json.dumps(event)}\n\n"
                 if event.get("type") == "turn":
@@ -1544,5 +1553,12 @@ async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
     turn = await space.inject_turn(stakeholder.name, content)
     await _save_turn(simulation_id, turn.get("turn_index", 0), json.dumps(turn))
     return {"status": "ok", "turn": turn}
+
+
+async def _cleanup_simulation(simulation_id: str, delay: float = 30.0) -> None:
+    """Remove simulation from active dict after a delay (allows replay during that window)."""
+    await asyncio.sleep(delay)
+    async with _simulations_lock:
+        _active_simulations.pop(simulation_id, None)
 
 
