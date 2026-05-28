@@ -1,12 +1,17 @@
+import logging
 import os
 from typing import Optional
 
 from .base import DatabaseBackend
 from .sqlite import SQLiteBackend
 from .postgres import PostgresBackend
+from .prisma import PrismaBackend, get_agent_memories_by_id
 
+logger = logging.getLogger("boardroom.db")
 
 _db_instance: Optional[DatabaseBackend] = None
+
+__all__ = ["get_database", "initialize_database", "close_database", "get_agent_memories_by_id"]
 
 
 def get_database() -> DatabaseBackend:
@@ -17,7 +22,10 @@ def get_database() -> DatabaseBackend:
     
     db_type = os.getenv("DATABASE_TYPE", "sqlite").lower()
     
-    if db_type == "postgres" or db_type == "postgresql":
+    if db_type == "prisma":
+        _db_instance = PrismaBackend()
+    elif db_type == "postgres" or db_type == "postgresql":
+        logger.warning("DEPRECATED: PostgresBackend will be removed in a future release — use DATABASE_TYPE=prisma instead")
         _db_instance = PostgresBackend(
             host=os.getenv("POSTGRES_HOST", "localhost"),
             port=int(os.getenv("POSTGRES_PORT", "5432")),
@@ -26,6 +34,7 @@ def get_database() -> DatabaseBackend:
             database=os.getenv("POSTGRES_DATABASE", "boardroom")
         )
     else:
+        logger.warning("DEPRECATED: SQLiteBackend will be removed in a future release — use DATABASE_TYPE=prisma instead")
         db_path = os.getenv("SQLITE_PATH", "./data/boardroom.db")
         _db_instance = SQLiteBackend(db_path=db_path)
     
