@@ -12,15 +12,16 @@ datasource db {
 }
 
 model document_uploads {
-  id             String   @id
-  simulation_id  String
+  id             String      @id
+  simulation_id  String      @db.Uuid
   filename       String
-  content_type   String   @default("application/octet-stream")
-  file_size      Int      @default(0)
-  status         String   @default("pending")
+  content_type   String      @default("application/octet-stream")
+  file_size      Int         @default(0)
+  status         String      @default("pending")
   extracted_text String?
-  created_at     DateTime @default(now()) @db.Timestamptz(6)
-  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+  created_at     DateTime    @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime    @default(now()) @db.Timestamptz(6)
+  simulation     simulations @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
 
   @@index([simulation_id], map: "idx_doc_uploads_sim")
 }
@@ -36,7 +37,7 @@ model persona_documents {
   extracted_text String?
   embedding_id   String?
   created_at     DateTime     @default(now()) @db.Timestamptz(6)
-  stakeholders   stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stakeholders   stakeholders @relation(fields: [persona_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([persona_id], map: "idx_persona_docs_pid")
 }
@@ -50,7 +51,7 @@ model persona_evolution {
   status          String       @default("pending")
   applied_at      DateTime?    @db.Timestamptz(6)
   created_at      DateTime     @default(now()) @db.Timestamptz(6)
-  stakeholders    stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stakeholders    stakeholders @relation(fields: [persona_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([persona_id], map: "idx_persona_evo_pid")
   @@index([status], map: "idx_persona_evo_status")
@@ -62,7 +63,7 @@ model persona_research {
   query        String       @default("")
   results      Json         @default("[]")
   created_at   DateTime     @default(now()) @db.Timestamptz(6)
-  stakeholders stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  stakeholders stakeholders @relation(fields: [persona_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([persona_id], map: "idx_persona_research_pid")
 }
@@ -114,6 +115,7 @@ model semantic_memories {
   created_at              DateTime                @default(now()) @db.Timestamptz(6)
   simulation_participants simulation_participants @relation(fields: [participant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
   turns                   turns?                  @relation(fields: [turn_id], references: [id], onUpdate: NoAction)
+  simulation              simulations             @relation(fields: [simulation_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
   @@index([participant_id], map: "idx_semantic_memories_participant")
   @@index([simulation_id], map: "idx_semantic_memories_simulation")
@@ -136,7 +138,8 @@ model simulation_participants {
   last_turn_index                                                 Int?
   created_at                                                      DateTime            @default(now()) @db.Timestamptz(6)
   semantic_memories                                               semantic_memories[]
-  personas                                                        personas?           @relation(fields: [persona_id], references: [id], onUpdate: NoAction)
+  simulation                                                      simulations         @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
+  personas                                                        personas?           @relation(fields: [persona_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
   turns_turns_directed_to_participant_idTosimulation_participants turns[]             @relation("turns_directed_to_participant_idTosimulation_participants")
   turns_turns_participant_idTosimulation_participants             turns[]             @relation("turns_participant_idTosimulation_participants")
 
@@ -146,30 +149,36 @@ model simulation_participants {
 
 /// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
 model simulations {
-  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  template_id         String?    @db.Uuid
-  subject_name        String     @default("")
-  subject_description String     @default("")
-  status              String     @default("idle")
-  voltage             Int        @default(50)
-  model_temperature   String     @default("volatile")
-  speaker_mode        String     @default("alternating")
-  end_condition       Json       @default("{\"type\": \"timeout\", \"max_turns\": 20}")
-  config              Json       @default("{}")
-  metadata            Json       @default("{}")
-  total_turns         Int        @default(0)
-  total_participants  Int        @default(0)
-  created_at          DateTime   @default(now()) @db.Timestamptz(6)
-  updated_at          DateTime   @default(now()) @db.Timestamptz(6)
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_id         String?  @db.Uuid
+  subject_name        String   @default("")
+  subject_description String   @default("")
+  status              String   @default("idle")
+  voltage             Int      @default(50)
+  model_temperature   String   @default("volatile")
+  speaker_mode        String   @default("alternating")
+  end_condition       Json     @default("{\"type\": \"timeout\", \"max_turns\": 20}")
+  config              Json     @default("{}")
+  metadata            Json     @default("{}")
+  total_turns         Int      @default(0)
+  total_participants  Int      @default(0)
+  created_at          DateTime @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime @default(now()) @db.Timestamptz(6)
 
   // ── v1 columns (nullable — used for v1 schema_version rows) ──
-  simulation_id     String?   @unique
+  simulation_id     String? @unique
   active_speaker_id String?
   state_json        Json?
-  runtime_status    String    @default("idle")
-  state_version     Int       @default(0)
+  runtime_status    String  @default("idle")
+  state_version     Int     @default(0)
 
-  templates           templates? @relation(fields: [template_id], references: [id], onUpdate: NoAction)
+  templates               templates?                @relation(fields: [template_id], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  document_uploads        document_uploads[]
+  simulation_participants simulation_participants[]
+  semantic_memories       semantic_memories[]
+  agent_goals             agent_goals[]
+  postmortems             postmortems[]
+  state_snapshots         state_snapshots[]
 
   @@index([created_at(sort: Desc)], map: "idx_simulations_created")
   @@index([created_at(sort: Desc)], map: "idx_simulations_created_at")
@@ -245,58 +254,36 @@ model turns {
   @@index([simulation_id, participant_id], map: "idx_turns_sim_participant")
 }
 
-model v2_agent_goals {
-  id            String @id
+model agent_goals {
+  id            String       @id
   simulation_id String
   agent_id      String
   turn_index    Int
   goal_text     String
-  priority      Float  @db.Real
+  priority      Float        @db.Real
   source        String
-  is_active     Int    @default(1)
+  is_active     Int          @default(1)
+  simulation    simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
 
   @@index([agent_id], map: "idx_agent_goals_agent")
   @@index([simulation_id], map: "idx_agent_goals_sim")
 }
 
-model v2_postmortems {
-  simulation_id   String   @id
+model postmortems {
+  simulation_id   String       @id
   postmortem_json Json
-  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  simulation      simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
 }
 
-model v2_simulations {
-  simulation_id      String               @id
-  config_json        Json
-  status             String               @default("idle")
-  created_at         DateTime             @default(now()) @db.Timestamptz(6)
-  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
-  v2_state_snapshots v2_state_snapshots[]
-  v2_turns           v2_turns[]
-
-  @@index([status], map: "idx_v2_simulations_status")
-}
-
-model v2_state_snapshots {
-  id             String         @id
-  simulation_id  String
-  turn_index     Int
-  snapshot_json  Json
-  version        Int            @default(1)
-  created_at     DateTime       @default(now()) @db.Timestamptz(6)
-  v2_simulations v2_simulations @relation(fields: [simulation_id], references: [simulation_id], onDelete: NoAction, onUpdate: NoAction)
+model state_snapshots {
+  id            String       @id
+  simulation_id String
+  turn_index    Int
+  snapshot_json Json
+  version       Int          @default(1)
+  created_at    DateTime     @default(now()) @db.Timestamptz(6)
+  simulation    simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
 
   @@index([simulation_id, turn_index], map: "idx_snapshots_sim_turn")
-}
-
-model v2_turns {
-  id             Int            @id @default(autoincrement())
-  simulation_id  String
-  turn_index     Int
-  turn_json      Json
-  created_at     DateTime       @default(now()) @db.Timestamptz(6)
-  v2_simulations v2_simulations @relation(fields: [simulation_id], references: [simulation_id], onDelete: NoAction, onUpdate: NoAction)
-
-  @@index([simulation_id, turn_index], map: "idx_v2_turns_sim")
-  @@index([simulation_id, created_at], map: "idx_v2_turns_sim_created")
 }

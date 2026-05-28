@@ -82,56 +82,30 @@ class SQLiteBackend(DatabaseBackend):
             )
         """)
 
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS v2_simulations (
-                simulation_id TEXT PRIMARY KEY,
-                config_json TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'idle',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
-            )
-        """)
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS v2_turns (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                simulation_id TEXT NOT NULL,
-                turn_index INTEGER NOT NULL,
-                turn_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
-            )
-        """)
-
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_simulations_status ON simulations(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_simulations_created ON simulations(created_at DESC)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_stakeholders_tag ON stakeholders(tag)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_simulations_status ON v2_simulations(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim ON v2_turns(simulation_id, turn_index)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_v2_turns_sim_created ON v2_turns(simulation_id, created_at)")
 
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS v2_postmortems (
+            CREATE TABLE IF NOT EXISTS postmortems (
                 simulation_id TEXT PRIMARY KEY,
                 postmortem_json TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
+                created_at TEXT NOT NULL
             )
         """)
 
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS v2_state_snapshots (
+            CREATE TABLE IF NOT EXISTS state_snapshots (
                 id TEXT PRIMARY KEY,
                 simulation_id TEXT NOT NULL,
                 turn_index INTEGER NOT NULL,
                 snapshot_json TEXT NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1,
-                created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                FOREIGN KEY (simulation_id) REFERENCES v2_simulations(simulation_id)
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         """)
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON v2_state_snapshots(simulation_id, turn_index)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON state_snapshots(simulation_id, turn_index)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS document_uploads (
@@ -151,7 +125,7 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_uploads_sim ON document_uploads(simulation_id)")
 
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS v2_agent_goals (
+            CREATE TABLE IF NOT EXISTS agent_goals (
                 id TEXT PRIMARY KEY,
                 simulation_id TEXT NOT NULL,
                 agent_id TEXT NOT NULL,
@@ -163,8 +137,8 @@ class SQLiteBackend(DatabaseBackend):
             )
         """)
 
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON agent_goals(agent_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON agent_goals(simulation_id)")
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS persona_documents (
@@ -258,10 +232,10 @@ class SQLiteBackend(DatabaseBackend):
             cursor.execute("ALTER TABLE simulations ADD COLUMN state_version INTEGER NOT NULL DEFAULT 0")
         self.conn.commit()
 
-        cursor.execute("PRAGMA table_info(v2_agent_goals)")
+        cursor.execute("PRAGMA table_info(agent_goals)")
         if not cursor.fetchall():
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS v2_agent_goals (
+                CREATE TABLE IF NOT EXISTS agent_goals (
                     id TEXT PRIMARY KEY,
                     simulation_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
@@ -272,8 +246,8 @@ class SQLiteBackend(DatabaseBackend):
                     is_active INTEGER NOT NULL DEFAULT 1
                 )
             """)
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON v2_agent_goals(simulation_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON agent_goals(agent_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_agent_goals_sim ON agent_goals(simulation_id)")
             self.conn.commit()
 
         cursor.execute("PRAGMA table_info(persona_documents)")
@@ -379,51 +353,6 @@ class SQLiteBackend(DatabaseBackend):
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
-    # v2 Simulations
-    # ------------------------------------------------------------------
-
-    async def create_v2_simulation(self, simulation_id: str, config_json: str) -> None:
-        cursor = self.conn.cursor()
-        now = datetime.utcnow().isoformat()
-        cursor.execute(
-            "INSERT INTO v2_simulations (simulation_id, config_json, status, created_at, updated_at) VALUES (?, ?, 'idle', ?, ?)",
-            (simulation_id, config_json, now, now),
-        )
-        self.conn.commit()
-
-    async def get_v2_simulation(self, simulation_id: str) -> Optional[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT config_json, status FROM v2_simulations WHERE simulation_id = ?", (simulation_id,))
-        row = cursor.fetchone()
-        return {"config": json.loads(row["config_json"]), "status": row["status"]} if row else None
-
-    async def update_v2_simulation_status(self, simulation_id: str, status: str) -> None:
-        cursor = self.conn.cursor()
-        now = datetime.utcnow().isoformat()
-        cursor.execute(
-            "UPDATE v2_simulations SET status = ?, updated_at = ? WHERE simulation_id = ?",
-            (status, now, simulation_id),
-        )
-        self.conn.commit()
-
-    async def insert_v2_turn(self, simulation_id: str, turn_index: int, turn_json: str) -> None:
-        cursor = self.conn.cursor()
-        now = datetime.utcnow().isoformat()
-        cursor.execute(
-            "INSERT INTO v2_turns (simulation_id, turn_index, turn_json, created_at) VALUES (?, ?, ?, ?)",
-            (simulation_id, turn_index, turn_json, now),
-        )
-        self.conn.commit()
-
-    async def get_v2_turns(self, simulation_id: str, from_index: int = 0) -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT turn_json, turn_index FROM v2_turns WHERE simulation_id = ? AND turn_index >= ? ORDER BY turn_index ASC",
-            (simulation_id, from_index),
-        )
-        return [json.loads(row["turn_json"]) for row in cursor.fetchall()]
-
-    # ------------------------------------------------------------------
     # v2 State Snapshots
     # ------------------------------------------------------------------
 
@@ -434,7 +363,7 @@ class SQLiteBackend(DatabaseBackend):
         snapshot_id = uuid.uuid4().hex
         now = datetime.utcnow().isoformat()
         cursor.execute(
-            "INSERT INTO v2_state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
             (snapshot_id, simulation_id, turn_index, snapshot_json, version, now),
         )
         self.conn.commit()
@@ -443,7 +372,7 @@ class SQLiteBackend(DatabaseBackend):
     async def get_state_snapshots_by_simulation(self, simulation_id: str) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = ? ORDER BY turn_index ASC",
+            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM state_snapshots WHERE simulation_id = ? ORDER BY turn_index ASC",
             (simulation_id,),
         )
         return [
@@ -461,7 +390,7 @@ class SQLiteBackend(DatabaseBackend):
     async def get_latest_state_snapshot(self, simulation_id: str) -> Optional[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
-            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = ? ORDER BY turn_index DESC LIMIT 1",
+            "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM state_snapshots WHERE simulation_id = ? ORDER BY turn_index DESC LIMIT 1",
             (simulation_id,),
         )
         row = cursor.fetchone()
@@ -476,103 +405,13 @@ class SQLiteBackend(DatabaseBackend):
             "created_at": row["created_at"],
         }
 
-    # ------------------------------------------------------------------
-    # Agent Goals
-    # ------------------------------------------------------------------
-
-    async def insert_agent_goal(self, goal_id: str, simulation_id: str, agent_id: str,
-                                 turn_index: int, goal_text: str, priority: float,
-                                 source: str, is_active: bool = True) -> None:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "INSERT INTO v2_agent_goals (id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (goal_id, simulation_id, agent_id, turn_index, goal_text, priority, source, 1 if is_active else 0),
-        )
-        self.conn.commit()
-
-    async def get_agent_goals_by_id(self, persona_id: str) -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active FROM v2_agent_goals WHERE agent_id = ? ORDER BY priority DESC, turn_index DESC",
-            (persona_id,),
-        )
-        return [dict(row) for row in cursor.fetchall()]
-
-    async def get_agent_simulations_by_id(self, persona_id: str) -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            "SELECT DISTINCT simulation_id FROM v2_turns WHERE json_extract(turn_json, '$.agent_id') = ?",
-            (persona_id,),
-        )
-        sim_ids = [row["simulation_id"] for row in cursor.fetchall()]
-        results = []
-        for sim_id in sim_ids:
-            cursor.execute(
-                "SELECT simulation_id, config_json, status FROM v2_simulations WHERE simulation_id = ?",
-                (sim_id,),
-            )
-            sim_row = cursor.fetchone()
-            if not sim_row:
-                continue
-            config = json.loads(sim_row["config_json"])
-            subject = config.get("subject", {})
-            cursor.execute(
-                "SELECT COUNT(*) as cnt FROM v2_turns WHERE simulation_id = ? AND json_extract(turn_json, '$.agent_id') = ?",
-                (sim_id, persona_id),
-            )
-            cnt_row = cursor.fetchone()
-            agent_turns = cnt_row["cnt"] if cnt_row else 0
-            results.append({
-                "id": sim_id,
-                "subject_name": subject.get("name", ""),
-                "status": sim_row["status"],
-                "voltage": config.get("voltage", 50),
-                "total_turns": agent_turns,
-                "turn_count": agent_turns,
-                "stance": "neutral",
-                "role": "",
-                "first_turn_index": 0,
-                "last_turn_index": max(0, agent_turns - 1),
-                "created_at": "",
-            })
-        return results
-
-    async def get_agent_turns_by_id(self, persona_id: str, limit: int = 50) -> list[dict]:
-        cursor = self.conn.cursor()
-        cursor.execute(
-            """SELECT vt.turn_json, vs.config_json
-               FROM v2_turns vt
-               JOIN v2_simulations vs ON vt.simulation_id = vs.simulation_id
-               WHERE json_extract(vt.turn_json, '$.agent_id') = ?
-               ORDER BY vt.created_at DESC
-               LIMIT ?""",
-            (persona_id, limit),
-        )
-        results = []
-        for row in cursor.fetchall():
-            turn = json.loads(row["turn_json"])
-            config = json.loads(row["config_json"])
-            subject = config.get("subject", {})
-            results.append({
-                "turn_index": turn.get("turn_index", 0),
-                "participant_turn_index": turn.get("turn_index", 0),
-                "content": turn.get("content", ""),
-                "action_type": turn.get("action_type", "statement"),
-                "stance": turn.get("stance", "neutral"),
-                "emotional_state": {},
-                "internal_reasoning": turn.get("internal_reasoning", turn.get("reasoning", "")),
-                "created_at": "",
-                "subject_name": subject.get("name", ""),
-            })
-        return results
-
     async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            DELETE FROM v2_state_snapshots
+            DELETE FROM state_snapshots
             WHERE simulation_id = ? AND id NOT IN (
-                SELECT id FROM v2_state_snapshots
+                SELECT id FROM state_snapshots
                 WHERE simulation_id = ?
                 ORDER BY turn_index DESC
                 LIMIT ?
@@ -970,9 +809,9 @@ class SQLiteBackend(DatabaseBackend):
     async def get_all_turns_count(self, simulation_id: str | None = None) -> int:
         cursor = self.conn.cursor()
         if simulation_id:
-            cursor.execute("SELECT COUNT(*) FROM v2_turns WHERE simulation_id = ?", (simulation_id,))
+            cursor.execute("SELECT COUNT(*) FROM turns WHERE simulation_id = ?", (simulation_id,))
         else:
-            cursor.execute("SELECT COUNT(*) FROM v2_turns")
+            cursor.execute("SELECT COUNT(*) FROM turns")
         row = cursor.fetchone()
         return row[0] if row else 0
 

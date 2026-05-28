@@ -257,70 +257,6 @@ class PrismaBackend(DatabaseBackend):
             return False
 
     # ------------------------------------------------------------------
-    # v2 Simulations (v2_simulations table)
-    # ------------------------------------------------------------------
-
-    async def create_v2_simulation(self, simulation_id: str, config_json: str) -> None:
-        client = self._client_or_raise()
-        now = self._now()
-        cfg = json.loads(config_json) if isinstance(config_json, str) else config_json
-        await client.v2_simulations.create(data={
-            "simulation_id": simulation_id,
-            "config_json": PrismaJson(cfg),
-            "status": "idle",
-            "created_at": now,
-            "updated_at": now,
-        })
-
-    async def get_v2_simulation(self, simulation_id: str) -> Optional[dict]:
-        client = self._client_or_raise()
-        row = await client.v2_simulations.find_first(
-            where={"simulation_id": simulation_id},
-        )
-        if row is None:
-            return None
-        cfg = row.config_json
-        if isinstance(cfg, str):
-            cfg = json.loads(cfg)
-        return {"config": cfg, "status": row.status}
-
-    async def update_v2_simulation_status(self, simulation_id: str, status: str) -> None:
-        client = self._client_or_raise()
-        now = self._now()
-        try:
-            await client.v2_simulations.update(
-                where={"simulation_id": simulation_id},
-                data={"status": status, "updated_at": now},
-            )
-        except Exception:
-            pass
-
-    async def insert_v2_turn(self, simulation_id: str, turn_index: int, turn_json: str) -> None:
-        client = self._client_or_raise()
-        now = self._now()
-        tj = json.loads(turn_json) if isinstance(turn_json, str) else turn_json
-        await client.v2_turns.create(data={
-            "simulation_id": simulation_id,
-            "turn_index": turn_index,
-            "turn_json": PrismaJson(tj),
-            "created_at": now,
-        })
-
-    async def get_v2_turns(self, simulation_id: str, from_index: int = 0) -> list[dict]:
-        client = self._client_or_raise()
-        rows = await client.v2_turns.find_many(
-            where={"simulation_id": simulation_id, "turn_index": {"gte": from_index}},
-            order={"id": "asc"},
-        )
-        result = []
-        for r in rows:
-            tj = r.turn_json
-            if isinstance(tj, str):
-                tj = json.loads(tj)
-            result.append(tj)
-        return result
-
-    # ------------------------------------------------------------------
     # Postmortem methods
     # ------------------------------------------------------------------
 
@@ -328,7 +264,7 @@ class PrismaBackend(DatabaseBackend):
         client = self._client_or_raise()
         now = self._now()
         pj = json.loads(postmortem_json) if isinstance(postmortem_json, str) else postmortem_json
-        await client.v2_postmortems.upsert(
+        await client.postmortems.upsert(
             where={"simulation_id": simulation_id},
             data={
                 "create": {
@@ -345,7 +281,7 @@ class PrismaBackend(DatabaseBackend):
 
     async def get_postmortem(self, simulation_id: str) -> Optional[str]:
         client = self._client_or_raise()
-        row = await client.v2_postmortems.find_first(
+        row = await client.postmortems.find_first(
             where={"simulation_id": simulation_id},
         )
         if row is None:
@@ -684,50 +620,6 @@ class PrismaBackend(DatabaseBackend):
         return result
 
     # ------------------------------------------------------------------
-    # Agent Goals
-    # ------------------------------------------------------------------
-
-    async def insert_agent_goal(
-        self, goal_id: str, simulation_id: str, agent_id: str,
-        turn_index: int, goal_text: str, priority: float,
-        source: str, is_active: bool = True,
-    ) -> None:
-        client = self._client_or_raise()
-        try:
-            await client.v2_agent_goals.create(data={
-                "id": goal_id,
-                "simulation_id": simulation_id,
-                "agent_id": agent_id,
-                "turn_index": turn_index,
-                "goal_text": goal_text,
-                "priority": priority,
-                "source": source,
-                "is_active": 1 if is_active else 0,
-            })
-        except Exception:
-            pass  # ON CONFLICT DO NOTHING equivalent
-
-    async def get_agent_goals_by_id(self, persona_id: str) -> list[dict]:
-        client = self._client_or_raise()
-        rows = await client.v2_agent_goals.find_many(
-            where={"agent_id": persona_id},
-            order=[{"priority": "desc"}, {"turn_index": "desc"}],
-        )
-        return [
-            {
-                "id": r.id,
-                "simulation_id": r.simulation_id,
-                "agent_id": r.agent_id,
-                "turn_index": r.turn_index,
-                "goal_text": r.goal_text,
-                "priority": r.priority,
-                "source": r.source,
-                "is_active": r.is_active,
-            }
-            for r in rows
-        ]
-
-    # ------------------------------------------------------------------
     # Semantic memory
     # ------------------------------------------------------------------
 
@@ -756,7 +648,7 @@ class PrismaBackend(DatabaseBackend):
         where: dict[str, Any] = {}
         if simulation_id is not None:
             where["simulation_id"] = simulation_id
-        return await client.v2_turns.count(where=where or None)
+        return await client.turns.count(where=where or None)
 
     # ------------------------------------------------------------------
     # Stakeholders
@@ -1000,7 +892,7 @@ class PrismaBackend(DatabaseBackend):
         snapshot_id = str(uuid.uuid4())
         now = self._now()
         sj = json.loads(snapshot_json) if isinstance(snapshot_json, str) else snapshot_json
-        await client.v2_state_snapshots.create(data={
+        await client.state_snapshots.create(data={
             "id": snapshot_id,
             "simulation_id": simulation_id,
             "turn_index": turn_index,
@@ -1012,7 +904,7 @@ class PrismaBackend(DatabaseBackend):
 
     async def get_state_snapshots_by_simulation(self, simulation_id: str) -> list[dict]:
         client = self._client_or_raise()
-        rows = await client.v2_state_snapshots.find_many(
+        rows = await client.state_snapshots.find_many(
             where={"simulation_id": simulation_id},
             order={"turn_index": "asc"},
         )
@@ -1033,7 +925,7 @@ class PrismaBackend(DatabaseBackend):
 
     async def get_latest_state_snapshot(self, simulation_id: str) -> Optional[dict]:
         client = self._client_or_raise()
-        row = await client.v2_state_snapshots.find_first(
+        row = await client.state_snapshots.find_first(
             where={"simulation_id": simulation_id},
             order={"turn_index": "desc"},
         )
@@ -1054,21 +946,21 @@ class PrismaBackend(DatabaseBackend):
     async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
         client = self._client_or_raise()
         # Get IDs to keep (latest max_keep by turn_index DESC)
-        keep = await client.v2_state_snapshots.find_many(
+        keep = await client.state_snapshots.find_many(
             where={"simulation_id": simulation_id},
             order={"turn_index": "desc"},
             take=max_keep,
         )
         keep_ids = [k.id for k in keep]
         if keep_ids:
-            await client.v2_state_snapshots.delete_many(
+            await client.state_snapshots.delete_many(
                 where={
                     "simulation_id": simulation_id,
                     "id": {"not_in": keep_ids},
                 },
             )
         else:
-            await client.v2_state_snapshots.delete_many(
+            await client.state_snapshots.delete_many(
                 where={"simulation_id": simulation_id},
             )
 

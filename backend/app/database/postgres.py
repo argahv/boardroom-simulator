@@ -71,50 +71,28 @@ CREATE TABLE IF NOT EXISTS simulations (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE IF NOT EXISTS v2_simulations (
-    simulation_id TEXT PRIMARY KEY,
-    config_json   JSONB NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'idle',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS v2_turns (
-    id            SERIAL PRIMARY KEY,
-    simulation_id TEXT NOT NULL REFERENCES v2_simulations(simulation_id),
-    turn_index    INTEGER NOT NULL,
-    turn_json     JSONB NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 CREATE INDEX IF NOT EXISTS idx_simulations_status    ON simulations(status);
 CREATE INDEX IF NOT EXISTS idx_simulations_created    ON simulations(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stakeholders_tag       ON stakeholders(tag);
-CREATE INDEX IF NOT EXISTS idx_v2_simulations_status  ON v2_simulations(status);
-CREATE INDEX IF NOT EXISTS idx_v2_turns_sim           ON v2_turns(simulation_id, turn_index);
-CREATE INDEX IF NOT EXISTS idx_v2_turns_sim_created ON v2_turns(simulation_id, created_at);
 
-CREATE TABLE IF NOT EXISTS v2_postmortems (
+CREATE TABLE IF NOT EXISTS postmortems (
     simulation_id   TEXT PRIMARY KEY,
     postmortem_json JSONB NOT NULL,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Migration: drop FK if it exists from earlier schema versions
-ALTER TABLE v2_postmortems DROP CONSTRAINT IF EXISTS v2_postmortems_simulation_id_fkey;
-
-CREATE TABLE IF NOT EXISTS v2_state_snapshots (
+CREATE TABLE IF NOT EXISTS state_snapshots (
     id            TEXT PRIMARY KEY,
-    simulation_id TEXT NOT NULL REFERENCES v2_simulations(simulation_id),
+    simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id),
     turn_index    INTEGER NOT NULL,
     snapshot_json JSONB NOT NULL,
     version       INTEGER NOT NULL DEFAULT 1,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON v2_state_snapshots(simulation_id, turn_index);
+CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON state_snapshots(simulation_id, turn_index);
 
-CREATE TABLE IF NOT EXISTS v2_agent_goals (
+CREATE TABLE IF NOT EXISTS agent_goals (
     id            TEXT PRIMARY KEY,
     simulation_id TEXT NOT NULL,
     agent_id      TEXT NOT NULL,
@@ -125,8 +103,8 @@ CREATE TABLE IF NOT EXISTS v2_agent_goals (
     is_active     INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON v2_agent_goals(agent_id);
-CREATE INDEX IF NOT EXISTS idx_agent_goals_sim  ON v2_agent_goals(simulation_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goals_agent ON agent_goals(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_goals_sim  ON agent_goals(simulation_id);
 
 CREATE TABLE IF NOT EXISTS persona_documents (
     id            TEXT PRIMARY KEY,
@@ -521,61 +499,6 @@ class PostgresBackend(DatabaseBackend):
             suggested_persona_ids=json.loads(row["suggested_persona_ids"] or "[]"),
         )
 
-    # ------------------------------------------------------------------
-    # v2 Simulations
-    # ------------------------------------------------------------------
-
-    async def create_v2_simulation(self, simulation_id: str, config_json: str) -> None:
-        pool = self._pool_or_raise()
-        now = self._now()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO v2_simulations (simulation_id, config_json, status, created_at, updated_at)
-                   VALUES ($1, $2::jsonb, 'idle', $3, $4)""",
-                simulation_id, config_json, now, now,
-            )
-
-    async def get_v2_simulation(self, simulation_id: str) -> Optional[dict]:
-        pool = self._pool_or_raise()
-        async with pool.acquire() as conn:
-            row = await conn.fetchrow(
-                "SELECT config_json, status FROM v2_simulations WHERE simulation_id = $1",
-                simulation_id,
-            )
-        if row is None:
-            return None
-        cfg = row["config_json"]
-        if isinstance(cfg, str):
-            cfg = json.loads(cfg)
-        return {"config": cfg, "status": row["status"]}
-
-    async def update_v2_simulation_status(self, simulation_id: str, status: str) -> None:
-        pool = self._pool_or_raise()
-        now = self._now()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "UPDATE v2_simulations SET status = $1, updated_at = $2 WHERE simulation_id = $3",
-                status, now, simulation_id,
-            )
-
-    async def insert_v2_turn(self, simulation_id: str, turn_index: int, turn_json: str) -> None:
-        pool = self._pool_or_raise()
-        now = self._now()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                "INSERT INTO v2_turns (simulation_id, turn_index, turn_json, created_at) VALUES ($1, $2, $3::jsonb, $4)",
-                simulation_id, turn_index, turn_json, now,
-            )
-
-    async def get_v2_turns(self, simulation_id: str, from_index: int = 0) -> list[dict]:
-        pool = self._pool_or_raise()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT turn_json, turn_index FROM v2_turns WHERE simulation_id = $1 AND turn_index >= $2 ORDER BY id ASC",
-                simulation_id, from_index,
-            )
-        return [r["turn_json"] if isinstance(r["turn_json"], dict) else json.loads(r["turn_json"]) for r in rows]
-
     # ── New Schema Queries (agent detail view) ─────────────────────────────
 
     # ── New Schema: Templates ──────────────────────────────────────────────
@@ -917,7 +840,7 @@ class PostgresBackend(DatabaseBackend):
         now = datetime.now(timezone.utc)
         async with pool.acquire() as conn:
             await conn.execute("""
-                INSERT INTO v2_postmortems (simulation_id, postmortem_json, created_at)
+                INSERT INTO postmortems (simulation_id, postmortem_json, created_at)
                 VALUES ($1, $2::jsonb, $3)
                 ON CONFLICT (simulation_id) DO UPDATE SET
                     postmortem_json = $2::jsonb,
@@ -928,7 +851,7 @@ class PostgresBackend(DatabaseBackend):
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT postmortem_json FROM v2_postmortems WHERE simulation_id = $1",
+                "SELECT postmortem_json FROM postmortems WHERE simulation_id = $1",
                 simulation_id,
             )
             if row:
@@ -949,7 +872,7 @@ class PostgresBackend(DatabaseBackend):
         now = self._now()
         async with pool.acquire() as conn:
             await conn.execute(
-                """INSERT INTO v2_state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at)
+                """INSERT INTO state_snapshots (id, simulation_id, turn_index, snapshot_json, version, created_at)
                    VALUES ($1, $2, $3, $4::jsonb, $5, $6)""",
                 snapshot_id, simulation_id, turn_index, snapshot_json, version, now,
             )
@@ -959,7 +882,7 @@ class PostgresBackend(DatabaseBackend):
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             rows = await conn.fetch(
-                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = $1 ORDER BY turn_index ASC",
+                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM state_snapshots WHERE simulation_id = $1 ORDER BY turn_index ASC",
                 simulation_id,
             )
         result = []
@@ -974,7 +897,7 @@ class PostgresBackend(DatabaseBackend):
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM v2_state_snapshots WHERE simulation_id = $1 ORDER BY turn_index DESC LIMIT 1",
+                "SELECT id, simulation_id, turn_index, snapshot_json, version, created_at FROM state_snapshots WHERE simulation_id = $1 ORDER BY turn_index DESC LIMIT 1",
                 simulation_id,
             )
         if row is None:
@@ -989,9 +912,9 @@ class PostgresBackend(DatabaseBackend):
         async with pool.acquire() as conn:
             await conn.execute(
                 """
-                DELETE FROM v2_state_snapshots
+                DELETE FROM state_snapshots
                 WHERE simulation_id = $1 AND id NOT IN (
-                    SELECT id FROM v2_state_snapshots
+                    SELECT id FROM state_snapshots
                     WHERE simulation_id = $2
                     ORDER BY turn_index DESC
                     LIMIT $3
@@ -1000,31 +923,6 @@ class PostgresBackend(DatabaseBackend):
                 simulation_id, simulation_id, max_keep,
             )
 
-
-    # ------------------------------------------------------------------
-    # Agent Goals
-    # ------------------------------------------------------------------
-
-    async def insert_agent_goal(self, goal_id: str, simulation_id: str, agent_id: str,
-                                 turn_index: int, goal_text: str, priority: float,
-                                 source: str, is_active: bool = True) -> None:
-        pool = self._pool_or_raise()
-        async with pool.acquire() as conn:
-            await conn.execute(
-                """INSERT INTO v2_agent_goals (id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active)
-                   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                   ON CONFLICT (id) DO NOTHING""",
-                goal_id, simulation_id, agent_id, turn_index, goal_text, priority, source, 1 if is_active else 0,
-            )
-
-    async def get_agent_goals_by_id(self, persona_id: str) -> list[dict]:
-        pool = self._pool_or_raise()
-        async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT id, simulation_id, agent_id, turn_index, goal_text, priority, source, is_active FROM v2_agent_goals WHERE agent_id = $1 ORDER BY priority DESC, turn_index DESC",
-                persona_id,
-            )
-            return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Document uploads
@@ -1333,9 +1231,9 @@ class PostgresBackend(DatabaseBackend):
         async with pool.acquire() as conn:
             if simulation_id:
                 row = await conn.fetchval(
-                    "SELECT COUNT(*) FROM v2_turns WHERE simulation_id = $1", simulation_id)
+                    "SELECT COUNT(*) FROM turns WHERE simulation_id = $1", simulation_id)
             else:
-                row = await conn.fetchval("SELECT COUNT(*) FROM v2_turns")
+                row = await conn.fetchval("SELECT COUNT(*) FROM turns")
             return row or 0
 
 
