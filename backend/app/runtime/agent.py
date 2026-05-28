@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable
 
 from app.knowledge import get_knowledge_store
-from app.models import AgentStance, SimulationV2Config, StakeholderV2
+from app.models import AgentStance, SimulationConfig, AgentConfig
 from app.runtime.space import SharedSpace
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ class AgentRuntime:
 
     def __init__(
         self,
-        config: StakeholderV2,
+        config: AgentConfig,
         space: SharedSpace,
         llm: LLMFunc,
         system_prompt_template: str,

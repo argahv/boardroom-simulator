@@ -30,10 +30,10 @@ os.environ["SQLITE_PATH"] = os.path.join(tempfile.gettempdir(), f"boardroom_test
 
 import pytest
 from app.models import (
-    Subject, StakeholderV2, PersonalityProfile,
+    Subject, AgentConfig, PersonalityProfile,
     ActionSpace, CustomActionDef, SpeakerRules,
     VoteCondition, TimeoutCondition, ConsensusCondition, JudgeCondition,
-    SimulationV2Config, Postmortem, TerminationResult,
+    SimulationConfig, Postmortem, TerminationResult,
     ActionType,
 )
 from app.runtime.space import SharedSpace
@@ -41,7 +41,7 @@ from app.runtime.scheduler import (
     Scheduler, VoteChecker, SocialPhysicsChecker, TimeoutChecker,
     TerminationContext, EndConditionRegistry,
 )
-from app.runtime.simulation import run_simulation_v2
+from app.runtime.simulation import run_simulation
 from app.runtime.postmortem_generator import (
     PostmortemGenerator, TopicTracker, PositionTracker,
     KeyMomentDetector, SocialDynamicsAggregator,
@@ -108,18 +108,18 @@ async def mock_llm_walkaway(messages, temperature=0.6, simulation_id=None, turn_
 # Test Configurations
 # ═══════════════════════════════════════════════════════════════════════
 
-def make_config_vote() -> SimulationV2Config:
+def make_config_vote() -> SimulationConfig:
     """Config that uses VoteCondition — agents reach consensus via vote."""
-    return SimulationV2Config(
+    return SimulationConfig(
         subject=Subject(name="Partnership Terms", description="Negotiate revenue split and governance"),
         stakeholders=[
-            StakeholderV2(id="alpha", name="Alpha", role="CEO", stance="champion",
+            AgentConfig(id="alpha", name="Alpha", role="CEO", stance="champion",
                 personality=PersonalityProfile(aggressiveness=70, verbosity=60)),
-            StakeholderV2(id="beta", name="Beta", role="CFO", stance="detractor",
+            AgentConfig(id="beta", name="Beta", role="CFO", stance="detractor",
                 personality=PersonalityProfile(empathy=40, stubbornness=80)),
-            StakeholderV2(id="charlie", name="Charlie", role="Moderator", stance="moderator",
+            AgentConfig(id="charlie", name="Charlie", role="Moderator", stance="moderator",
                 personality=PersonalityProfile(verbosity=50, empathy=80)),
-            StakeholderV2(id="diana", name="Diana", role="Analyst", stance="neutral",
+            AgentConfig(id="diana", name="Diana", role="Analyst", stance="neutral",
                 personality=PersonalityProfile(aggressiveness=40, empathy=70)),
         ],
         action_space=ActionSpace(),
@@ -130,16 +130,16 @@ def make_config_vote() -> SimulationV2Config:
     )
 
 
-def make_config_consensus() -> SimulationV2Config:
+def make_config_consensus() -> SimulationConfig:
     """Config that uses ConsensusCondition — detects agreement from social physics."""
-    return SimulationV2Config(
+    return SimulationConfig(
         subject=Subject(name="Merger Timeline", description="Decide on merger timeline"),
         stakeholders=[
-            StakeholderV2(id="urgent", name="Urgent", role="VP Ops", stance="champion",
+            AgentConfig(id="urgent", name="Urgent", role="VP Ops", stance="champion",
                 personality=PersonalityProfile(aggressiveness=80, verbosity=30)),
-            StakeholderV2(id="cautious", name="Cautious", role="Legal", stance="detractor",
+            AgentConfig(id="cautious", name="Cautious", role="Legal", stance="detractor",
                 personality=PersonalityProfile(stubbornness=90, empathy=30)),
-            StakeholderV2(id="neutral1", name="Neutral", role="Advisor", stance="neutral",
+            AgentConfig(id="neutral1", name="Neutral", role="Advisor", stance="neutral",
                 personality=PersonalityProfile(verbosity=50)),
         ],
         action_space=ActionSpace(),
@@ -541,7 +541,7 @@ class TestFullConclusionCycle:
         cfg = make_config_vote()
         cfg.speaker_rules.mode = "freeform"
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-vote-test"):
+        async for event in run_simulation(cfg, simulation_id="e2e-vote-test"):
             events.append(event)
 
         # 1. Verify done event was emitted
@@ -596,7 +596,7 @@ class TestFullConclusionCycle:
         cfg = make_config_consensus()
         cfg.speaker_rules.mode = "freeform"
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-walkaway"):
+        async for event in run_simulation(cfg, simulation_id="e2e-walkaway"):
             events.append(event)
 
         done_events = [e for e in events if e.get("type") == "done"]
@@ -631,7 +631,7 @@ class TestFullConclusionCycle:
 
         cfg = make_config_vote()
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-postmortem"):
+        async for event in run_simulation(cfg, simulation_id="e2e-postmortem"):
             events.append(event)
 
         done_events = [e for e in events if e.get("type") == "done"]
@@ -651,7 +651,7 @@ class TestFullConclusionCycle:
 async def test_database_persistence():
     """Verify simulation data is persisted to the database correctly."""
     from app.database import initialize_database, get_database, close_database
-    from app.models import SimulationV2Config
+    from app.models import SimulationConfig
 
     await initialize_database()
     db = get_database()
@@ -749,7 +749,7 @@ async def test_agent_behavior_full_trace(monkeypatch):
     cfg = make_config_vote()
     cfg.speaker_rules.mode = "freeform"
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="agent-trace"):
+    async for event in run_simulation(cfg, simulation_id="agent-trace"):
         events.append(event)
 
     print("\n\n  ════════════════════════════════════════════════")
@@ -818,7 +818,7 @@ async def test_simulation_with_behavior_engine(monkeypatch):
     be = make_engine([s.id for s in cfg.stakeholders])
 
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="e2e-with-be", behavior_engine=be):
+    async for event in run_simulation(cfg, simulation_id="e2e-with-be", behavior_engine=be):
         events.append(event)
 
     # Verify state snapshots

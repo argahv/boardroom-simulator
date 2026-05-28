@@ -4,7 +4,7 @@ import { useMemo, useRef, useCallback } from "react";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { NarrativeTimeline } from "./NarrativeTimeline";
-import { TranscriptStream, type V2Turn } from "./TranscriptStream";
+import { TranscriptStream, type Turn } from "./TranscriptStream";
 import { EventLog } from "./EventLog";
 import { IncentiveHeatmap } from "./IncentiveHeatmap";
 import { SentimentGraph } from "./SentimentGraph";
@@ -37,12 +37,12 @@ interface EventLogEntry {
 
 interface RosterLayoutProps {
   turn: number;
-  current?: V2Turn;
+  current?: Turn;
   playing: boolean;
   stakeholders: RosterStakeholder[];
   speakerId: string | null;
   eventLog: EventLogEntry[];
-  turns: V2Turn[];
+  turns: Turn[];
   scrollRef: React.RefObject<HTMLDivElement | null>;
   totalTurns: number;
   simState?: SimulationStateData;

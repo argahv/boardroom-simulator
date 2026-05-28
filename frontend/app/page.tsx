@@ -8,7 +8,7 @@ import gsap from "gsap";
 
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { createSimulationV2, fetchTemplates, type TemplateListItem } from "@/lib/api";
+import { createSimulation, fetchTemplates, type TemplateListItem } from "@/lib/api";
 
 export default function Home() {
   const router = useRouter();
@@ -19,13 +19,13 @@ export default function Home() {
   useEffect(() => {
     fetchTemplates()
       .then(setTemplates)
-      .catch(() => {})
+      .catch((err) => console.error("Failed to load:", err))
       .finally(() => setLoading(false));
   }, []);
 
   const launchSim = async (t: TemplateListItem) => {
     if (!t.config) return;
-    const { simulation_id } = await createSimulationV2(t.config as any);
+    const { simulation_id } = await createSimulation(t.config as any);
     router.push(`/simulate/${simulation_id}`);
   };
 

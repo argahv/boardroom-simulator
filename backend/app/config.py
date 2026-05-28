@@ -17,6 +17,10 @@ OPENROUTER_EMBEDDING_MODEL = os.getenv(
 OPENROUTER_HTTP_REFERRER = os.getenv("OPENROUTER_HTTP_REFERRER", "").strip()
 OPENROUTER_APP_TITLE = os.getenv("OPENROUTER_APP_TITLE", "Boardroom Simulator").strip()
 
+CORS_ORIGINS: list[str] = [
+    o.strip() for o in os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",")
+]
+
 MAX_TURNS = int(os.getenv("MAX_TURNS", "20"))
 
 # Reliability controls

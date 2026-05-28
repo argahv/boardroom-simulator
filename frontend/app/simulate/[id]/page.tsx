@@ -7,13 +7,13 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulationV2, fetchSimulationTurns, streamSimulationV2, postmortemV2, injectV2Turn, exportSimulation } from "@/lib/api";
+import { fetchSimulation, fetchSimulationTurns, streamSimulation, fetchPostmortem, injectTurn, exportSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
-import type { SimulationV2Config } from "@/lib/types";
+import type { SimulationConfig } from "@/lib/types";
 
 type PageProps = { params: Promise<{ id: string }> };
 
-type V2Turn = {
+type Turn = {
   turn_index: number;
   speaker: string;
   speaker_role?: string;
@@ -30,8 +30,8 @@ type V2Turn = {
 export default function WarRoomPage({ params }: PageProps) {
   const { id } = use(params);
 
-  const [config, setConfig] = useState<SimulationV2Config | null>(null);
-  const [turns, setTurns] = useState<V2Turn[]>([]);
+  const [config, setConfig] = useState<SimulationConfig | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [status, setStatus] = useState<PlaybackStatus>("idle");
   const [error, setError] = useState("");
   const [layout, setLayout] = useState<WarRoomLayout>("roster");
@@ -104,7 +104,7 @@ export default function WarRoomPage({ params }: PageProps) {
   }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey, isReplay]);
 
   useEffect(() => {
-    fetchSimulationV2(id)
+    fetchSimulation(id)
       .then((data) => {
         setConfig(data.config ?? null);
         if (data.status === "complete") {
@@ -151,12 +151,12 @@ export default function WarRoomPage({ params }: PageProps) {
     setError("");
     setStatus("running");
     setPlaying(true);
-    streamCtrl.current = streamSimulationV2(
+    streamCtrl.current = streamSimulation(
       id,
       (event) => {
         const evt = event as Record<string, unknown>;
         if (evt.type === "turn") {
-          const turn: V2Turn = {
+          const turn: Turn = {
             turn_index: Number(evt.turn_index ?? evt._index ?? turns.length),
             speaker: String(evt.speaker ?? evt.agent_name ?? ""),
             speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : evt.agent_role ? String(evt.agent_role) : undefined,
@@ -172,7 +172,7 @@ export default function WarRoomPage({ params }: PageProps) {
           });
         } else if (evt.type === "system") {
           setTurns((prev) => {
-            const systemTurn: V2Turn = {
+            const systemTurn: Turn = {
               turn_index: prev.length,
               speaker: "⚙ System",
               content: String(evt.content ?? ""),
@@ -217,7 +217,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const loadPostmortem = async () => {
     setLoadingPostmortem(true);
     try {
-      const result = await postmortemV2(id);
+      const result = await fetchPostmortem(id);
       setPostmortem(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Postmortem failed");
@@ -231,7 +231,7 @@ export default function WarRoomPage({ params }: PageProps) {
     setSendingHumanTurn(true);
     setHumanError("");
     const stakeholder = config?.stakeholders.find((s) => s.id === selectedStakeholder);
-    const optimisticTurn: V2Turn = {
+    const optimisticTurn: Turn = {
       turn_index: turns.length,
       speaker: stakeholder?.name ?? "Human",
       speaker_role: stakeholder?.role,
@@ -242,7 +242,7 @@ export default function WarRoomPage({ params }: PageProps) {
     setPlayTurn((t) => t + 1);
     setHumanContent("");
     try {
-      await injectV2Turn(id, selectedStakeholder, humanContent.trim());
+      await injectTurn(id, selectedStakeholder, humanContent.trim());
     } catch (err) {
       setHumanError(err instanceof Error ? err.message : "Failed to send");
       setTurns((prev) => prev.filter((t) => t !== optimisticTurn));

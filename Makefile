@@ -1,4 +1,4 @@
-.PHONY: help install backend frontend worker-sim worker-postmortem workers dev
+.PHONY: help install backend frontend worker-sim worker-postmortem workers dev db-generate
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -17,6 +17,7 @@ help:
 	@echo "  make worker-sim       Run simulation RQ worker"
 	@echo "  make worker-postmortem  Run postmortem RQ worker"
 	@echo "  make workers          Run both workers in parallel"
+	@echo "  make db-generate      Regenerate Prisma client and apply patches"
 	@echo "  make dev              Run backend + frontend + both workers"
 	@echo ""
 
@@ -27,6 +28,9 @@ install:
 	@echo "→ Installing frontend dependencies..."
 	cd $(FRONTEND_DIR) && npm install --silent
 	@echo "✓ Done"
+
+db-generate:  # Regenerate Prisma client and apply patches
+	cd backend && npm run generate
 
 backend:
 	@echo "→ Starting backend on :8000"

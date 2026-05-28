@@ -12,7 +12,7 @@ os.environ["OPENROUTER_API_KEY"] = ""  # mock mode
 import pytest
 from app.database import close_database, initialize_database
 from app.models import (
-    SimulationV2Config, Subject, StakeholderV2, PersonalityProfile,
+    SimulationConfig, Subject, AgentConfig, PersonalityProfile,
     ActionSpace, SpeakerRules,
 )
 
@@ -31,7 +31,7 @@ def fresh_db():
 @pytest.fixture
 def config():
     """Simulation config with 1 stakeholder that has inject_knowledge enabled."""
-    return SimulationV2Config(
+    return SimulationConfig(
         subject=Subject(
             name="M&A Test",
             description="A test merger negotiation between two companies",
@@ -39,7 +39,7 @@ def config():
             evidence_items=["Market conditions are favorable"],
         ),
         stakeholders=[
-            StakeholderV2(
+            AgentConfig(
                 id="agent-1",
                 name="Alice",
                 role="CEO",
@@ -69,8 +69,8 @@ class TestSimulationKnowledgeInjection:
         assert config.inject_knowledge is True
 
     def test_stakeholder_v2_has_inject_knowledge(self):
-        """Verify StakeholderV2 has per-agent inject_knowledge override."""
-        s = StakeholderV2(id="t1", name="T", role="T")
+        """Verify AgentConfig has per-agent inject_knowledge override."""
+        s = AgentConfig(id="t1", name="T", role="T")
         assert hasattr(s, "inject_knowledge")
         assert s.inject_knowledge is None  # None = use global default
 

@@ -1,9 +1,9 @@
 import importlib.util, sys
 from pathlib import Path
-_path = Path(__file__).resolve().parent.parent / "app" / "runtime" / "bidding_v2.py"
-_spec = importlib.util.spec_from_file_location("bidding_v2", _path)
+_path = Path(__file__).resolve().parent.parent / "app" / "runtime" / "bidding.py"
+_spec = importlib.util.spec_from_file_location("bidding", _path)
 _mod = importlib.util.module_from_spec(_spec)
-sys.modules["bidding_v2"] = _mod
+sys.modules["bidding"] = _mod
 _spec.loader.exec_module(_mod)
 BidCalculator = _mod.BidCalculator
 make_bid_calculator = _mod.make_bid_calculator

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { fetchTemplates, createSimulationV2, type TemplateListItem } from "@/lib/api";
+import { fetchTemplates, createSimulation, type TemplateListItem } from "@/lib/api";
 
 export default function LibraryPage() {
   const router = useRouter();
@@ -15,7 +15,7 @@ export default function LibraryPage() {
   useEffect(() => {
     fetchTemplates()
       .then(setTemplates)
-      .catch(() => {})
+      .catch((err) => console.error("Failed to load:", err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -30,7 +30,7 @@ export default function LibraryPage() {
     setCreating(t.slug);
     try {
       if (!t.config) return;
-      const res = await createSimulationV2(t.config as any);
+      const res = await createSimulation(t.config as any);
       router.push(`/simulate/${res.simulation_id}`);
     } catch {
       setCreating(null);

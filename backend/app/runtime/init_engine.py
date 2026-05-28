@@ -8,7 +8,7 @@ def _bootstrap():
     modules = {}
     for name in ["social_physics", "internal_state", "relationship_graph", "behavior_engine",
                   "goal_evolution", "memory_system", "private_thought", "language_engine",
-                  "coalition_detection", "bidding_v2", "archetypes", "performance"]:
+                  "coalition_detection", "bidding", "archetypes", "performance"]:
         path = _RUNTIME / f"{name}.py"
         if path.exists():
             s = importlib.util.spec_from_file_location(f"_init_{name}", path)

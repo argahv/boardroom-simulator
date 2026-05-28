@@ -7,7 +7,7 @@ from typing import Any
 
 from app.database import get_database
 from app.models import (
-    SimulationV2Config, VoteCondition, TimeoutCondition,
+    SimulationConfig, VoteCondition, TimeoutCondition,
     JudgeCondition, ConsensusCondition, HybridCondition,
     TerminationResult,
 )
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 class TerminationContext:
     """Context passed to each checker for evaluation."""
-    def __init__(self, config: SimulationV2Config, space: SharedSpace,
+    def __init__(self, config: SimulationConfig, space: SharedSpace,
                  turn_count: int, behavior_engine: Any = None) -> None:
         self.config = config
         self.space = space
@@ -259,7 +259,7 @@ class EndConditionRegistry:
     """Builds the list of active checkers from the simulation config."""
 
     @staticmethod
-    def build_checkers(config: SimulationV2Config, llm: Any = None) -> list[BaseChecker]:
+    def build_checkers(config: SimulationConfig, llm: Any = None) -> list[BaseChecker]:
         checkers: list[BaseChecker] = []
         ec = config.end_condition
 
@@ -305,7 +305,7 @@ class Scheduler:
     - Publishes system events
     """
 
-    def __init__(self, config: SimulationV2Config, space: SharedSpace, simulation_id: str,
+    def __init__(self, config: SimulationConfig, space: SharedSpace, simulation_id: str,
                  behavior_engine: Any = None) -> None:
         self.config = config
         self.space = space
@@ -536,7 +536,7 @@ class Scheduler:
                     writer = GraphWriter(driver)
                     loop = asyncio.get_event_loop()
                     loop.create_task(
-                        asyncio.to_thread(writer.write_turn, self._make_v2_sim_state(), self._make_v2_turn(turn))
+                        asyncio.to_thread(writer.write_turn, self._make_sim_state(), self._make_turn(turn))
                     )
         except Exception:
             logger.debug("Neo4j write skipped for turn %d", self.turn_count, extra={"turn": self.turn_count, "event": "neo4j_write_skipped"})
@@ -549,7 +549,7 @@ class Scheduler:
                 return s.name
         return agent_id
 
-    def _make_v2_sim_state(self):
+    def _make_sim_state(self):
         from app.models import SimulationState, SimulationCreate
         from datetime import datetime
         sc = SimulationCreate(
@@ -567,7 +567,7 @@ class Scheduler:
             updated_at=datetime.utcnow().isoformat(),
         )
 
-    def _make_v2_turn(self, turn: dict):
+    def _make_turn(self, turn: dict):
         from app.models import Turn
         return Turn(
             turn_index=turn.get("turn_index", self.turn_count),

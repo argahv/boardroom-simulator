@@ -19,7 +19,7 @@ export type Stakeholder = {
   total_turns?: number;
   templates?: string[];
   evolution_pending?: boolean;
-  // v2 persona fields (optional for backwards compat with v1 records)
+  // Unified persona fields (optional for backwards compat with legacy records)
   backstory?: string;
   stance?: AgentStance;
   personality?: PersonalityProfile;
@@ -309,7 +309,7 @@ export type JobResponse = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// v2 — Agentic Architecture Types (user-defined config, engine has zero opinions)
+// Agentic Architecture Types (user-defined config, engine has zero opinions)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type AgentStance = "champion" | "detractor" | "neutral" | "moderator" | "wildcard";
@@ -380,7 +380,7 @@ export type HybridCondition = {
 export type EndCondition = VoteCondition | TimeoutCondition | JudgeCondition
   | ConsensusCondition | HybridCondition;
 
-export type StakeholderV2 = {
+export type AgentConfig = {
   id: string;
   name: string;
   role: string;
@@ -391,9 +391,9 @@ export type StakeholderV2 = {
   tools: string[];
 };
 
-export type SimulationV2Config = {
+export type SimulationConfig = {
   subject: Subject;
-  stakeholders: StakeholderV2[];
+  stakeholders: AgentConfig[];
   action_space: ActionSpace;
   speaker_rules: SpeakerRules;
   end_condition: EndCondition;

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { createSimulationV2, fetchTemplates, type TemplateListItem } from "@/lib/api";
+import { createSimulation, fetchTemplates, type TemplateListItem } from "@/lib/api";
 
 export default function FrameworksPage() {
   const router = useRouter();
@@ -15,7 +15,7 @@ export default function FrameworksPage() {
   useEffect(() => {
     fetchTemplates()
       .then(setTemplates)
-      .catch(() => {})
+      .catch((err) => console.error("Failed to load:", err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -26,7 +26,7 @@ export default function FrameworksPage() {
     setCreating(t.slug);
     try {
       if (!t.config) throw new Error("Template has no config");
-      const res = await createSimulationV2(t.config as any);
+      const res = await createSimulation(t.config as any);
       router.push(`/simulate/${res.simulation_id}`);
     } catch {
       setCreating(null);

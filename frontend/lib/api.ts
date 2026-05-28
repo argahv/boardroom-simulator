@@ -4,9 +4,8 @@ import type {
   KnowledgeQueryResult,
   Postmortem,
   SimulationAnalytics,
-  SimulationCreate,
   SimulationState,
-  SimulationV2Config,
+  SimulationConfig,
   Stakeholder,
   StateSnapshotData,
   StateSnapshotEvent,
@@ -96,26 +95,6 @@ export const deleteStakeholder = (id: string) =>
     method: "DELETE",
   });
 
-export const fetchStakeholdersV2 = () =>
-  request<Record<string, unknown>[]>("/stakeholders");
-
-export const createStakeholderV2 = (payload: Record<string, unknown>) =>
-  request<Record<string, unknown>>("/stakeholders", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-
-export const updateStakeholderV2 = (id: string, payload: Record<string, unknown>) =>
-  request<Record<string, unknown>>(`/stakeholders/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(payload),
-  });
-
-export const deleteStakeholderV2 = (id: string) =>
-  request<void>(`/stakeholders/${id}`, {
-    method: "DELETE",
-  });
-
 // ── Persona Documents ──────────────────────────────────────────────
 
 export async function uploadPersonaDocument(personaId: string, file: File): Promise<DocumentMeta> {
@@ -167,7 +146,7 @@ export type TemplateListItem = {
   estimated_duration: string;
   stakeholder_count: number;
   voltage: number;
-  config: Record<string, unknown>;  // full SimulationV2Config
+  config: Record<string, unknown>;  // full SimulationConfig
 };
 
 export const fetchTemplates = () =>
@@ -275,22 +254,16 @@ export async function fetchEvolutionHistory(personaId: string): Promise<Evolutio
   return res.json();
 }
 
-export const createSimulation = (payload: SimulationCreate) =>
-  request<SimulationState>("/simulations", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
-
-export const createSimulationV2 = (payload: SimulationV2Config) =>
-  request<{ simulation_id: string; config: SimulationV2Config; status: string }>("/simulations", {
+export const createSimulation = (payload: SimulationConfig) =>
+  request<{ simulation_id: string; config: SimulationConfig; status: string }>("/simulations", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 
 export const createSimulationWithDocuments = async (
-  config: SimulationV2Config,
+  config: SimulationConfig,
   files: File[]
-): Promise<{ simulation_id: string; config: SimulationV2Config; status: string; documents: DocumentMeta[] }> => {
+): Promise<{ simulation_id: string; config: SimulationConfig; status: string; documents: DocumentMeta[] }> => {
   const formData = new FormData();
   formData.append("config", JSON.stringify(config));
   files.forEach((f) => formData.append("files", f));
@@ -318,18 +291,13 @@ export type SimulationListItem = {
   created_at?: string;
 };
 
-export const fetchSimulationsV2 = () =>
+export const fetchSimulations = () =>
   request<SimulationListItem[]>("/simulations");
 
-export const fetchSimulationV2 = (simulationId: string) =>
-  request<{ config: SimulationV2Config; status: string }>(`/simulations/${simulationId}`);
+export const fetchSimulation = (simulationId: string) =>
+  request<{ config: SimulationConfig; status: string }>(`/simulations/${simulationId}`);
 
-export const postmortemV2 = (simulationId: string) =>
-  request<Record<string, unknown>>(`/simulations/${simulationId}/postmortem`, {
-    method: "POST",
-  });
-
-export const injectV2Turn = (simulationId: string, stakeholderId: string, content: string) =>
+export const injectTurn = (simulationId: string, stakeholderId: string, content: string) =>
   request<Record<string, unknown>>(`/simulations/${simulationId}/inject`, {
     method: "POST",
     body: JSON.stringify({ stakeholder_id: stakeholderId, content }),
@@ -351,7 +319,7 @@ export const fetchSimulationReplay = async (simulationId: string): Promise<State
   }));
 };
 
-export const streamSimulationV2 = (
+export const streamSimulation = (
   simulationId: string,
   onEvent: (event: Record<string, unknown>) => void,
   onError: (err: Error) => void,
@@ -396,11 +364,7 @@ export const streamSimulationV2 = (
 export const fetchSimulationAnalytics = () =>
   request<SimulationAnalytics>("/simulations/analytics");
 
-export const fetchSimulations = () =>
-  request<SimulationState[]>("/simulations");
 
-export const fetchSimulation = (simulationId: string) =>
-  request<SimulationState>(`/simulations/${simulationId}`);
 
 export const injectHumanTurn = (
   simulationId: string,

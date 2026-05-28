@@ -263,7 +263,7 @@ model agent_goals {
   priority      Float        @db.Real
   source        String
   is_active     Int          @default(1)
-  simulation    simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
+  simulation    simulations  @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
 
   @@index([agent_id], map: "idx_agent_goals_agent")
   @@index([simulation_id], map: "idx_agent_goals_sim")
@@ -273,7 +273,7 @@ model postmortems {
   simulation_id   String       @id
   postmortem_json Json
   created_at      DateTime     @default(now()) @db.Timestamptz(6)
-  simulation      simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
+  simulation      simulations  @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
 }
 
 model state_snapshots {
@@ -283,7 +283,7 @@ model state_snapshots {
   snapshot_json Json
   version       Int          @default(1)
   created_at    DateTime     @default(now()) @db.Timestamptz(6)
-  simulation    simulations  @relation(fields: [simulation_id], references: [simulation_id], onDelete: Cascade)
+  simulation    simulations  @relation(fields: [simulation_id], references: [id], onDelete: Cascade)
 
   @@index([simulation_id, turn_index], map: "idx_snapshots_sim_turn")
 }

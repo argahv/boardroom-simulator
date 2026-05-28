@@ -283,7 +283,7 @@ EndCondition = Annotated[
 ]
 
 
-class StakeholderV2(BaseModel):
+class AgentConfig(BaseModel):
     """A stakeholder with stance + personality. No hardcoded tags."""
     id: str
     name: str
@@ -296,10 +296,10 @@ class StakeholderV2(BaseModel):
     inject_knowledge: bool | None = None  # Per-agent override (None = use global config)
 
 
-class SimulationV2Config(BaseModel):
+class SimulationConfig(BaseModel):
     """Full user-defined simulation config — engine has zero domain opinions."""
     subject: Subject
-    stakeholders: list[StakeholderV2]
+    stakeholders: list[AgentConfig]
     action_space: ActionSpace
     speaker_rules: SpeakerRules = Field(default_factory=SpeakerRules)
     end_condition: EndCondition = Field(default_factory=lambda: TimeoutCondition())
@@ -314,6 +314,10 @@ class SimulationV2Config(BaseModel):
     auto_research: bool = True
     research_topics: list[str] = Field(default_factory=list)
     inject_knowledge: bool = True  # Global toggle for Chroma RAG injection
+
+# Backward compatibility aliases
+StakeholderV2 = AgentConfig
+SimulationV2Config = SimulationConfig
 
 
 class SimulationDocument(BaseModel):

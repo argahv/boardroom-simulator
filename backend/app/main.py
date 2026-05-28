@@ -10,7 +10,8 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 import importlib.util as _iu
@@ -26,18 +27,18 @@ from . import config as app_config
 from .database import initialize_database, close_database, get_database
 from .knowledge import get_knowledge_store
 from .models import (
+    AgentConfig,
     AlignmentDelta,
     PersonalityProfile,
     PersonaDocument,
     Postmortem,
     ScenarioTemplate,
-    SimulationV2Config,
+    SimulationConfig,
     Stakeholder,
-    StakeholderV2,
     StrategyCard,
     TopologyNode,
 )
-from .runtime import run_simulation_v2
+from .runtime import run_simulation
 from .upload.utils import sanitize_filename
 
 from .llm import openrouter_completion, parse_json_object
@@ -63,11 +64,25 @@ app = FastAPI(title="Boardroom Simulator API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=config.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+MAX_REQUEST_BODY_SIZE = int(os.getenv("MAX_REQUEST_BODY_SIZE", "10_485_760"))  # 10MB default
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > MAX_REQUEST_BODY_SIZE:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"Request body exceeds {MAX_REQUEST_BODY_SIZE} bytes limit"},
+            )
+        return await call_next(request)
+
+app.add_middleware(RequestSizeLimitMiddleware)
 
 # Serve uploaded files in dev (auth not required for static mount)
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
@@ -278,15 +293,15 @@ async def delete_stakeholder_api(stakeholder_id: str) -> Response:
     return Response(status_code=204)
 
 
-# ── Persona v2 Detail ─────────────────────────────────────────────────
+# ── Persona Detail ─────────────────────────────────────────────────────
 
 
 @app.get("/personas/{persona_id}")
 async def get_persona_api(persona_id: str) -> dict:
     db = get_database()
-    if not hasattr(db, 'get_persona_v2'):
-        raise HTTPException(status_code=501, detail="Persona v2 detail not supported by this database backend")
-    persona = await db.get_persona_v2(persona_id)
+    if not hasattr(db, 'get_persona_detail'):
+        raise HTTPException(status_code=501, detail="Persona detail not supported by this database backend")
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
     docs = await db.get_persona_documents(persona_id)
@@ -303,7 +318,7 @@ PERSONA_DOCUMENT_LIMIT = 10
 async def upload_persona_document(persona_id: str, file: UploadFile = File(...)):
     """Upload a document for a persona. Extracts text, embeds via Chroma, stores metadata."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
 
@@ -363,7 +378,7 @@ async def upload_persona_document(persona_id: str, file: UploadFile = File(...))
 async def list_persona_documents(persona_id: str):
     """List all uploaded documents for a persona."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
     docs = await db.get_persona_documents(persona_id)
@@ -395,7 +410,7 @@ async def delete_persona_document(persona_id: str, doc_id: str):
 async def query_persona_knowledge(persona_id: str, payload: dict):
     """Query persona's Chroma knowledge base with a text query."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
 
@@ -415,7 +430,7 @@ async def query_persona_knowledge(persona_id: str, payload: dict):
 async def get_persona_research_history(persona_id: str):
     """Return past research entries for a persona."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
     history = await db.get_persona_research(persona_id)
@@ -426,7 +441,7 @@ async def get_persona_research_history(persona_id: str):
 async def trigger_persona_research(persona_id: str, payload: dict = {}):
     """Trigger web research for a persona and store results."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
 
@@ -483,7 +498,7 @@ async def get_persona_research_status(persona_id: str):
 async def get_persona_research_config(persona_id: str):
     """Return research configuration status (Tavily availability)."""
     db = get_database()
-    persona = await db.get_persona_v2(persona_id)
+    persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
     from app.config import TAVILY_API_KEY as _tavily_key
@@ -505,14 +520,14 @@ async def get_pending_evolutions(persona_id: str):
 async def approve_evolution(evolution_id: str):
     """Approve an evolution — apply deltas to persona personality."""
     db = get_database()
-    if not hasattr(db, 'get_evolution') or not hasattr(db, 'update_persona_v2'):
+    if not hasattr(db, 'get_evolution') or not hasattr(db, 'update_persona'):
         raise HTTPException(status_code=501, detail="Evolution apply not supported by this database backend")
 
     evo = await db.get_evolution(evolution_id)
     if evo is None or evo.status != "pending":
         raise HTTPException(status_code=404, detail="Evolution not found or already processed")
 
-    persona = await db.get_persona_v2(evo.persona_id)
+    persona = await db.get_persona_detail(evo.persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
 
@@ -526,7 +541,7 @@ async def approve_evolution(evolution_id: str):
         updated[trait] = max(0, min(100, cur + delta))
 
     new_personality_json = json.dumps(updated)
-    await db.update_persona_v2(evo.persona_id, new_personality_json)
+    await db.update_persona(evo.persona_id, new_personality_json)
 
     success = await db.approve_evolution(evolution_id)
     if not success:
@@ -562,8 +577,8 @@ async def get_evolution_history_api(persona_id: str):
 async def list_templates_api() -> list[dict]:
     db = get_database()
     try:
-        if hasattr(db, 'list_templates_v2'):
-            return await db.list_templates_v2()
+        if hasattr(db, 'list_templates_catalog'):
+            return await db.list_templates_catalog()
         return [t.model_dump() for t in await db.list_templates()]
     except Exception:
         return []
@@ -571,8 +586,8 @@ async def list_templates_api() -> list[dict]:
 @app.get("/templates/{template_id}")
 async def get_template_api(template_id: str) -> dict:
     db = get_database()
-    if hasattr(db, 'get_template_v2'):
-        t = await db.get_template_v2(template_id)
+    if hasattr(db, 'get_template_catalog'):
+        t = await db.get_template_catalog(template_id)
         if t is not None:
             return t
     t = await db.get_template(template_id)
@@ -594,12 +609,12 @@ async def delete_template_api(template_id: str) -> Response:
     # Soft-delete by not exposing template; no explicit delete method exists
     raise HTTPException(status_code=501, detail="Template deletion not implemented")
 
-# ── v2 Agentic Simulation endpoints ─────────────────────────────────────────
+# ── Agentic Simulation endpoints ─────────────────────────────────────────────
 
 from .database import get_database
 
 # Active streams — in-memory tracking for live SSE sessions
-_v2_simulations: dict[str, dict] = {}
+_active_simulations: dict[str, dict] = {}
 
 def _extract_memory_type(content: str, action_type: str) -> str | None:
     """Extract memory type from a negotiation turn.
@@ -649,7 +664,7 @@ def _extract_memory_type(content: str, action_type: str) -> str | None:
     return None
 
 def _extract_turn_index(event: dict) -> int:
-    """Extract the correct turn index from a V2 stream event.
+    """Extract the correct turn index from a simulation stream event.
     The engine sometimes uses _index for the actual turn counter.
     """
     idx = event.get("turn_index", event.get("_index"))
@@ -658,7 +673,7 @@ def _extract_turn_index(event: dict) -> int:
     return int(idx)
 
 async def _save_turn(simulation_id: str, turn_index: int, turn_json: str) -> None:
-    """Save turn to new schema tables only. Old v2_turns is deprecated."""
+    """Save turn to new schema tables only. Old turn tables are deprecated."""
     db = get_database()
     try:
         if hasattr(db, 'get_participant_id') and hasattr(db, 'insert_new_turn'):
@@ -674,7 +689,7 @@ async def _save_turn(simulation_id: str, turn_index: int, turn_json: str) -> Non
                             await db.insert_semantic_memory(pid, simulation_id, mtype, event.get("content", "")[:500])
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning("V2_TURN_SAVE_ERR %s: %s", simulation_id, exc)
+        logging.getLogger(__name__).warning("TURN_SAVE_ERR %s: %s", simulation_id, exc)
 
 
 async def _save_state_snapshot(simulation_id: str, turn_index: int, snapshot_json: str) -> None:
@@ -687,11 +702,11 @@ async def _save_state_snapshot(simulation_id: str, turn_index: int, snapshot_jso
                 await db.delete_old_state_snapshots(simulation_id, max_keep=50)
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning("V2_SNAPSHOT_SAVE_ERR %s: %s", simulation_id, exc)
+        logging.getLogger(__name__).warning("SNAPSHOT_SAVE_ERR %s: %s", simulation_id, exc)
 
 
 @app.get("/simulations")
-async def list_simulations_v2() -> list[dict]:
+async def list_simulations_handler() -> list[dict]:
     # List from new schema, unioned with in-memory active streams
     db = get_database()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -700,7 +715,7 @@ async def list_simulations_v2() -> list[dict]:
          "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50),
          "model_temperature": entry["config"].get("model_temperature", "stable"),
          "created_at": now_iso}
-        for sid, entry in _v2_simulations.items()
+        for sid, entry in _active_simulations.items()
     ]
     try:
         if hasattr(db, 'list_simulations_v2'):
@@ -715,7 +730,7 @@ async def list_simulations_v2() -> list[dict]:
     return active
 
 
-async def _trigger_pre_simulation_research(config: SimulationV2Config, simulation_id: str) -> None:
+async def _trigger_pre_simulation_research(config: SimulationConfig, simulation_id: str) -> None:
     """Fire-and-forget Tavily research for each stakeholder (if enabled)."""
     if not config.auto_research:
         return
@@ -741,12 +756,12 @@ async def _trigger_pre_simulation_research(config: SimulationV2Config, simulatio
 
 
 @app.post("/simulations")
-async def create_simulation_v2(payload: SimulationV2Config) -> dict:
+async def create_simulation_handler(payload: SimulationConfig) -> dict:
     simulation_id = str(uuid4())
     config_json = payload.model_dump(mode="json")
-    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle"}
+    _active_simulations[simulation_id] = {"config": config_json, "status": "idle"}
     logger.info(
-        "V2_SIM_CREATE simulation_id=%s stakeholders=%d subject=%s",
+        "SIM_CREATE simulation_id=%s stakeholders=%d subject=%s",
         simulation_id,
         len(payload.stakeholders),
         payload.subject.name,
@@ -757,7 +772,7 @@ async def create_simulation_v2(payload: SimulationV2Config) -> dict:
         if hasattr(db, 'create_new_simulation'):
             await db.create_new_simulation(simulation_id, config_json)
     except Exception as exc:
-        logger.warning("V2_NEW_SCHEMA_SAVE_ERR %s: %s", simulation_id, exc)
+        logger.warning("NEW_SCHEMA_SAVE_ERR %s: %s", simulation_id, exc)
 
     # Trigger pre-simulation research (fire-and-forget)
     asyncio.ensure_future(_trigger_pre_simulation_research(payload, simulation_id))
@@ -797,7 +812,7 @@ async def create_simulation_with_documents(
             )
     # --- End validation ---
 
-    _v2_simulations[simulation_id] = {"config": config_json, "status": "idle", "documents": []}
+    _active_simulations[simulation_id] = {"config": config_json, "status": "idle", "documents": []}
     logger.info(
         "DOC_SIM_CREATE simulation_id=%s files=%d subject=%s",
         simulation_id,
@@ -849,7 +864,7 @@ async def create_simulation_with_documents(
         # In-memory document metadata (survives even when DB connection fails)
         from datetime import datetime, timezone
         _now = datetime.now(timezone.utc).isoformat()
-        _v2_simulations[simulation_id]["documents"].append({
+        _active_simulations[simulation_id]["documents"].append({
             "id": doc_id,
             "filename": f.filename or "unnamed",
             "size_bytes": size_bytes,
@@ -879,7 +894,7 @@ async def create_simulation_with_documents(
         extracted = await extract_text(filepath, content_type)
         # Sync in-memory document status
         _mem_doc = next(
-            (d for d in _v2_simulations[simulation_id]["documents"] if d["id"] == doc_id),
+            (d for d in _active_simulations[simulation_id]["documents"] if d["id"] == doc_id),
             None,
         )
         if extracted:
@@ -906,29 +921,29 @@ async def create_simulation_with_documents(
     if doc_context_parts:
         combined = "\n\n## Reference Documents\n\n" + "\n\n".join(doc_context_parts)
         combined = truncate_to_token_limit(combined, max_tokens=4000)
-        _v2_simulations[simulation_id]["_document_context"] = combined
+        _active_simulations[simulation_id]["_document_context"] = combined
 
     # Trigger pre-simulation research (fire-and-forget)
     asyncio.ensure_future(_trigger_pre_simulation_research(
-        SimulationV2Config(**config_json), simulation_id
+        SimulationConfig(**config_json), simulation_id
     ))
 
     return {
         "simulation_id": simulation_id,
         "config": config_json,
         "status": "idle",
-        "documents": _v2_simulations[simulation_id].get("documents", []),
+        "documents": _active_simulations[simulation_id].get("documents", []),
     }
 
 
 @app.get("/simulations/{simulation_id}/stream")
-async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
-    entry = _v2_simulations.get(simulation_id)
+async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
+    entry = _active_simulations.get(simulation_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Simulation not found")
 
     already_complete = entry["status"] == "complete"
-    config = SimulationV2Config(**entry["config"])
+    config = SimulationConfig(**entry["config"])
 
     # Inject document context into system prompt if available
     doc_ctx = entry.get("_document_context")
@@ -960,22 +975,22 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
 
             # Create BehaviorEngine for this simulation
             _be = create_engine([s.id for s in config.stakeholders])
-            async for event in run_simulation_v2(config, simulation_id, behavior_engine=_be):
+            async for event in run_simulation(config, simulation_id, behavior_engine=_be):
                 if event.get("type") == "done":
                     # Must yield done AFTER status updates — generator may be cancelled post-yield
                     entry["status"] = "complete"
                     try:
                         _db = get_database()
-                        if hasattr(_db, 'update_simulation_status_v2'):
-                            await _db.update_simulation_status_v2(simulation_id, "complete")
+                        if hasattr(_db, 'update_simulation_status'):
+                            await _db.update_simulation_status(simulation_id, "complete")
                         if hasattr(_db, 'update_participant_stats'):
                             await _db.update_participant_stats(simulation_id)
                     except Exception as exc:
-                        logger.warning("V2_NEW_STATUS_ERR %s: %s", simulation_id, exc)
+                        logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
 
                     # ── Evolution trigger (fire-and-forget) ──
                     try:
-                        config_obj = SimulationV2Config(**entry["config"])
+                        config_obj = SimulationConfig(**entry["config"])
                         db = get_database()
                         from app.evolution import EvolutionService
                         evo_svc = EvolutionService(db)
@@ -1028,11 +1043,11 @@ async def stream_simulation_v2(simulation_id: str) -> StreamingResponse:
                             public_state = _be.get_public_state()
                             await _save_state_snapshot(simulation_id, turn_idx, json.dumps(public_state))
                         except Exception as exc:
-                            logger.warning("V2_SNAPSHOT_CAPTURE_ERR %s: %s", simulation_id, exc)
+                            logger.warning("SNAPSHOT_CAPTURE_ERR %s: %s", simulation_id, exc)
         except asyncio.CancelledError:
             yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
         except Exception as exc:
-            logger.exception("V2_SIM_STREAM_ERR simulation_id=%s", simulation_id)
+            logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id)
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
 
     return StreamingResponse(
@@ -1057,7 +1072,7 @@ async def simulations_analytics() -> dict:
     sim_count_with_voltage = 0
 
     # Aggregate from in-memory simulations
-    for sid, entry in _v2_simulations.items():
+    for sid, entry in _active_simulations.items():
         if entry["status"] == "complete":
             total_simulations += 1
             cfg = entry["config"]
@@ -1077,7 +1092,7 @@ async def simulations_analytics() -> dict:
             db_sims = await db.list_simulations_v2()
             for s in db_sims:
                 sid = s["simulation_id"]
-                if sid not in _v2_simulations:
+                if sid not in _active_simulations:
                     total_simulations += 1
                     cfg = s.get("config", {})
                     stakeholders = cfg.get("stakeholders", []) if isinstance(cfg, dict) else []
@@ -1101,8 +1116,8 @@ async def simulations_analytics() -> dict:
 
 
 @app.get("/simulations/{simulation_id}")
-async def get_simulation_v2(simulation_id: str) -> dict:
-    entry = _v2_simulations.get(simulation_id)
+async def get_simulation_handler(simulation_id: str) -> dict:
+    entry = _active_simulations.get(simulation_id)
     response = {}
     if entry is not None:
         response = {"config": entry["config"], "status": entry["status"]}
@@ -1147,7 +1162,7 @@ async def get_simulation_v2(simulation_id: str) -> dict:
 
 
 @app.get("/simulations/{simulation_id}/replay")
-async def replay_simulation_v2(simulation_id: str) -> dict:
+async def replay_simulation_handler(simulation_id: str) -> dict:
     """Return all persisted state snapshots for a simulation, ordered by turn."""
     db = get_database()
     try:
@@ -1158,7 +1173,7 @@ async def replay_simulation_v2(simulation_id: str) -> dict:
     except Exception:
         snapshots = []
 
-    entry = _v2_simulations.get(simulation_id)
+    entry = _active_simulations.get(simulation_id)
     total_turns = 0
     if entry:
         total_turns = entry.get("config", {}).get("turns_count", 0)
@@ -1186,7 +1201,7 @@ async def replay_simulation_v2(simulation_id: str) -> dict:
 async def get_simulation_turns(simulation_id: str) -> list[dict]:
     """Return all turns for a simulation, ordered by turn index."""
     db = get_database()
-    entry = _v2_simulations.get(simulation_id)
+    entry = _active_simulations.get(simulation_id)
     if entry is None:
         # Check DB for completed sim not in memory
         try:
@@ -1209,9 +1224,9 @@ async def get_simulation_turns(simulation_id: str) -> list[dict]:
 
 
 @app.get("/simulations/{simulation_id}/export")
-async def export_simulation_v2(simulation_id: str) -> Response:
+async def export_simulation_handler(simulation_id: str) -> Response:
     """Export complete simulation data as JSON download."""
-    entry = _v2_simulations.get(simulation_id)
+    entry = _active_simulations.get(simulation_id)
     if entry is None:
         db = get_database()
         try:
@@ -1274,7 +1289,7 @@ async def export_simulation_v2(simulation_id: str) -> Response:
 
 
 @app.post("/simulations/{simulation_id}/postmortem")
-async def postmortem_v2(simulation_id: str) -> dict:
+async def postmortem_handler(simulation_id: str) -> dict:
     """Get the comprehensive simulation postmortem report.
 
     Auto-generated on simulation end. Includes:
@@ -1286,7 +1301,7 @@ async def postmortem_v2(simulation_id: str) -> dict:
     - Social dynamics (trust/tension arcs)
     - Strategy cards and lessons learned
     """
-    entry = _v2_simulations.get(simulation_id)
+    entry = _active_simulations.get(simulation_id)
     if entry is None:
         db = get_database()
         try:
@@ -1335,7 +1350,7 @@ async def postmortem_v2(simulation_id: str) -> dict:
 
     # Generate postmortem using PostmortemGenerator
     from app.runtime.postmortem_generator import PostmortemGenerator
-    from app.models import SimulationV2Config, TerminationResult
+    from app.models import SimulationConfig, TerminationResult
 
     subject_name = ""
     if isinstance(config_obj, dict):
@@ -1344,7 +1359,7 @@ async def postmortem_v2(simulation_id: str) -> dict:
         subject_name = getattr(config_obj.subject, "name", "Simulation")
 
     # Build minimal config for generator
-    gen_config = _ensure_v2_config(config_obj, subject_name)
+    gen_config = _ensure_simulation_config(config_obj, subject_name)
     gen = PostmortemGenerator(space, gen_config, behavior_engine=None)
     tr = TerminationResult(
         reason=entry.get("status", "complete") if isinstance(entry, dict) else "complete",
@@ -1393,23 +1408,23 @@ def _basic_postmortem(simulation_id: str, cfg: dict, error: str) -> dict:
     }
 
 
-def _ensure_v2_config(raw: dict | Any, subject_name: str) -> Any:
-    """Ensure we have a SimulationV2Config or compatible object."""
-    from app.models import SimulationV2Config, Subject, StakeholderV2, ActionSpace, SpeakerRules
-    if isinstance(raw, SimulationV2Config):
+def _ensure_simulation_config(raw: dict | Any, subject_name: str) -> Any:
+    """Ensure we have a SimulationConfig or compatible object."""
+    from app.models import SimulationConfig, Subject, AgentConfig, ActionSpace, SpeakerRules
+    if isinstance(raw, SimulationConfig):
         return raw
     if isinstance(raw, dict):
         stakeholders_raw = raw.get("stakeholders", [])
         stakeholders = []
         for s in stakeholders_raw:
             if isinstance(s, dict):
-                stakeholders.append(StakeholderV2(
+                stakeholders.append(AgentConfig(
                     id=s.get("id", "?"),
                     name=s.get("name", "?"),
                     role=s.get("role", ""),
                     stance=s.get("stance", "neutral"),
                 ))
-        return SimulationV2Config(
+        return SimulationConfig(
             subject=Subject(name=subject_name),
             stakeholders=stakeholders,
             action_space=ActionSpace(),
@@ -1429,8 +1444,8 @@ async def agent_detail(name: str) -> dict:
         profile = await db.get_agent_by_id(name)
     if profile is None and hasattr(db, 'get_agent_by_name'):
         profile = await db.get_agent_by_name(name)
-    if profile is None and hasattr(db, 'get_persona_v2'):
-        profile = await db.get_persona_v2(name)
+    if profile is None and hasattr(db, 'get_persona_detail'):
+        profile = await db.get_persona_detail(name)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
@@ -1459,13 +1474,8 @@ async def agent_detail(name: str) -> dict:
                 **{k: v for k, v in es.items() if isinstance(v, (int, float))},
             })
 
-    # Goals from persisted DB (empty until runtime writes to v2_agent_goals)
+    # Goals — not persisted yet (agent goals live in simulation runtime state only)
     goals: list[dict] = []
-    if hasattr(db, 'get_agent_goals_by_id'):
-        try:
-            goals = await db.get_agent_goals_by_id(persona_id)
-        except Exception:
-            pass
 
     # Strategies: extract internal_reasoning as strategy hints, grouped by simulation
     strategies: list[dict] = []
@@ -1513,10 +1523,10 @@ async def agent_detail(name: str) -> dict:
 
 
 @app.post("/simulations/{simulation_id}/inject")
-async def inject_v2_turn(simulation_id: str, payload: dict) -> dict:
+async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
     from app.runtime.space import SharedSpace
 
-    entry = _v2_simulations.get(simulation_id)
+    entry = _active_simulations.get(simulation_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Simulation not found")
 
@@ -1525,7 +1535,7 @@ async def inject_v2_turn(simulation_id: str, payload: dict) -> dict:
     if not speaker_id or not content:
         raise HTTPException(status_code=422, detail="stakeholder_id and content required")
 
-    config = SimulationV2Config(**entry["config"])
+    config = SimulationConfig(**entry["config"])
     stakeholder = next((s for s in config.stakeholders if s.id == speaker_id), None)
     if not stakeholder:
         raise HTTPException(status_code=422, detail=f"Stakeholder {speaker_id} not found")

@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
 import {
-  fetchSimulationsV2,
-  createSimulationV2,
+  fetchSimulations,
+  createSimulation,
   fetchTemplates,
   type TemplateListItem,
   type SimulationListItem,
@@ -123,7 +123,7 @@ export default function SimulationsPage() {
 
   useEffect(() => {
     let alive = true;
-    Promise.all([fetchSimulationsV2(), fetchTemplates()])
+    Promise.all([fetchSimulations(), fetchTemplates()])
       .then(([sims, tmpls]) => {
         if (alive) {
           setItems(sims);
@@ -150,7 +150,7 @@ export default function SimulationsPage() {
     try {
       const first = templates.find((t) => t.category === "Fundraising") ?? templates[0];
       if (!first || !first.config) return;
-      const res = await createSimulationV2(first.config as any);
+      const res = await createSimulation(first.config as any);
       router.push(`/simulate/${res.simulation_id}`);
     } catch {
       setError("Failed to launch quick play.");

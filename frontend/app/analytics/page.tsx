@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { fetchSimulationAnalytics, fetchSimulationsV2 } from "@/lib/api";
+import { fetchSimulationAnalytics, fetchSimulations } from "@/lib/api";
 import type { SimulationAnalytics } from "@/lib/types";
 import {
   BarChart,
@@ -29,14 +29,18 @@ export default function AnalyticsPage() {
   const [analytics, setAnalytics] = useState<SimulationAnalytics | null>(null);
   const [recentSims, setRecentSims] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([fetchSimulationAnalytics(), fetchSimulationsV2()])
+    Promise.all([fetchSimulationAnalytics(), fetchSimulations()])
       .then(([analyticsData, simsData]) => {
         setAnalytics(analyticsData);
         setRecentSims(simsData.slice(0, 5));
       })
-      .catch(console.error)
+      .catch((err) => {
+        console.error(err);
+        setError("Failed to load analytics data");
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -97,6 +101,8 @@ export default function AnalyticsPage() {
           Analytics
         </h1>
         <p className="text-sm text-muted mt-1">Cross-simulation insights</p>
+
+        {error && <div className="p-4 bg-red-50 text-red-700 rounded-lg">{error}</div>}
 
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-8">
           <div className="bg-surface-card rounded-xl p-6">

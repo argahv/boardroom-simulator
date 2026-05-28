@@ -7,7 +7,7 @@ from typing import AsyncIterator
 
 logger = logging.getLogger(__name__)
 
-from app.models import SimulationV2Config
+from app.models import SimulationConfig
 
 
 class SharedSpace:
@@ -21,7 +21,7 @@ class SharedSpace:
       so agents can wait for "something new" without polling.
     """
 
-    def __init__(self, config: SimulationV2Config) -> None:
+    def __init__(self, config: SimulationConfig) -> None:
         self.config = config
         self.events: list[dict] = []
         self._event_condition = asyncio.Condition()

@@ -78,12 +78,13 @@ CREATE INDEX IF NOT EXISTS idx_stakeholders_tag       ON stakeholders(tag);
 CREATE TABLE IF NOT EXISTS postmortems (
     simulation_id   TEXT PRIMARY KEY,
     postmortem_json JSONB NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    FOREIGN KEY (simulation_id) REFERENCES simulations(simulation_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS state_snapshots (
     id            TEXT PRIMARY KEY,
-    simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id),
+    simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id) ON DELETE CASCADE,
     turn_index    INTEGER NOT NULL,
     snapshot_json JSONB NOT NULL,
     version       INTEGER NOT NULL DEFAULT 1,
@@ -94,7 +95,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_sim_turn ON state_snapshots(simulation_
 
 CREATE TABLE IF NOT EXISTS agent_goals (
     id            TEXT PRIMARY KEY,
-    simulation_id TEXT NOT NULL,
+    simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id) ON DELETE CASCADE,
     agent_id      TEXT NOT NULL,
     turn_index    INTEGER NOT NULL,
     goal_text     TEXT NOT NULL,
@@ -195,6 +196,7 @@ class PostgresBackend(DatabaseBackend):
         async with self._pool.acquire() as conn:
             await conn.execute(_SCHEMA_SQL)
             await self._migrate(conn)
+            await self._migrate_v2_schema(conn)
         logger.info("PostgreSQL schema initialised.")
 
     async def _migrate(self, conn: asyncpg.Connection) -> None:
@@ -212,6 +214,81 @@ class PostgresBackend(DatabaseBackend):
                 )
             except Exception as exc:
                 logger.warning("Migration ALTER TABLE stakeholders %s skipped: %s", col_name, exc)
+
+    async def _migrate_v2_schema(self, conn: asyncpg.Connection) -> None:
+        """Idempotent additions for v2 unified schema (simulation_participants, turns, v2 columns)."""
+        # Add v2 columns to simulations table
+        for col_name, col_def in [
+            ("id", "UUID DEFAULT gen_random_uuid()"),
+            ("subject_name", "TEXT NOT NULL DEFAULT ''"),
+            ("subject_description", "TEXT NOT NULL DEFAULT ''"),
+            ("voltage", "INTEGER NOT NULL DEFAULT 50"),
+            ("model_temperature", "TEXT NOT NULL DEFAULT 'volatile'"),
+            ("speaker_mode", "TEXT NOT NULL DEFAULT 'alternating'"),
+            ("end_condition", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            ("config", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            ("metadata", "JSONB NOT NULL DEFAULT '{}'::jsonb"),
+            ("total_turns", "INTEGER NOT NULL DEFAULT 0"),
+            ("total_participants", "INTEGER NOT NULL DEFAULT 0"),
+            ("template_id", "UUID"),
+        ]:
+            try:
+                await conn.execute(
+                    f"ALTER TABLE simulations ADD COLUMN IF NOT EXISTS {col_name} {col_def}"
+                )
+            except Exception as exc:
+                logger.warning("Migration simulations %s skipped: %s", col_name, exc)
+
+        # Create simulation_participants table
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS simulation_participants (
+                id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                simulation_id   UUID NOT NULL,
+                persona_id      UUID,
+                name            TEXT NOT NULL,
+                role            TEXT NOT NULL DEFAULT '',
+                stance          TEXT NOT NULL DEFAULT 'neutral',
+                personality     JSONB NOT NULL DEFAULT '{}'::jsonb,
+                backstory       TEXT NOT NULL DEFAULT '',
+                hidden_agenda   TEXT NOT NULL DEFAULT '',
+                turn_count      INT NOT NULL DEFAULT 0,
+                first_turn_index INT,
+                last_turn_index  INT,
+                created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        # Create turns table (v2 unified)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS turns (
+                id                      BIGSERIAL PRIMARY KEY,
+                simulation_id           UUID NOT NULL,
+                participant_id          UUID NOT NULL,
+                turn_index              INT NOT NULL,
+                participant_turn_index  INT NOT NULL,
+                content                 TEXT NOT NULL,
+                action_type             TEXT NOT NULL DEFAULT 'statement',
+                stance                  TEXT,
+                emotional_state         JSONB NOT NULL DEFAULT '{}'::jsonb,
+                internal_reasoning      TEXT NOT NULL DEFAULT '',
+                directed_to_participant_id UUID,
+                turn_data               JSONB NOT NULL DEFAULT '{}'::jsonb,
+                created_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+
+        # Indexes
+        for idx, sql in [
+            ("idx_participants_simulation", "CREATE INDEX IF NOT EXISTS idx_participants_simulation ON simulation_participants(simulation_id)"),
+            ("idx_participants_persona", "CREATE INDEX IF NOT EXISTS idx_participants_persona ON simulation_participants(persona_id)"),
+            ("idx_turns_sim_participant", "CREATE INDEX IF NOT EXISTS idx_turns_sim_participant ON turns(simulation_id, participant_id)"),
+            ("idx_turns_sim_index", "CREATE INDEX IF NOT EXISTS idx_turns_sim_index ON turns(simulation_id, turn_index)"),
+            ("idx_turns_participant", "CREATE INDEX IF NOT EXISTS idx_turns_participant ON turns(participant_id)"),
+        ]:
+            try:
+                await conn.execute(sql)
+            except Exception as exc:
+                logger.warning("Index %s skipped: %s", idx, exc)
 
     async def close(self) -> None:
         if self._pool is not None:
@@ -552,7 +629,7 @@ class PostgresBackend(DatabaseBackend):
                 result.append(d)
             return result
 
-    async def list_templates_v2(self) -> list[dict]:
+    async def list_templates_catalog(self) -> list[dict]:
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             rows = await conn.fetch("""
@@ -569,7 +646,7 @@ class PostgresBackend(DatabaseBackend):
                 result.append(d)
             return result
 
-    async def get_template_v2(self, slug: str) -> Optional[dict]:
+    async def get_template_catalog(self, slug: str) -> Optional[dict]:
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
@@ -787,7 +864,7 @@ class PostgresBackend(DatabaseBackend):
                 reasoning, json.dumps(turn_data), now)
             return row["id"] if row else None
 
-    async def update_simulation_status_v2(self, simulation_id: str, status: str) -> None:
+    async def update_simulation_status(self, simulation_id: str, status: str) -> None:
         pool = self._pool_or_raise()
         now = datetime.now(timezone.utc)
         async with pool.acquire() as conn:
@@ -1000,7 +1077,7 @@ class PostgresBackend(DatabaseBackend):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _row_to_persona_v2(row: asyncpg.Record) -> dict:
+    def _row_to_persona_detail(row: asyncpg.Record) -> dict:
         personality = row.get("personality") or {}
         if isinstance(personality, str):
             personality = json.loads(personality)
@@ -1028,16 +1105,16 @@ class PostgresBackend(DatabaseBackend):
             rows = await conn.fetch(
                 "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders ORDER BY created_at DESC LIMIT 1000"
             )
-        return [self._row_to_persona_v2(r) for r in rows]
+        return [self._row_to_persona_detail(r) for r in rows]
 
-    async def get_persona_v2(self, persona_id: str) -> dict | None:
+    async def get_persona_detail(self, persona_id: str) -> dict | None:
         pool = self._pool_or_raise()
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = $1",
                 persona_id,
             )
-        return self._row_to_persona_v2(row) if row else None
+        return self._row_to_persona_detail(row) if row else None
 
     # ── Persona documents ──────────────────────────────────────────────
 
@@ -1166,7 +1243,7 @@ class PostgresBackend(DatabaseBackend):
             )
         return [self._row_to_persona_evolution(r) for r in rows]
 
-    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
+    async def update_persona(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
         pool = self._pool_or_raise()
         now = self._now()
         async with pool.acquire() as conn:

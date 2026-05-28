@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Button } from "@/components/Button";
-import type { AgentStance, PersonalityProfile, StakeholderV2, DocumentMeta } from "@/lib/types";
+import type { AgentStance, PersonalityProfile, AgentConfig, DocumentMeta } from "@/lib/types";
 import { uploadPersonaDocument, listPersonaDocuments, deletePersonaDocument } from "@/lib/api";
 
 const STANCES: AgentStance[] = ["champion", "detractor", "neutral", "moderator", "wildcard"];
@@ -35,24 +35,24 @@ const DEFAULT_PERSONALITY: PersonalityProfile = {
   verbosity: 50,
 };
 
-export type PersonaEditorSubmitData = StakeholderV2 & {
+export type PersonaEditorSubmitData = AgentConfig & {
   focus?: string;
   tag?: string;
 };
 
-type PersonaEditorV2Props = {
+type PersonaEditorProps = {
   onSubmit: (data: PersonaEditorSubmitData) => void;
-  initialData?: (StakeholderV2 & { focus?: string; tag?: string }) | null;
+  initialData?: (AgentConfig & { focus?: string; tag?: string }) | null;
   onCancel: () => void;
 };
 
 const STEPS = ["Identity", "Personality", "Tools & Agenda", "Review"] as const;
 
-export function PersonaEditorV2({
+export function PersonaEditor({
   onSubmit,
   initialData,
   onCancel,
-}: PersonaEditorV2Props) {
+}: PersonaEditorProps) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState(initialData?.name ?? "");
   const [role, setRole] = useState(initialData?.role ?? "");

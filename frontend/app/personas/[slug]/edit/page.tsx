@@ -4,7 +4,7 @@ import { use, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
-import { PersonaEditorV2, type PersonaEditorSubmitData } from "@/components/PersonaEditorV2";
+import { PersonaEditor, type PersonaEditorSubmitData } from "@/components/PersonaEditor";
 import { fetchStakeholders, updateStakeholder } from "@/lib/api";
 import type { Stakeholder } from "@/lib/types";
 
@@ -78,7 +78,7 @@ export default function EditPersonaPage({ params }: PageProps) {
             Loading persona...
           </div>
         ) : persona ? (
-          <PersonaEditorV2
+          <PersonaEditor
             initialData={{
               id: persona.id,
               name: persona.name,

@@ -331,6 +331,15 @@ export default function PersonasPage() {
         </div>
       </div>
 
+      {personas.length === 0 && !loading && (
+        <div className="text-center py-16 border-2 border-dashed border-gray-300 rounded-xl">
+          <p className="text-lg text-gray-500">No personas yet</p>
+          <Link href="/personas/new" className="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+            Create your first persona
+          </Link>
+        </div>
+      )}
+
       {loading ? (
         <p className="text-center text-muted">Loading personas...</p>
       ) : (

@@ -19,7 +19,7 @@ os.environ["SQLITE_PATH"] = ":memory:"
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app, _v2_simulations
+from app.main import app, _active_simulations
 from app.database import initialize_database, close_database
 from app import config
 
@@ -38,7 +38,7 @@ TEST_UPLOAD_DIR = tempfile.mkdtemp()
 config.UPLOAD_DIR = TEST_UPLOAD_DIR
 os.makedirs(TEST_UPLOAD_DIR, exist_ok=True)
 
-_v2_simulations.clear()
+_active_simulations.clear()
 
 client = TestClient(app)
 
@@ -71,7 +71,7 @@ VALID_CONFIG = {
 def _cleanup_after():
     """Clean simulation state + upload files after each test."""
     yield
-    _v2_simulations.clear()
+    _active_simulations.clear()
     for item in os.listdir(TEST_UPLOAD_DIR):
         path = os.path.join(TEST_UPLOAD_DIR, item)
         if os.path.isfile(path):
@@ -282,5 +282,5 @@ def test_extraction_pdf():
     assert docs[0]["status"] == "ready"
 
     # _document_context in the in-memory store contains the extracted text
-    ctx = _v2_simulations[sim_id].get("_document_context", "")
+    ctx = _active_simulations[sim_id].get("_document_context", "")
     assert "Test document content for extraction" in ctx

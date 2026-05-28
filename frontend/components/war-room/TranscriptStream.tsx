@@ -8,7 +8,7 @@ import { Avatar, initialsFromName } from "@/components/Avatar";
 
 gsap.registerPlugin(useGSAP);
 
-export type V2Turn = {
+export type Turn = {
   turn_index: number;
   speaker: string;
   speaker_role?: string;
@@ -23,7 +23,7 @@ export type V2Turn = {
 };
 
 interface TranscriptStreamProps {
-  turns: V2Turn[];
+  turns: Turn[];
   playing: boolean;
   scrollRef: React.RefObject<HTMLDivElement | null>;
 }

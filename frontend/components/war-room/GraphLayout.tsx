@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import ForceGraph2D from "react-force-graph-2d";
-import type { V2Turn } from "./TranscriptStream";
+import type { Turn } from "./TranscriptStream";
 import { ConflictTimeline } from "./ConflictTimeline";
 import { EventLog } from "./EventLog";
 import { Leaderboard } from "./Leaderboard";
@@ -25,11 +25,11 @@ interface EventLogEntry {
 
 interface GraphLayoutProps {
   turn: number;
-  current?: V2Turn;
+  current?: Turn;
   playing: boolean;
   stakeholders: GraphStakeholder[];
   speakerId: string | null;
-  turns: V2Turn[];
+  turns: Turn[];
   totalTurns: number;
   eventLog: EventLogEntry[];
   simState?: SimulationStateData;

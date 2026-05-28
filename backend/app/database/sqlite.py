@@ -90,14 +90,15 @@ class SQLiteBackend(DatabaseBackend):
             CREATE TABLE IF NOT EXISTS postmortems (
                 simulation_id TEXT PRIMARY KEY,
                 postmortem_json TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (simulation_id) REFERENCES simulations(simulation_id) ON DELETE CASCADE
             )
         """)
 
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS state_snapshots (
                 id TEXT PRIMARY KEY,
-                simulation_id TEXT NOT NULL,
+                simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id) ON DELETE CASCADE,
                 turn_index INTEGER NOT NULL,
                 snapshot_json TEXT NOT NULL,
                 version INTEGER NOT NULL DEFAULT 1,
@@ -127,7 +128,7 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS agent_goals (
                 id TEXT PRIMARY KEY,
-                simulation_id TEXT NOT NULL,
+                simulation_id TEXT NOT NULL REFERENCES simulations(simulation_id) ON DELETE CASCADE,
                 agent_id TEXT NOT NULL,
                 turn_index INTEGER NOT NULL,
                 goal_text TEXT NOT NULL,
@@ -187,22 +188,6 @@ class SQLiteBackend(DatabaseBackend):
         """)
 
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_persona_research_pid ON persona_research(persona_id)")
-
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS document_uploads (
-                id TEXT PRIMARY KEY,
-                simulation_id TEXT NOT NULL,
-                filename TEXT NOT NULL,
-                filepath TEXT NOT NULL,
-                size_bytes INTEGER NOT NULL,
-                content_type TEXT NOT NULL,
-                extracted_text TEXT,
-                status TEXT NOT NULL DEFAULT 'pending',
-                created_at TEXT NOT NULL
-            )
-        """)
-
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_document_uploads_sim ON document_uploads(simulation_id)")
 
         self.conn.commit()
 
@@ -606,7 +591,7 @@ class SQLiteBackend(DatabaseBackend):
     # Persona Growth System (v2)
     # ------------------------------------------------------------------
 
-    def _row_to_persona_v2(self, row: sqlite3.Row) -> dict:
+    def _row_to_persona_detail(self, row: sqlite3.Row) -> dict:
         personality_raw = row["personality"] or "{}"
         tools_raw = row["tools"] or "[]"
         return {
@@ -629,16 +614,16 @@ class SQLiteBackend(DatabaseBackend):
         cursor.execute(
             "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders ORDER BY created_at DESC LIMIT 1000"
         )
-        return [self._row_to_persona_v2(row) for row in cursor.fetchall()]
+        return [self._row_to_persona_detail(row) for row in cursor.fetchall()]
 
-    async def get_persona_v2(self, persona_id: str) -> dict | None:
+    async def get_persona_detail(self, persona_id: str) -> dict | None:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT id, name, role, focus, incentive_tuning, hidden_agenda, tag, tool_profile, backstory, stance, personality, tools FROM stakeholders WHERE id = ?",
             (persona_id,),
         )
         row = cursor.fetchone()
-        return self._row_to_persona_v2(row) if row else None
+        return self._row_to_persona_detail(row) if row else None
 
     # ── Persona documents ──────────────────────────────────────────────
 
@@ -748,7 +733,7 @@ class SQLiteBackend(DatabaseBackend):
         )
         return [self._row_to_persona_evolution(row) for row in cursor.fetchall()]
 
-    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
+    async def update_persona(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
         cursor = self.conn.cursor()
         now = datetime.utcnow().isoformat()
         if stance is not None:
