@@ -498,6 +498,74 @@ class SQLiteBackend(DatabaseBackend):
         )
         return [dict(row) for row in cursor.fetchall()]
 
+    async def get_agent_simulations_by_id(self, persona_id: str) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            "SELECT DISTINCT simulation_id FROM v2_turns WHERE json_extract(turn_json, '$.agent_id') = ?",
+            (persona_id,),
+        )
+        sim_ids = [row["simulation_id"] for row in cursor.fetchall()]
+        results = []
+        for sim_id in sim_ids:
+            cursor.execute(
+                "SELECT simulation_id, config_json, status FROM v2_simulations WHERE simulation_id = ?",
+                (sim_id,),
+            )
+            sim_row = cursor.fetchone()
+            if not sim_row:
+                continue
+            config = json.loads(sim_row["config_json"])
+            subject = config.get("subject", {})
+            cursor.execute(
+                "SELECT COUNT(*) as cnt FROM v2_turns WHERE simulation_id = ? AND json_extract(turn_json, '$.agent_id') = ?",
+                (sim_id, persona_id),
+            )
+            cnt_row = cursor.fetchone()
+            agent_turns = cnt_row["cnt"] if cnt_row else 0
+            results.append({
+                "id": sim_id,
+                "subject_name": subject.get("name", ""),
+                "status": sim_row["status"],
+                "voltage": config.get("voltage", 50),
+                "total_turns": agent_turns,
+                "turn_count": agent_turns,
+                "stance": "neutral",
+                "role": "",
+                "first_turn_index": 0,
+                "last_turn_index": max(0, agent_turns - 1),
+                "created_at": "",
+            })
+        return results
+
+    async def get_agent_turns_by_id(self, persona_id: str, limit: int = 50) -> list[dict]:
+        cursor = self.conn.cursor()
+        cursor.execute(
+            """SELECT vt.turn_json, vs.config_json
+               FROM v2_turns vt
+               JOIN v2_simulations vs ON vt.simulation_id = vs.simulation_id
+               WHERE json_extract(vt.turn_json, '$.agent_id') = ?
+               ORDER BY vt.created_at DESC
+               LIMIT ?""",
+            (persona_id, limit),
+        )
+        results = []
+        for row in cursor.fetchall():
+            turn = json.loads(row["turn_json"])
+            config = json.loads(row["config_json"])
+            subject = config.get("subject", {})
+            results.append({
+                "turn_index": turn.get("turn_index", 0),
+                "participant_turn_index": turn.get("turn_index", 0),
+                "content": turn.get("content", ""),
+                "action_type": turn.get("action_type", "statement"),
+                "stance": turn.get("stance", "neutral"),
+                "emotional_state": {},
+                "internal_reasoning": turn.get("internal_reasoning", turn.get("reasoning", "")),
+                "created_at": "",
+                "subject_name": subject.get("name", ""),
+            })
+        return results
+
     async def delete_old_state_snapshots(self, simulation_id: str, max_keep: int = 50) -> None:
         cursor = self.conn.cursor()
         cursor.execute(
@@ -700,6 +768,8 @@ class SQLiteBackend(DatabaseBackend):
     # ------------------------------------------------------------------
 
     def _row_to_persona_v2(self, row: sqlite3.Row) -> dict:
+        personality_raw = row["personality"] or "{}"
+        tools_raw = row["tools"] or "[]"
         return {
             "id": row["id"],
             "name": row["name"],
@@ -711,8 +781,8 @@ class SQLiteBackend(DatabaseBackend):
             "tool_profile": row["tool_profile"] or "none",
             "backstory": row["backstory"] or "",
             "stance": row["stance"] or "neutral",
-            "personality": row["personality"] or "{}",
-            "tools": row["tools"] or "[]",
+            "personality": json.loads(personality_raw) if isinstance(personality_raw, str) else personality_raw,
+            "tools": json.loads(tools_raw) if isinstance(tools_raw, str) else tools_raw,
         }
 
     async def list_personas_v2(self) -> list[dict]:

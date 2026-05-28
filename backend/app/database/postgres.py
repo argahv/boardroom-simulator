@@ -798,10 +798,11 @@ class PostgresBackend(DatabaseBackend):
             # Create participants with persona_id lookup
             for i, s in enumerate(config.get("stakeholders", [])):
                 sname = s.get("name", "")
-                # Look up persona_id by name
+                # Look up persona_id: try personas table first, then fall back to
+                # the stakeholder's own id (from stakeholders table)
                 pid_row = await conn.fetchrow(
                     "SELECT id FROM personas WHERE name = $1 LIMIT 1", sname)
-                persona_uuid = pid_row["id"] if pid_row else None
+                persona_uuid = pid_row["id"] if pid_row else s.get("id")
                 await conn.execute("""
                     INSERT INTO simulation_participants (id, simulation_id, persona_id, name, role, stance,
                         personality, backstory, hidden_agenda, created_at)
@@ -1119,8 +1120,8 @@ class PostgresBackend(DatabaseBackend):
             "tool_profile": row["tool_profile"] or "none",
             "backstory": row.get("backstory") or "",
             "stance": row.get("stance") or "neutral",
-            "personality": json.dumps(personality),
-            "tools": json.dumps(tools),
+            "personality": personality,
+            "tools": tools,
         }
 
     async def list_personas_v2(self) -> list[dict]:

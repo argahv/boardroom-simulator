@@ -161,9 +161,10 @@ async def _load_seeds() -> None:
                     logger.warning("SEED_TEMPLATE_ERR %s: %s", t["id"], exc)
         logger.info("SEED loaded %d templates from %s", len(templates), templates_path)
 
-    migrated = await db.migrate_legacy_templates()
-    if migrated:
-        logger.info("MIGRATED %d legacy templates to new schema", migrated)
+    if hasattr(db, 'migrate_legacy_templates'):
+        migrated = await db.migrate_legacy_templates()
+        if migrated:
+            logger.info("MIGRATED %d legacy templates to new schema", migrated)
 
 
 @app.on_event("startup")
@@ -1422,20 +1423,29 @@ async def agent_detail(name: str) -> dict:
     """Comprehensive agent/persona detail view."""
     db = get_database()
 
-    # Try UUID lookup first (frontend now uses /persona/<uuid> URLs), fall back to slug/name
-    profile = await db.get_agent_by_id(name) or await db.get_agent_by_name(name)
+    # Try Postgres personas table (UUID/slug/name), fall back to stakeholders table
+    profile = None
+    if hasattr(db, 'get_agent_by_id'):
+        profile = await db.get_agent_by_id(name)
+    if profile is None and hasattr(db, 'get_agent_by_name'):
+        profile = await db.get_agent_by_name(name)
+    if profile is None and hasattr(db, 'get_persona_v2'):
+        profile = await db.get_persona_v2(name)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
     # Use the persona UUID for all downstream queries
     persona_id = profile["id"]
 
-    sims = await db.get_agent_simulations_by_id(persona_id)
-    turns = await db.get_agent_turns_by_id(persona_id)
+    try:
+        sims = await db.get_agent_simulations_by_id(persona_id)
+        turns = await db.get_agent_turns_by_id(persona_id)
+    except AttributeError:
+        sims, turns = [], []
     try:
         from .database.postgres import get_agent_memories_by_id as _get_memories
         memories = await _get_memories(db, persona_id)
-    except ImportError:
+    except Exception:
         memories = []
 
     # Compute emotional arc across all turns

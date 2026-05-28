@@ -1,0 +1,294 @@
+generator client {
+  provider             = "prisma-client-py"
+  interface            = "asyncio"
+  recursive_type_depth = 5
+  previewFeatures      = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+model document_uploads {
+  id             String   @id
+  simulation_id  String
+  filename       String
+  content_type   String   @default("application/octet-stream")
+  file_size      Int      @default(0)
+  status         String   @default("pending")
+  extracted_text String?
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([simulation_id], map: "idx_doc_uploads_sim")
+}
+
+model persona_documents {
+  id             String       @id
+  persona_id     String
+  filename       String       @default("")
+  filepath       String       @default("")
+  content_type   String       @default("application/octet-stream")
+  size_bytes     Int          @default(0)
+  status         String       @default("pending")
+  extracted_text String?
+  embedding_id   String?
+  created_at     DateTime     @default(now()) @db.Timestamptz(6)
+  stakeholders   stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([persona_id], map: "idx_persona_docs_pid")
+}
+
+model persona_evolution {
+  id              String       @id
+  persona_id      String
+  simulation_id   String       @default("")
+  proposed_deltas Json         @default("{}")
+  before_snapshot Json         @default("{}")
+  status          String       @default("pending")
+  applied_at      DateTime?    @db.Timestamptz(6)
+  created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  stakeholders    stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([persona_id], map: "idx_persona_evo_pid")
+  @@index([status], map: "idx_persona_evo_status")
+}
+
+model persona_research {
+  id           String       @id
+  persona_id   String
+  query        String       @default("")
+  results      Json         @default("[]")
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  stakeholders stakeholders @relation(fields: [persona_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([persona_id], map: "idx_persona_research_pid")
+}
+
+model personas {
+  id                      String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug                    String?                   @unique
+  name                    String
+  role                    String                    @default("")
+  focus                   String                    @default("")
+  backstory               String                    @default("")
+  personality             Json                      @default("{}")
+  hidden_agenda           String                    @default("")
+  tags                    String[]                  @default([])
+  metadata                Json                      @default("{}")
+  embedding               Unsupported("vector")?
+  created_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  updated_at              DateTime                  @default(now()) @db.Timestamptz(6)
+  simulation_participants simulation_participants[]
+
+  @@index([name], map: "idx_personas_name")
+  @@index([slug], map: "idx_personas_slug")
+}
+
+model scenario_templates {
+  id                        String   @id
+  name                      String
+  description               String
+  default_background        String
+  default_primary_goal      String
+  default_voltage           Int      @default(50)
+  default_model_temperature String   @default("stable")
+  suggested_persona_ids     String   @default("[]")
+  created_at                DateTime @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime @default(now()) @db.Timestamptz(6)
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model semantic_memories {
+  id                      BigInt                  @id @default(autoincrement())
+  participant_id          String                  @db.Uuid
+  simulation_id           String                  @db.Uuid
+  memory_type             String
+  content                 String
+  turn_id                 BigInt?
+  is_active               Boolean                 @default(true)
+  confidence              Float                   @default(1.0)
+  embedding               Unsupported("vector")?
+  created_at              DateTime                @default(now()) @db.Timestamptz(6)
+  simulation_participants simulation_participants @relation(fields: [participant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  turns                   turns?                  @relation(fields: [turn_id], references: [id], onUpdate: NoAction)
+
+  @@index([participant_id], map: "idx_semantic_memories_participant")
+  @@index([simulation_id], map: "idx_semantic_memories_simulation")
+  @@index([participant_id, memory_type], map: "idx_semantic_memories_type")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model simulation_participants {
+  id                                                              String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  simulation_id                                                   String              @db.Uuid
+  persona_id                                                      String?             @db.Uuid
+  name                                                            String
+  role                                                            String              @default("")
+  stance                                                          String              @default("neutral")
+  personality                                                     Json                @default("{}")
+  backstory                                                       String              @default("")
+  hidden_agenda                                                   String              @default("")
+  turn_count                                                      Int                 @default(0)
+  first_turn_index                                                Int?
+  last_turn_index                                                 Int?
+  created_at                                                      DateTime            @default(now()) @db.Timestamptz(6)
+  semantic_memories                                               semantic_memories[]
+  personas                                                        personas?           @relation(fields: [persona_id], references: [id], onUpdate: NoAction)
+  turns_turns_directed_to_participant_idTosimulation_participants turns[]             @relation("turns_directed_to_participant_idTosimulation_participants")
+  turns_turns_participant_idTosimulation_participants             turns[]             @relation("turns_participant_idTosimulation_participants")
+
+  @@index([persona_id], map: "idx_participants_persona")
+  @@index([simulation_id], map: "idx_participants_simulation")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model simulations {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  template_id         String?    @db.Uuid
+  subject_name        String     @default("")
+  subject_description String     @default("")
+  status              String     @default("idle")
+  voltage             Int        @default(50)
+  model_temperature   String     @default("volatile")
+  speaker_mode        String     @default("alternating")
+  end_condition       Json       @default("{\"type\": \"timeout\", \"max_turns\": 20}")
+  config              Json       @default("{}")
+  metadata            Json       @default("{}")
+  total_turns         Int        @default(0)
+  total_participants  Int        @default(0)
+  created_at          DateTime   @default(now()) @db.Timestamptz(6)
+  updated_at          DateTime   @default(now()) @db.Timestamptz(6)
+  templates           templates? @relation(fields: [template_id], references: [id], onUpdate: NoAction)
+
+  @@index([created_at(sort: Desc)], map: "idx_simulations_created")
+  @@index([created_at(sort: Desc)], map: "idx_simulations_created_at")
+  @@index([status], map: "idx_simulations_status")
+}
+
+model stakeholders {
+  id                String              @id
+  name              String
+  role              String
+  focus             String
+  incentive_tuning  Int                 @default(50)
+  hidden_agenda     String              @default("")
+  tag               String?
+  tool_profile      String              @default("none")
+  created_at        DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime            @default(now()) @db.Timestamptz(6)
+  backstory         String              @default("")
+  stance            String              @default("neutral")
+  personality       Json                @default("{}")
+  tools             Json                @default("[]")
+  persona_documents persona_documents[]
+  persona_evolution persona_evolution[]
+  persona_research  persona_research[]
+
+  @@index([tag], map: "idx_stakeholders_tag")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model templates {
+  id                 String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug               String                 @unique
+  name               String
+  description        String                 @default("")
+  category           String                 @default("")
+  difficulty         String                 @default("medium")
+  estimated_duration String                 @default("")
+  stakeholder_count  Int                    @default(0)
+  voltage            Int                    @default(50)
+  config             Json                   @default("{}")
+  embedding          Unsupported("vector")?
+  created_at         DateTime               @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime               @default(now()) @db.Timestamptz(6)
+  simulations        simulations[]
+
+  @@index([category], map: "idx_templates_category")
+  @@index([slug], map: "idx_templates_slug")
+}
+
+model turns {
+  id                                                                                BigInt                   @id @default(autoincrement())
+  simulation_id                                                                     String                   @db.Uuid
+  participant_id                                                                    String                   @db.Uuid
+  turn_index                                                                        Int
+  participant_turn_index                                                            Int
+  content                                                                           String
+  action_type                                                                       String                   @default("statement")
+  stance                                                                            String?
+  emotional_state                                                                   Json                     @default("{}")
+  internal_reasoning                                                                String                   @default("")
+  directed_to_participant_id                                                        String?                  @db.Uuid
+  turn_data                                                                         Json                     @default("{}")
+  embedding                                                                         Unsupported("vector")?
+  created_at                                                                        DateTime                 @default(now()) @db.Timestamptz(6)
+  semantic_memories                                                                 semantic_memories[]
+  simulation_participants_turns_directed_to_participant_idTosimulation_participants simulation_participants? @relation("turns_directed_to_participant_idTosimulation_participants", fields: [directed_to_participant_id], references: [id], onUpdate: NoAction)
+  simulation_participants_turns_participant_idTosimulation_participants             simulation_participants  @relation("turns_participant_idTosimulation_participants", fields: [participant_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([created_at], map: "idx_turns_created_at")
+  @@index([participant_id], map: "idx_turns_participant")
+  @@index([participant_id, turn_index], map: "idx_turns_participant_turn_idx")
+  @@index([simulation_id, turn_index], map: "idx_turns_sim_index")
+  @@index([simulation_id, participant_id], map: "idx_turns_sim_participant")
+}
+
+model v2_agent_goals {
+  id            String @id
+  simulation_id String
+  agent_id      String
+  turn_index    Int
+  goal_text     String
+  priority      Float  @db.Real
+  source        String
+  is_active     Int    @default(1)
+
+  @@index([agent_id], map: "idx_agent_goals_agent")
+  @@index([simulation_id], map: "idx_agent_goals_sim")
+}
+
+model v2_postmortems {
+  simulation_id   String   @id
+  postmortem_json Json
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+}
+
+model v2_simulations {
+  simulation_id      String               @id
+  config_json        Json
+  status             String               @default("idle")
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime             @default(now()) @db.Timestamptz(6)
+  v2_state_snapshots v2_state_snapshots[]
+  v2_turns           v2_turns[]
+
+  @@index([status], map: "idx_v2_simulations_status")
+}
+
+model v2_state_snapshots {
+  id             String         @id
+  simulation_id  String
+  turn_index     Int
+  snapshot_json  Json
+  version        Int            @default(1)
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  v2_simulations v2_simulations @relation(fields: [simulation_id], references: [simulation_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([simulation_id, turn_index], map: "idx_snapshots_sim_turn")
+}
+
+model v2_turns {
+  id             Int            @id @default(autoincrement())
+  simulation_id  String
+  turn_index     Int
+  turn_json      Json
+  created_at     DateTime       @default(now()) @db.Timestamptz(6)
+  v2_simulations v2_simulations @relation(fields: [simulation_id], references: [simulation_id], onDelete: NoAction, onUpdate: NoAction)
+
+  @@index([simulation_id, turn_index], map: "idx_v2_turns_sim")
+  @@index([simulation_id, created_at], map: "idx_v2_turns_sim_created")
+}
