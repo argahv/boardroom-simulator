@@ -498,7 +498,7 @@ class PrismaBackend(DatabaseBackend):
                 "stance": r.stance,
                 "internal_reasoning": r.internal_reasoning,
                 "emotional_state": es,
-                "created_at": r.created_at,
+                "created_at": str(r.created_at) if r.created_at else None,
                 "speaker": speaker.name if speaker else "",
                 "speaker_role": speaker.role if speaker else "",
             })

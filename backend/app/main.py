@@ -945,9 +945,9 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
         entry = _active_simulations.get(simulation_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Simulation not found")
-        already_complete = entry["status"] == "complete" or entry["status"] == "running"
+        already_complete = entry["status"] == "complete"
         if entry["status"] == "running":
-            logger.info("SIM_REJOIN simulation_id=%s — client reconnecting to running sim", simulation_id)
+            raise HTTPException(status_code=409, detail="Simulation is already running")
         if not already_complete:
             entry["status"] = "running"
 
@@ -974,7 +974,7 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                 except Exception:
                     turns = []
                 for turn in turns:
-                    yield f"data: {json.dumps(turn)}\n\n"
+                    yield f"data: {json.dumps(turn, default=str)}\n\n"
                 yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
                 return
 
