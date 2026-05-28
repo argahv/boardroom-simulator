@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, BeforeValidator
 
 ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
 ModelTemperature = Literal["stable", "volatile"]
@@ -60,6 +61,11 @@ class ObjectiveStore(BaseModel):
             for o in active[:len(active) - self.max_active]:
                 o.is_active = False
 
+def _json_str(v: object) -> str:
+    if isinstance(v, str):
+        return v
+    return json.dumps(v, separators=(",", ":"))
+
 class Stakeholder(BaseModel):
     id: str
     name: str
@@ -71,8 +77,8 @@ class Stakeholder(BaseModel):
     tool_profile: ToolProfile = "none"  # determines which tools this agent gets
     backstory: str = ""
     stance: str = "neutral"
-    personality: str = "{}"
-    tools: str = "[]"
+    personality: Annotated[str, BeforeValidator(_json_str)] = "{}"
+    tools: Annotated[str, BeforeValidator(_json_str)] = "[]"
 
 
 class ScenarioTemplate(BaseModel):
