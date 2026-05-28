@@ -139,7 +139,7 @@ Each persona spawns an `AgentRuntime` with:
 
 ## Demo
 
-<video src="docs/assets/flow.mp4" controls width="100%"></video>
+<video src="https://github.com/argahv/boardroom-simulator/raw/master/docs/assets/flow.mp4" controls width="100%"></video>
 
 ## Prerequisites
 
