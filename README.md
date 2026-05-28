@@ -1,4 +1,13 @@
+<div align="center">
+
 # Boardroom Simulator
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python](https://img.shields.io/badge/python-3.11+-blue.svg)]()
+[![Node](https://img.shields.io/badge/node-20+-green.svg)]()
+[![TypeScript](https://img.shields.io/badge/typescript-strict-blue.svg)]()
+
+</div>
 
 A **synthetic social operating system** — multi-agent negotiation simulator where AI stakeholders with conflicting incentives debate, form coalitions, escalate, compromise, feel emotions, and execute multi-turn strategies.
 
@@ -81,30 +90,30 @@ Agents maintain **multi-turn plans** with subgoals. Triggers (e.g., `trust_colla
 
 Reusable stakeholder library — 23 seeded personas across executive, finance, legal, technical, procurement, and comms roles. Each persona is a stable identity that persists across simulations.
 
-| Field | Example | Purpose |
-|---|---|---|
-| `name` | "Priya Kapoor" | Identity |
-| `role` | "Corp Dev VP" | Functional hat |
-| `focus` | risk posture, phased rollout readiness | Decision-making priorities |
-| `stance` | champion / detractor / neutral / moderator / wildcard | Starting position |
-| `personality` | aggressiveness=40, empathy=70, stubbornness=30, verbosity=60 | 4-axis trait profile (0-100) |
-| `hidden_agenda` | Needs a marquee AI partnership before fiscal year-end | Private motivation |
-| `tag` | SKEPTICAL / AGREEABLE / LOCKED / CALIBRATING / VISIONARY | Behavioral label |
-| `tool_profile` | financial / legal / technical / comms / none | Which tools the agent wields |
-| `backstory` | Free-text narrative | Roleplaying context |
+| Field           | Example                                                      | Purpose                      |
+| --------------- | ------------------------------------------------------------ | ---------------------------- |
+| `name`          | "Priya Kapoor"                                               | Identity                     |
+| `role`          | "Corp Dev VP"                                                | Functional hat               |
+| `focus`         | risk posture, phased rollout readiness                       | Decision-making priorities   |
+| `stance`        | champion / detractor / neutral / moderator / wildcard        | Starting position            |
+| `personality`   | aggressiveness=40, empathy=70, stubbornness=30, verbosity=60 | 4-axis trait profile (0-100) |
+| `hidden_agenda` | Needs a marquee AI partnership before fiscal year-end        | Private motivation           |
+| `tag`           | SKEPTICAL / AGREEABLE / LOCKED / CALIBRATING / VISIONARY     | Behavioral label             |
+| `tool_profile`  | financial / legal / technical / comms / none                 | Which tools the agent wields |
+| `backstory`     | Free-text narrative                                          | Roleplaying context          |
 
 ### 6 Behavioral Archetypes
 
-Archetypes bias emotion baselines and action tendencies — they define how a persona *feels by default*:
+Archetypes bias emotion baselines and action tendencies — they define how a persona _feels by default_:
 
-| Archetype | Personality Bias | Emotion Bias | Tendencies |
-|---|---|---|---|
-| **Opportunist** | aggressive +10, empathy -10, stubborn -10 | joy +0.3, fear -0.1 | compromise 0.4, question 0.3 |
-| **Idealist** | aggressive -10, empathy +20, stubborn +30 | joy +0.2, anger +0.1 | statement 0.4, challenge 0.3 |
-| **Diplomat** | aggressive -20, empathy +30, stubborn -10 | joy +0.3, anger -0.1 | compromise 0.4, coalition 0.2 |
-| **Pragmatist** | neutral (no bias) | neutral | balanced across all actions |
-| **Agitator** | aggressive +30, empathy -20, stubborn +20 | anger +0.3, joy -0.1 | challenge 0.5, interrupt 0.3 |
-| **Guardian** | aggressive +10, empathy +10, stubborn +20 | fear +0.2, anger +0.1 | challenge 0.3, interrupt 0.2 |
+| Archetype       | Personality Bias                          | Emotion Bias          | Tendencies                    |
+| --------------- | ----------------------------------------- | --------------------- | ----------------------------- |
+| **Opportunist** | aggressive +10, empathy -10, stubborn -10 | joy +0.3, fear -0.1   | compromise 0.4, question 0.3  |
+| **Idealist**    | aggressive -10, empathy +20, stubborn +30 | joy +0.2, anger +0.1  | statement 0.4, challenge 0.3  |
+| **Diplomat**    | aggressive -20, empathy +30, stubborn -10 | joy +0.3, anger -0.1  | compromise 0.4, coalition 0.2 |
+| **Pragmatist**  | neutral (no bias)                         | neutral               | balanced across all actions   |
+| **Agitator**    | aggressive +30, empathy -20, stubborn +20 | anger +0.3, joy -0.1  | challenge 0.5, interrupt 0.3  |
+| **Guardian**    | aggressive +10, empathy +10, stubborn +20 | fear +0.2, anger +0.1 | challenge 0.3, interrupt 0.2  |
 
 ### Persona Lifecycle
 
@@ -121,6 +130,7 @@ Extensible `ArchetypeRegistry` at `backend/app/runtime/archetypes.py`. Custom ar
 ### From Persona to Agent
 
 Each persona spawns an `AgentRuntime` with:
+
 - **Private memory** — last 12 turn events with full context
 - **Self-directed bidding** — urgency = personality base + emotion modulation + LLM strategy score (60/40 hybrid)
 - **Emotional state machine** — anger/fear/joy/shame causally bias interrupt, challenge, compromise, coalition behavior
@@ -140,6 +150,15 @@ Each persona spawns an `AgentRuntime` with:
 ## Quick Start
 
 ```bash
+make install
+make dev
+```
+
+Open `http://localhost:3000` in your browser. API docs at `http://127.0.0.1:8000/docs`.
+
+### Manual Setup
+
+```bash
 # Backend
 cd backend && python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
@@ -152,21 +171,7 @@ echo 'NEXT_PUBLIC_API_URL=http://127.0.0.1:8000' >> .env.local
 npm run dev
 ```
 
-API docs at `http://127.0.0.1:8000/docs` · App at `http://localhost:3000`
-
-## Frontend
-
-- **War Room** (`/simulate/[id]`) — real-time SSE streaming + **replay mode** for completed simulations
-  - **Roster** — avatar grid with emotion indicators, trust/leverage panels, coalition tracker, sentiment graph
-  - **Graph** — force-directed stakeholder graph (conversation flow + trust relationship modes)
-  - **Table** — positional seating with speech bubble and trust connection lines
-  - **State Diff Panel** — per-turn color-coded changes in social physics
-  - **Emotional Influence Panel** — active bias bars with emotion source mapping
-  - **Strategic Plan Panel** — plan goals, subgoals, and progress
-- **Agent Detail** (`/personas/[slug]`) — personality profile, emotional arc, semantic memories, goals & strategy
-- **Wizard** (`/simulate/new`) — simulation creation (background → stakeholders → env flags)
-- **Analytics** (`/analytics`) — cross-simulation aggregates
-- **Postmortem** — confidence scoring, objection topology, consensus rating
+See [SETUP.md](SETUP.md) for the full setup guide, configuration options, and troubleshooting.
 
 ## Key Endpoints
 
@@ -179,6 +184,8 @@ API docs at `http://127.0.0.1:8000/docs` · App at `http://localhost:3000`
 | POST   | `/simulations/{id}/inject`     | Human turn injection               |
 | POST   | `/simulations/{id}/postmortem` | LLM-generated analysis             |
 | GET    | `/agents/{name}/detail`        | Agent profile + goals + strategy   |
+
+Full API reference at `http://127.0.0.1:8000/docs`.
 
 ## Docs
 
@@ -194,6 +201,10 @@ API docs at `http://127.0.0.1:8000/docs` · App at `http://localhost:3000`
 ## Verification
 
 ```bash
+# Using Make (recommended)
+make test
+
+# Or manually
 cd backend && python -m pytest tests/
 cd frontend && npx tsc --noEmit
 ```
