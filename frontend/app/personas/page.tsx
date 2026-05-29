@@ -1,15 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import { AppShell } from "@/components/AppShell";
 import { deleteStakeholder, fetchStakeholders } from "@/lib/api";
 import type { AgentStance, Stakeholder } from "@/lib/types";
-
-gsap.registerPlugin(useGSAP);
 
 type ArchetypeFilter = "all" | "executive" | "technical" | "procurement" | "legal";
 
@@ -33,18 +28,18 @@ const STANCE_LABELS: Record<StanceFilter, string> = {
 };
 
 const STANCE_COLORS: Record<string, string> = {
-  champion: "bg-green-100 text-green-800",
-  detractor: "bg-red-100 text-red-800",
-  neutral: "bg-gray-100 text-gray-700",
-  moderator: "bg-blue-100 text-blue-800",
-  wildcard: "bg-purple-100 text-purple-800",
+  champion: "bg-success-soft text-success",
+  detractor: "bg-error-soft text-error",
+  neutral: "bg-surface-container-low text-muted",
+  moderator: "bg-accent-blue/10 text-accent-blue",
+  wildcard: "bg-primary-soft text-primary",
 };
 
 const PERSONALITY_BAR_COLORS: Record<string, string> = {
-  aggressiveness: "#f87171",
-  empathy: "#34d399",
-  stubbornness: "#fb923c",
-  verbosity: "#60a5fa",
+  aggressiveness: "var(--color-chart-1)",
+  empathy: "var(--color-chart-2)",
+  stubbornness: "var(--color-chart-3)",
+  verbosity: "var(--color-chart-4)",
 };
 
 function PersonaCard({
@@ -60,11 +55,9 @@ function PersonaCard({
   onDelete: (id: string) => void;
   onSetDeleteConfirmId: (id: string | null) => void;
 }) {
-  const cardRef = useRef<HTMLDivElement>(null);
-
   return (
-    <div ref={cardRef} data-anim="card">
-      <div className="group rounded-3xl border border-ink/10 bg-white/40 p-5 transition hover:border-primary/50 hover:shadow-lg block">
+    <div className="anim-slide-up">
+      <div className="group rounded-2xl border border-hairline bg-surface-card p-5 transition hover:border-primary/50 hover:shadow-md block">
         <div className="mb-3 flex items-start justify-between">
           <div className="flex-1 min-w-0">
             <h3 className="font-display text-2xl font-semibold truncate">{persona.name}</h3>
@@ -125,7 +118,7 @@ function PersonaCard({
             {Object.entries(persona.personality).map(([trait, val]) => (
               <div key={trait} className="flex items-center gap-2">
                 <span className="text-[10px] text-muted/70 capitalize w-16 shrink-0">{trait}</span>
-                <div className="flex-1 h-1 rounded-full bg-gray-200">
+                <div className="flex-1 h-1 rounded-full bg-hairline">
                   <div className="h-full rounded-full" style={{
                     width: `${val}%`,
                     backgroundColor: PERSONALITY_BAR_COLORS[trait] ?? "#888",
@@ -139,7 +132,7 @@ function PersonaCard({
         {/* Pending evolution badge */}
         {persona.evolution_pending && (
           <div className="mb-3">
-            <span className="inline-block rounded-full bg-amber-100 text-amber-800 px-2.5 py-0.5 text-[10px] font-medium">
+            <span className="inline-block rounded-full bg-warning-soft text-warning px-2.5 py-0.5 text-[10px] font-medium">
               Pending evolution
             </span>
           </div>
@@ -192,7 +185,6 @@ function PersonaCard({
 }
 
 export default function PersonasPage() {
-  const router = useRouter();
   const [personas, setPersonas] = useState<Stakeholder[]>([]);
   const [filteredPersonas, setFilteredPersonas] = useState<Stakeholder[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -201,24 +193,6 @@ export default function PersonasPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
-
-  const gridRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    const mm = gsap.matchMedia();
-    mm.add("(prefers-reduced-motion: no-preference)", () => {
-      gsap.from("[data-anim='card']", {
-        y: 24,
-        opacity: 0,
-        rotate: -1,
-        duration: 0.45,
-        ease: "back.out(1.7)",
-        stagger: { amount: 0.35, from: "start" },
-        clearProps: "transform",
-      });
-    });
-    return () => mm.revert();
-  }, { scope: gridRef, dependencies: [filteredPersonas] });
 
   const loadPersonas = async () => {
     setLoading(true);
@@ -297,7 +271,7 @@ export default function PersonasPage() {
           placeholder="Search personas..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 min-w-64 rounded-full border border-ink/10 bg-white/50 px-5 py-3 outline-none focus:border-primary"
+          className="flex-1 min-w-64 rounded-full border border-hairline bg-surface-card/70 px-5 py-3 outline-none focus:border-primary transition-colors"
         />
         <div className="flex gap-2">
           {(Object.keys(ARCHETYPE_LABELS) as ArchetypeFilter[]).map((filter) => (
@@ -332,18 +306,28 @@ export default function PersonasPage() {
       </div>
 
       {personas.length === 0 && !loading && (
-        <div className="text-center py-16 border-2 border-dashed border-gray-300 rounded-xl">
-          <p className="text-lg text-gray-500">No personas yet</p>
-          <Link href="/personas/new" className="mt-4 inline-block px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+        <div className="text-center py-16 border-2 border-dashed border-hairline rounded-2xl bg-surface-card/50">
+          <p className="text-lg text-muted font-medium">No personas yet</p>
+          <p className="text-sm text-muted/70 mt-1">Build your first stakeholder to populate the library.</p>
+          <Link href="/personas/new" className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_12px_24px_rgba(237,111,92,0.25)]">
             Create your first persona
           </Link>
         </div>
       )}
 
       {loading ? (
-        <p className="text-center text-muted">Loading personas...</p>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
+            <div key={i} className="rounded-2xl border border-hairline bg-surface-card p-5 animate-pulse">
+              <div className="h-5 w-32 rounded bg-ink/8 anim-shimmer mb-3" />
+              <div className="h-3 w-24 rounded bg-ink/8 anim-shimmer mb-4" />
+              <div className="h-3 w-full rounded bg-ink/8 anim-shimmer mb-2" />
+              <div className="h-3 w-3/4 rounded bg-ink/8 anim-shimmer" />
+            </div>
+          ))}
+        </div>
       ) : (
-        <div ref={gridRef} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {filteredPersonas.map((persona) => {
             return (
               <PersonaCard

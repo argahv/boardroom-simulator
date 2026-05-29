@@ -518,7 +518,7 @@ function EventLogPanel({ eventLog }: { eventLog: string[] }) {
           Event stream
         </span>
         <div style={{ display: "flex", gap: 6 }}>
-          {["#a09d96", "#a09d96", "#cc785c"].map((c, i) => (
+          {["var(--color-muted)", "var(--color-muted)", "var(--color-chart-1)"].map((c, i) => (
             <div key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: c }} />
           ))}
         </div>

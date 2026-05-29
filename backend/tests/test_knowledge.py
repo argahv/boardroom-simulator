@@ -14,8 +14,7 @@ import tempfile
 import uuid
 
 # Set test env BEFORE importing app modules
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = ":memory:"
+os.environ["DATABASE_TYPE"] = "prisma"
 os.environ["OPENROUTER_API_KEY"] = ""       # mock embedding mode (zero vectors)
 os.environ["CHROMA_PERSIST_DIR"] = tempfile.mkdtemp()
 os.environ["UPLOAD_DIR"] = tempfile.mkdtemp()
@@ -33,7 +32,7 @@ from app import config
 
 @pytest.fixture
 def fresh_db():
-    """Reset global DB singleton to fresh in-memory SQLite for each test."""
+    """Reset global DB singleton to a fresh database for each test."""
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(close_database())
@@ -59,6 +58,7 @@ def ks():
 
 # ── Embedding Tests ───────────────────────────────────────────────────────
 
+@pytest.mark.usefixtures("db_setup")
 class TestEmbedding:
     """T7 — Embedding service unit tests."""
 
@@ -119,6 +119,7 @@ class TestEmbedding:
 
 # ── Chroma KnowledgeStore Tests ───────────────────────────────────────────
 
+@pytest.mark.usefixtures("db_setup")
 class TestKnowledgeStore:
     """T8 — KnowledgeStore (Chroma-backed vector memory)."""
 
@@ -197,6 +198,7 @@ STAKEHOLDER_TEMPLATE = {
 }
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestDocumentUploadAPI:
     """T9 — Persona document upload via REST API."""
 

@@ -43,7 +43,7 @@ export function StrategicPlanPanel({ plans, nameMap }: StrategicPlanPanelProps) 
             <div key={i} className="rounded-lg border border-hairline bg-canvas px-3 py-[10px]">
               <div className="mb-1 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 rounded-full ${plan.status === 'active' ? 'bg-green-500' : 'bg-muted'}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${plan.status === 'active' ? 'bg-success' : 'bg-muted'}`} />
                   <span className="text-[12px] font-medium text-ink">{name}</span>
                 </div>
                 <span className="font-mono text-[10px] text-muted">{Math.round(plan.confidence * 100)}%</span>

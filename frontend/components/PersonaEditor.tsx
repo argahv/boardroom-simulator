@@ -22,10 +22,10 @@ const TRAIT_LABELS: Record<keyof PersonalityProfile, string> = {
 };
 
 const TRAIT_COLORS: Record<string, string> = {
-  aggressiveness: "#f87171",
-  empathy: "#34d399",
-  stubbornness: "#fb923c",
-  verbosity: "#60a5fa",
+  aggressiveness: "#ed6f5c",  /* chart-1 coral */
+  empathy: "#3d9e8c",        /* chart-2 teal */
+  stubbornness: "#c9952e",   /* chart-3 amber */
+  verbosity: "#4f8bc9",      /* chart-4 blue */
 };
 
 const DEFAULT_PERSONALITY: PersonalityProfile = {

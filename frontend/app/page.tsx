@@ -61,10 +61,10 @@ export default function Home() {
   useGSAP(
     () => {
       gsap.from("[data-anim='hero']", {
-        y: 24,
+        y: 16,
         opacity: 0,
-        duration: 0.5,
-        stagger: 0.12,
+        duration: 0.35,
+        stagger: 0.08,
         ease: "power2.out",
         clearProps: "transform",
       });
@@ -76,10 +76,10 @@ export default function Home() {
   useGSAP(
     () => {
       gsap.from("[data-anim='card']", {
-        y: 20,
+        y: 12,
         opacity: 0,
-        duration: 0.4,
-        stagger: { amount: 0.4, from: "start" },
+        duration: 0.25,
+        stagger: { amount: 0.25, from: "start" },
         ease: "power2.out",
         clearProps: "transform",
       });
@@ -152,7 +152,7 @@ export default function Home() {
           <button
             onClick={handleQuickPlay}
             disabled={quickPlayLoading}
-            className="w-full flex items-center justify-center gap-3 rounded-2xl bg-primary px-8 py-5 text-lg font-semibold text-on-dark shadow-[0_16px_30px_rgba(237,111,92,0.28)] hover:bg-primary-active transition disabled:opacity-60 disabled:cursor-not-allowed"
+            className="w-full flex items-center justify-center gap-3 rounded-2xl bg-primary px-8 py-5 text-lg font-semibold text-on-dark hover:bg-primary-active active:scale-[0.98] transition-all duration-150 disabled:opacity-60 disabled:cursor-not-allowed"
           >
             {quickPlayLoading ? (
               <>

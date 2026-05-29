@@ -53,8 +53,9 @@ export default function LibraryPage() {
             {[1,2,3,4,5,6].map(i => <div key={i} className="rounded-xl border border-hairline bg-surface-card p-5 animate-pulse h-28" />)}
           </div>
         ) : templates.length === 0 ? (
-          <div className="rounded-xl border-2 border-dashed border-hairline bg-surface-card/50 p-10 text-center">
-            <p className="text-sm text-muted">No templates in the library yet.</p>
+          <div className="rounded-2xl border-2 border-dashed border-hairline bg-surface-card/50 p-12 text-center">
+            <p className="text-sm text-muted font-medium">No templates yet</p>
+            <p className="text-xs text-muted/70 mt-1">Templates will appear here once scenarios are configured on the backend.</p>
           </div>
         ) : (
           <>
@@ -71,7 +72,7 @@ export default function LibraryPage() {
               {filtered.map((t) => {
                 const stakeholders: any[] = (t.config as any)?.stakeholders ?? [];
                 return (
-                  <div key={t.slug} className="rounded-xl border border-hairline bg-surface-card p-5 transition flex flex-col">
+                  <div key={t.slug} className="rounded-2xl border border-hairline bg-surface-card p-5 transition flex flex-col hover:border-primary/30 hover:shadow-sm">
                     <div className="flex items-center justify-between mb-2">
                       <span className="text-xs font-semibold uppercase tracking-wider text-primary">{t.category}</span>
                       <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${

@@ -372,8 +372,7 @@ class Scheduler:
                 })
                 try:
                     db = get_database()
-                    if hasattr(db, 'create_state_snapshot'):
-                        await db.create_state_snapshot(self.simulation_id, self.turn_count, json.dumps(public_state), version=1)
+                    await db.create_state_snapshot(self.simulation_id, self.turn_count, json.dumps(public_state), version=1)
                 except Exception:
                     pass
 
@@ -404,8 +403,7 @@ class Scheduler:
             generator = PostmortemGenerator(self.space, self.config, self.behavior_engine)
             postmortem = await generator.generate(self.simulation_id, tr)
             db = get_database()
-            if hasattr(db, 'save_postmortem'):
-                await db.save_postmortem(self.simulation_id, json.dumps(postmortem.model_dump(mode="json")))
+            await db.save_postmortem(self.simulation_id, json.dumps(postmortem.model_dump(mode="json")))
         except Exception as exc:
             logger.warning("Postmortem generation failed: %s", exc)
 

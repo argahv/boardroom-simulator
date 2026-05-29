@@ -75,7 +75,7 @@ REDIS_URL=redis://localhost:6379/0
 RQ_QUEUE_SIMULATION=simulation
 RQ_QUEUE_POSTMORTEM=postmortem
 RQ_JOB_TIMEOUT_SECONDS=300
-DATABASE_URL=postgresql+asyncpg://boardroom:boardroom@localhost:5432/boardroom
+DATABASE_URL=postgresql://boardroom:boardroom@localhost:5432/boardroom
 ```
 
 Backend will be available at: http://127.0.0.1:8000

@@ -66,7 +66,7 @@ export function EventLog({ events }: EventLogProps) {
           Event stream
         </span>
         <div className="flex gap-[6px]">
-          {["#a09d96", "#a09d96", "#cc785c"].map((c, i) => (
+          {["var(--color-muted)", "var(--color-muted)", "var(--color-chart-1)"].map((c, i) => (
             <div key={i} className="h-[7px] w-[7px] rounded-full" style={{ background: c }} />
           ))}
         </div>

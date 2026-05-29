@@ -13,25 +13,18 @@ import os
 import shutil
 import tempfile
 
-# must set SQLITE_PATH before importing app modules
-os.environ["SQLITE_PATH"] = ":memory:"
+# must set DATABASE_TYPE before importing app modules
+os.environ["DATABASE_TYPE"] = "prisma"
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app, _active_simulations
-from app.database import initialize_database, close_database
 from app import config
 
 # ---------------------------------------------------------------------------
 # Module-level setup
 # ---------------------------------------------------------------------------
-
-# fresh in-memory DB so document records persist during tests
-import asyncio
-loop = asyncio.new_event_loop()
-asyncio.set_event_loop(loop)
-loop.run_until_complete(initialize_database())
 
 # redirect uploads to a temp dir so tests don't pollute dev data
 TEST_UPLOAD_DIR = tempfile.mkdtemp()
@@ -142,6 +135,7 @@ def _make_test_pdf(text: str = "Hello World") -> bytes:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_json_endpoint_unchanged():
     """POST /simulations with JSON body creates a simulation (200)."""
     resp = client.post("/simulations", json=VALID_CONFIG)
@@ -150,11 +144,12 @@ def test_json_endpoint_unchanged():
     assert "simulation_id" in data
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_with_pdf():
     """POST /simulations/with-documents with valid PDF returns 200 + 1 doc."""
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files={"files": ("test.pdf", b"%PDF-1.4 test content", "application/pdf")},
     )
     assert resp.status_code == 200
@@ -168,11 +163,12 @@ def test_multipart_with_pdf():
     assert len(get_resp.json()["documents"]) == 1
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_no_files():
     """POST /simulations/with-documents without files returns 200 + empty docs."""
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
     )
     assert resp.status_code == 200
     data = resp.json()
@@ -185,11 +181,12 @@ def test_multipart_no_files():
     assert get_resp.json()["documents"] == []
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_reject_invalid_type():
     """POST with .exe file returns 422."""
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files={
             "files": (
                 "malware.exe",
@@ -201,17 +198,19 @@ def test_multipart_reject_invalid_type():
     assert resp.status_code == 422
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_reject_oversized():
     """POST with file > 25 MB returns 413."""
     large = b"0" * (26 * 1024 * 1024)
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files={"files": ("large.pdf", large, "application/pdf")},
     )
     assert resp.status_code == 413
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_exceed_max_count():
     """POST with 6 files returns 422."""
     files = []
@@ -221,27 +220,29 @@ def test_multipart_exceed_max_count():
         )
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files=files,
     )
     assert resp.status_code == 422
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_multipart_invalid_json():
     """POST with malformed config string returns 422."""
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": "not valid json"},
+        data={"config": "not valid json"},
     )
     assert resp.status_code == 422
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_document_metadata_in_get():
     """GET /simulations/{id} returns document metadata without
     extracted_text or filepath."""
     create_resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files={"files": ("test.pdf", b"%PDF-1.4 content", "application/pdf")},
     )
     assert create_resp.status_code == 200
@@ -263,12 +264,13 @@ def test_document_metadata_in_get():
     assert "filepath" not in doc
 
 
+@pytest.mark.usefixtures("db_setup")
 def test_extraction_pdf():
     """Upload a PDF with known content, verify extracted_text flows through."""
     pdf_bytes = _make_test_pdf("Test document content for extraction")
     resp = client.post(
         "/simulations/with-documents",
-        data={"raw_config": json.dumps(VALID_CONFIG)},
+        data={"config": json.dumps(VALID_CONFIG)},
         files={"files": ("test.pdf", pdf_bytes, "application/pdf")},
     )
     assert resp.status_code == 200

@@ -176,10 +176,9 @@ async def _load_seeds() -> None:
                     logger.warning("SEED_TEMPLATE_ERR %s: %s", t["id"], exc)
         logger.info("SEED loaded %d templates from %s", len(templates), templates_path)
 
-    if hasattr(db, 'migrate_legacy_templates'):
-        migrated = await db.migrate_legacy_templates()
-        if migrated:
-            logger.info("MIGRATED %d legacy templates to new schema", migrated)
+    migrated = await db.migrate_legacy_templates()
+    if migrated:
+        logger.info("MIGRATED %d legacy templates to new schema", migrated)
 
 
 @app.on_event("startup")
@@ -250,15 +249,9 @@ def health() -> dict[str, str | bool]:
 async def list_stakeholders_api() -> list[dict]:
     db = get_database()
     try:
-        if hasattr(db, 'list_personas_v2'):
-            personas = await db.list_personas_v2()
-            logger.info("list_stakeholders (detail): %d personas", len(personas))
-            return personas
-        if hasattr(db, 'list_personas'):
-            return await db.list_personas()
-        result = [s.model_dump() for s in await db.list_stakeholders(limit=500)]
-        logger.info("list_stakeholders (v1): %d stakeholders", len(result))
-        return result
+        personas = await db.list_personas_v2()
+        logger.info("list_stakeholders (detail): %d personas", len(personas))
+        return personas
     except Exception:
         return []
 
@@ -299,8 +292,6 @@ async def delete_stakeholder_api(stakeholder_id: str) -> Response:
 @app.get("/personas/{persona_id}")
 async def get_persona_api(persona_id: str) -> dict:
     db = get_database()
-    if not hasattr(db, 'get_persona_detail'):
-        raise HTTPException(status_code=501, detail="Persona detail not supported by this database backend")
     persona = await db.get_persona_detail(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
@@ -520,9 +511,6 @@ async def get_pending_evolutions(persona_id: str):
 async def approve_evolution(evolution_id: str):
     """Approve an evolution — apply deltas to persona personality."""
     db = get_database()
-    if not hasattr(db, 'get_evolution') or not hasattr(db, 'update_persona'):
-        raise HTTPException(status_code=501, detail="Evolution apply not supported by this database backend")
-
     evo = await db.get_evolution(evolution_id)
     if evo is None or evo.status != "pending":
         raise HTTPException(status_code=404, detail="Evolution not found or already processed")
@@ -577,23 +565,17 @@ async def get_evolution_history_api(persona_id: str):
 async def list_templates_api() -> list[dict]:
     db = get_database()
     try:
-        if hasattr(db, 'list_templates_catalog'):
-            return await db.list_templates_catalog()
-        return [t.model_dump() for t in await db.list_templates()]
+        return await db.list_templates_catalog()
     except Exception:
         return []
 
 @app.get("/templates/{template_id}")
 async def get_template_api(template_id: str) -> dict:
     db = get_database()
-    if hasattr(db, 'get_template_catalog'):
-        t = await db.get_template_catalog(template_id)
-        if t is not None:
-            return t
-    t = await db.get_template(template_id)
+    t = await db.get_template_catalog(template_id)
     if t is None:
         raise HTTPException(status_code=404, detail="Template not found")
-    return t.model_dump()
+    return t
 
 @app.post("/templates", status_code=201)
 async def create_template_api(payload: ScenarioTemplate) -> dict:
@@ -677,7 +659,6 @@ async def _save_turn(simulation_id: str, turn_index: int, turn_json: str) -> Non
     """Save turn to new schema tables only. Old turn tables are deprecated."""
     db = get_database()
     try:
-        if hasattr(db, 'get_participant_id') and hasattr(db, 'insert_new_turn'):
             event = json.loads(turn_json) if isinstance(turn_json, str) else turn_json
             speaker = event.get("speaker", event.get("agent_name", ""))
             if speaker:
@@ -686,7 +667,7 @@ async def _save_turn(simulation_id: str, turn_index: int, turn_json: str) -> Non
                     tid = await db.insert_new_turn(simulation_id, pid, turn_index, event)
                     if tid:
                         mtype = _extract_memory_type(event.get("content", ""), event.get("action_type", ""))
-                        if mtype and hasattr(db, 'insert_semantic_memory'):
+                        if mtype:
                             await db.insert_semantic_memory(pid, simulation_id, mtype, event.get("content", "")[:500])
     except Exception as exc:
         import logging
@@ -697,10 +678,8 @@ async def _save_state_snapshot(simulation_id: str, turn_index: int, snapshot_jso
     """Persist state snapshot to DB. Fire-and-forget — does not block simulation."""
     db = get_database()
     try:
-        if hasattr(db, 'create_state_snapshot'):
-            await db.create_state_snapshot(simulation_id, turn_index, snapshot_json, version=1)
-            if hasattr(db, 'delete_old_state_snapshots'):
-                await db.delete_old_state_snapshots(simulation_id, max_keep=50)
+        await db.create_state_snapshot(simulation_id, turn_index, snapshot_json, version=1)
+        await db.delete_old_state_snapshots(simulation_id, max_keep=50)
     except Exception as exc:
         import logging
         logging.getLogger(__name__).warning("SNAPSHOT_SAVE_ERR %s: %s", simulation_id, exc)
@@ -719,13 +698,12 @@ async def list_simulations_handler() -> list[dict]:
         for sid, entry in _active_simulations.items()
     ]
     try:
-        if hasattr(db, 'list_simulations_v2'):
-            db_sims = await db.list_simulations_v2()
-            # Merge: DB sims + active (active overrides with latest status)
-            seen = {s["simulation_id"] for s in active}
-            for s in db_sims:
-                if s["simulation_id"] not in seen:
-                    active.append(s)
+        db_sims = await db.list_simulations_v2()
+        # Merge: DB sims + active (active overrides with latest status)
+        seen = {s["simulation_id"] for s in active}
+        for s in db_sims:
+            if s["simulation_id"] not in seen:
+                active.append(s)
     except Exception:
         pass
     return active
@@ -771,8 +749,7 @@ async def create_simulation_handler(payload: SimulationConfig) -> dict:
     # Write to new schema only
     try:
         db = get_database()
-        if hasattr(db, 'create_new_simulation'):
-            await db.create_new_simulation(simulation_id, config_json)
+        await db.create_new_simulation(simulation_id, config_json)
     except Exception as exc:
         logger.warning("NEW_SCHEMA_SAVE_ERR %s: %s", simulation_id, exc)
 
@@ -826,8 +803,7 @@ async def create_simulation_with_documents(
     # Persist simulation metadata
     try:
         db = get_database()
-        if hasattr(db, 'create_new_simulation'):
-            await db.create_new_simulation(simulation_id, config_json)
+        await db.create_new_simulation(simulation_id, config_json)
     except Exception as exc:
         logger.warning("DOC_SIM_SAVE_ERR %s: %s", simulation_id, exc)
 
@@ -888,8 +864,7 @@ async def create_simulation_with_documents(
         )
         try:
             db = get_database()
-            if hasattr(db, 'create_document'):
-                await db.create_document(doc)
+            await db.create_document(doc)
         except Exception as exc:
             logger.warning("DOC_DB_CREATE_ERR %s: %s", doc_id, exc)
 
@@ -905,8 +880,7 @@ async def create_simulation_with_documents(
                 _mem_doc["status"] = "ready"
             try:
                 db = get_database()
-                if hasattr(db, 'update_document_status'):
-                    await db.update_document_status(doc_id, "ready", extracted)
+                await db.update_document_status(doc_id, "ready", extracted)
             except Exception as exc:
                 logger.warning("DOC_STATUS_ERR %s: %s", doc_id, exc)
             doc_context_parts.append(f"{f.filename or 'unnamed'}:\n{extracted}")
@@ -915,8 +889,7 @@ async def create_simulation_with_documents(
                 _mem_doc["status"] = "failed"
             try:
                 db = get_database()
-                if hasattr(db, 'update_document_status'):
-                    await db.update_document_status(doc_id, "failed")
+                await db.update_document_status(doc_id, "failed")
             except Exception as exc:
                 logger.warning("DOC_STATUS_ERR %s: %s", doc_id, exc)
 
@@ -967,10 +940,7 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             if already_complete:
                 db = get_database()
                 try:
-                    if hasattr(db, 'get_turns_by_simulation'):
-                        turns = await db.get_turns_by_simulation(simulation_id)
-                    else:
-                        turns = []
+                    turns = await db.get_turns_by_simulation(simulation_id)
                 except Exception:
                     turns = []
                 for turn in turns:
@@ -985,10 +955,8 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                     entry["status"] = "complete"
                     try:
                         _db = get_database()
-                        if hasattr(_db, 'update_simulation_status'):
-                            await _db.update_simulation_status(simulation_id, "complete")
-                        if hasattr(_db, 'update_participant_stats'):
-                            await _db.update_participant_stats(simulation_id)
+                        await _db.update_simulation_status(simulation_id, "complete")
+                        await _db.update_participant_stats(simulation_id)
                     except Exception as exc:
                         logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
 
@@ -1056,9 +1024,9 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
         finally:
             async with _simulations_lock:
-                entry = _active_simulations.get(simulation_id)
-                if entry and entry["status"] == "running":
-                    entry["status"] = "idle"
+                _sim_entry = _active_simulations.get(simulation_id)
+                if _sim_entry and _sim_entry.get("status") == "running":
+                    _sim_entry["status"] = "idle"
 
     return StreamingResponse(
         event_stream(),
@@ -1098,21 +1066,19 @@ async def simulations_analytics() -> dict:
 
     # Aggregate from DB
     try:
-        if hasattr(db, 'list_simulations_v2'):
-            db_sims = await db.list_simulations_v2()
-            for s in db_sims:
-                sid = s["simulation_id"]
-                if sid not in _active_simulations:
-                    total_simulations += 1
-                    cfg = s.get("config", {})
-                    stakeholders = cfg.get("stakeholders", []) if isinstance(cfg, dict) else []
-                    for p in stakeholders:
-                        n = p.get("name", p.get("id", "unknown"))
-                        persona_usage[n] = persona_usage.get(n, 0) + 1
-                        st = p.get("stance", "neutral")
-                        stances_count[st] = stances_count.get(st, 0) + 1
-        if hasattr(db, 'get_all_turns_count'):
-            total_turns = await db.get_all_turns_count()
+        db_sims = await db.list_simulations_v2()
+        for s in db_sims:
+            sid = s["simulation_id"]
+            if sid not in _active_simulations:
+                total_simulations += 1
+                cfg = s.get("config", {})
+                stakeholders = cfg.get("stakeholders", []) if isinstance(cfg, dict) else []
+                for p in stakeholders:
+                    n = p.get("name", p.get("id", "unknown"))
+                    persona_usage[n] = persona_usage.get(n, 0) + 1
+                    st = p.get("stance", "neutral")
+                    stances_count[st] = stances_count.get(st, 0) + 1
+        total_turns = await db.get_all_turns_count()
     except Exception:
         pass
 
@@ -1134,10 +1100,9 @@ async def get_simulation_handler(simulation_id: str) -> dict:
     else:
         db = get_database()
         try:
-            if hasattr(db, 'get_simulation_config'):
-                cfg = await db.get_simulation_config(simulation_id)
-                if cfg:
-                    response = {"config": cfg, "status": "complete"}
+            cfg = await db.get_simulation_config(simulation_id)
+            if cfg:
+                response = {"config": cfg, "status": "complete"}
         except Exception:
             pass
         if not response:
@@ -1150,21 +1115,18 @@ async def get_simulation_handler(simulation_id: str) -> dict:
     else:
         try:
             db = get_database()
-            if hasattr(db, 'get_documents_by_simulation'):
-                docs = await db.get_documents_by_simulation(simulation_id)
-                response["documents"] = [
-                    {
-                        "id": d.id,
-                        "filename": d.filename,
-                        "size_bytes": d.size_bytes,
-                        "content_type": d.content_type,
-                        "status": d.status,
-                        "created_at": d.created_at,
-                    }
-                    for d in docs
-                ]
-            else:
-                response["documents"] = []
+            docs = await db.get_documents_by_simulation(simulation_id)
+            response["documents"] = [
+                {
+                    "id": d.id,
+                    "filename": d.filename,
+                    "size_bytes": d.size_bytes,
+                    "content_type": d.content_type,
+                    "status": d.status,
+                    "created_at": d.created_at,
+                }
+                for d in docs
+            ]
         except Exception:
             response["documents"] = []
 
@@ -1176,10 +1138,7 @@ async def replay_simulation_handler(simulation_id: str) -> dict:
     """Return all persisted state snapshots for a simulation, ordered by turn."""
     db = get_database()
     try:
-        if hasattr(db, 'get_state_snapshots_by_simulation'):
-            snapshots = await db.get_state_snapshots_by_simulation(simulation_id)
-        else:
-            snapshots = []
+        snapshots = await db.get_state_snapshots_by_simulation(simulation_id)
     except Exception:
         snapshots = []
 
@@ -1215,19 +1174,15 @@ async def get_simulation_turns(simulation_id: str) -> list[dict]:
     if entry is None:
         # Check DB for completed sim not in memory
         try:
-            if hasattr(db, 'get_simulation_config'):
-                cfg = await db.get_simulation_config(simulation_id)
-                if not cfg:
-                    raise HTTPException(status_code=404, detail="Simulation not found")
+            cfg = await db.get_simulation_config(simulation_id)
+            if not cfg:
+                raise HTTPException(status_code=404, detail="Simulation not found")
         except HTTPException:
             raise
         except Exception:
             raise HTTPException(status_code=404, detail="Simulation not found")
     try:
-        if hasattr(db, 'get_turns_by_simulation'):
-            turns = await db.get_turns_by_simulation(simulation_id)
-        else:
-            turns = []
+        turns = await db.get_turns_by_simulation(simulation_id)
     except Exception:
         turns = []
     return turns
@@ -1240,12 +1195,9 @@ async def export_simulation_handler(simulation_id: str) -> Response:
     if entry is None:
         db = get_database()
         try:
-            if hasattr(db, 'get_simulation_config'):
-                cfg = await db.get_simulation_config(simulation_id)
-                if cfg:
-                    entry = {"config": cfg, "status": "complete"}
-                else:
-                    raise HTTPException(status_code=404, detail="Simulation not found")
+            cfg = await db.get_simulation_config(simulation_id)
+            if cfg:
+                entry = {"config": cfg, "status": "complete"}
             else:
                 raise HTTPException(status_code=404, detail="Simulation not found")
         except HTTPException:
@@ -1258,18 +1210,16 @@ async def export_simulation_handler(simulation_id: str) -> Response:
 
     turns = []
     try:
-        if hasattr(db, 'get_turns_by_simulation'):
-            turns = await db.get_turns_by_simulation(simulation_id)
+        turns = await db.get_turns_by_simulation(simulation_id)
     except Exception:
         pass
 
     snapshots = []
     try:
-        if hasattr(db, 'get_state_snapshots_by_simulation'):
-            raw = await db.get_state_snapshots_by_simulation(simulation_id)
-            for s in raw:
-                data = json.loads(s["snapshot_json"]) if isinstance(s["snapshot_json"], str) else s["snapshot_json"]
-                snapshots.append({"turn_index": s["turn_index"], "snapshot_version": s.get("version", 1), "data": data})
+        raw = await db.get_state_snapshots_by_simulation(simulation_id)
+        for s in raw:
+            data = json.loads(s["snapshot_json"]) if isinstance(s["snapshot_json"], str) else s["snapshot_json"]
+            snapshots.append({"turn_index": s["turn_index"], "snapshot_version": s.get("version", 1), "data": data})
     except Exception:
         pass
 
@@ -1315,12 +1265,9 @@ async def postmortem_handler(simulation_id: str) -> dict:
     if entry is None:
         db = get_database()
         try:
-            if hasattr(db, 'get_simulation_config'):
-                cfg = await db.get_simulation_config(simulation_id)
-                if cfg:
-                    entry = {"config": cfg, "status": "complete"}
-                else:
-                    raise HTTPException(status_code=404, detail="Simulation not found")
+            cfg = await db.get_simulation_config(simulation_id)
+            if cfg:
+                entry = {"config": cfg, "status": "complete"}
             else:
                 raise HTTPException(status_code=404, detail="Simulation not found")
         except HTTPException:
@@ -1331,11 +1278,10 @@ async def postmortem_handler(simulation_id: str) -> dict:
     db = get_database()
 
     # Check DB cache first
-    if hasattr(db, 'get_postmortem'):
-        cached = await db.get_postmortem(simulation_id)
-        if cached:
-            cached_d = json.loads(cached) if isinstance(cached, str) else cached
-            return cached_d
+    cached = await db.get_postmortem(simulation_id)
+    if cached:
+        cached_d = json.loads(cached) if isinstance(cached, str) else cached
+        return cached_d
 
     cfg = entry["config"]
     config_obj = cfg
@@ -1344,17 +1290,16 @@ async def postmortem_handler(simulation_id: str) -> dict:
     from app.runtime.space import SharedSpace
     space = SharedSpace(None)  # type: ignore
     try:
-        if hasattr(db, 'get_turns_by_simulation'):
-            turns = await db.get_turns_by_simulation(simulation_id)
-            for t in turns:
-                space.events.append({
-                    "type": "turn",
-                    "turn_index": t.get("turn_index", 0),
-                    "agent_id": t.get("agent_id", t.get("stakeholder_id", "")),
-                    "speaker": t.get("speaker", t.get("stakeholder_name", "")),
-                    "content": t.get("content", ""),
-                    "action_type": t.get("action_type", "statement"),
-                })
+        turns = await db.get_turns_by_simulation(simulation_id)
+        for t in turns:
+            space.events.append({
+                "type": "turn",
+                "turn_index": t.get("turn_index", 0),
+                "agent_id": t.get("agent_id", t.get("stakeholder_id", "")),
+                "speaker": t.get("speaker", t.get("stakeholder_name", "")),
+                "content": t.get("content", ""),
+                "action_type": t.get("action_type", "statement"),
+            })
     except Exception:
         pass
 
@@ -1385,8 +1330,7 @@ async def postmortem_handler(simulation_id: str) -> dict:
         result = _basic_postmortem(simulation_id, cfg, str(exc))
 
     # Save to DB cache
-    if hasattr(db, 'save_postmortem'):
-        await db.save_postmortem(simulation_id, json.dumps(result))
+    await db.save_postmortem(simulation_id, json.dumps(result))
 
     return result
 
@@ -1449,13 +1393,7 @@ async def agent_detail(name: str) -> dict:
     db = get_database()
 
     # Try Postgres personas table (UUID/slug/name), fall back to stakeholders table
-    profile = None
-    if hasattr(db, 'get_agent_by_id'):
-        profile = await db.get_agent_by_id(name)
-    if profile is None and hasattr(db, 'get_agent_by_name'):
-        profile = await db.get_agent_by_name(name)
-    if profile is None and hasattr(db, 'get_persona_detail'):
-        profile = await db.get_persona_detail(name)
+    profile = await db.get_agent_by_id(name)
     if profile is None:
         raise HTTPException(status_code=404, detail=f"Agent '{name}' not found")
 
@@ -1474,8 +1412,7 @@ async def agent_detail(name: str) -> dict:
     except AttributeError:
         sims, turns = [], []
     try:
-        from .database import get_agent_memories_by_id as _get_memories
-        memories = await _get_memories(db, persona_id)
+        memories = await db.get_agent_memories_by_id(persona_id)
     except Exception:
         memories = []
 

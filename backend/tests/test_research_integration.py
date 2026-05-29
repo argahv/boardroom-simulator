@@ -5,8 +5,7 @@ import json
 import os
 from unittest.mock import AsyncMock, patch
 
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = ":memory:"
+os.environ["DATABASE_TYPE"] = "prisma"
 os.environ["TAVILY_API_KEY"] = "test-key"  # enable research
 
 import pytest
@@ -32,6 +31,7 @@ def client(fresh_db):
     return TestClient(app)
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestResearchIntegration:
     """Verify research trigger → knowledge store → agent prompt end-to-end."""
 

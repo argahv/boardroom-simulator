@@ -50,7 +50,7 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
         gsap.fromTo(
           latestBadgeRef.current,
           { opacity: 0.4, scale: 0.9 },
-          { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(2)" }
+          { opacity: 1, scale: 1, duration: 0.25, ease: "power2.out" }
         );
       }
     });

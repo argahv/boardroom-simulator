@@ -5,27 +5,14 @@ import json
 import os
 from unittest.mock import AsyncMock, patch
 
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = ":memory:"
+os.environ["DATABASE_TYPE"] = "prisma"
 os.environ["OPENROUTER_API_KEY"] = ""  # mock mode
 
 import pytest
-from app.database import close_database, initialize_database
 from app.models import (
     SimulationConfig, Subject, AgentConfig, PersonalityProfile,
     ActionSpace, SpeakerRules,
 )
-
-
-@pytest.fixture
-def fresh_db():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(close_database())
-    loop.run_until_complete(initialize_database())
-    yield
-    loop.close()
-    asyncio.set_event_loop(asyncio.new_event_loop())
 
 
 @pytest.fixture
@@ -60,6 +47,7 @@ def config():
     )
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestSimulationKnowledgeInjection:
     """Verify that agent system prompts contain injected knowledge during simulation."""
 
@@ -294,6 +282,7 @@ class TestSimulationKnowledgeInjection:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestSimulationFailureHandling:
     """Verify simulation handles LLM/API failures gracefully."""
 
@@ -326,6 +315,7 @@ class TestSimulationFailureHandling:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestCrossSessionMemoryE2E:
     """Verify cross-session memory store → inject cycle."""
 

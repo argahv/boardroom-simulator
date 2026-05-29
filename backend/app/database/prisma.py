@@ -1443,35 +1443,27 @@ class PrismaBackend(DatabaseBackend):
             return False
 
 
-# ------------------------------------------------------------------
-# Standalone functions (imported directly by main.py)
-# ------------------------------------------------------------------
-
-
-async def get_agent_memories_by_id(db, persona_id: str) -> list[dict]:
-    """Get semantic memories for a participant by persona UUID.
-    Standalone function — imported directly by main.py, NOT a DatabaseBackend method."""
-    if not hasattr(db, "_client_or_raise"):
-        return []
-    try:
-        client = db._client_or_raise()
-        rows = await client.semantic_memories.find_many(
-            where={"participant_id": persona_id},
-            order={"created_at": "desc"},
-        )
-        return [
-            {
-                "id": r.id,
-                "participant_id": r.participant_id,
-                "simulation_id": r.simulation_id,
-                "memory_type": r.memory_type,
-                "content": r.content,
-                "turn_id": r.turn_id,
-                "is_active": r.is_active,
-                "confidence": r.confidence,
-                "created_at": str(r.created_at) if r.created_at else "",
-            }
-            for r in rows
-        ]
-    except Exception:
-        return []
+    async def get_agent_memories_by_id(self, persona_id: str) -> list[dict]:
+        """Get semantic memories for a participant by persona UUID."""
+        try:
+            client = self._client_or_raise()
+            rows = await client.semantic_memories.find_many(
+                where={"participant_id": persona_id},
+                order={"created_at": "desc"},
+            )
+            return [
+                {
+                    "id": r.id,
+                    "participant_id": r.participant_id,
+                    "simulation_id": r.simulation_id,
+                    "memory_type": r.memory_type,
+                    "content": r.content,
+                    "turn_id": r.turn_id,
+                    "is_active": r.is_active,
+                    "confidence": r.confidence,
+                    "created_at": str(r.created_at) if r.created_at else "",
+                }
+                for r in rows
+            ]
+        except Exception:
+            return []

@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect } from "react";
 import gsap from "gsap";
-import { useGSAP } from "@gsap/react";
 
 export type WarRoomLayout = "roster" | "table" | "graph";
 export type PlaybackStatus = "idle" | "running" | "complete";
@@ -122,24 +121,6 @@ export function ControlBar({
 
   const [hoveredLayout, setHoveredLayout] = useState<WarRoomLayout | null>(null);
 
-  // Live dot glow animation with GSAP
-  useEffect(() => {
-    if (!liveDotRef.current) return;
-    if (playing) {
-      gsap.to(liveDotRef.current, {
-        boxShadow: "0 0 8px var(--color-primary), 0 0 16px var(--color-primary)",
-        duration: 0.8,
-        repeat: -1,
-        yoyo: true,
-        ease: "sine.inOut",
-      });
-    } else {
-      gsap.killTweensOf(liveDotRef.current, "boxShadow");
-      gsap.to(liveDotRef.current, { boxShadow: "none", duration: 0.2 });
-    }
-    return () => { if (liveDotRef.current) gsap.killTweensOf(liveDotRef.current, "boxShadow"); };
-  }, [playing]);
-
   // Turn counter count-up
   useEffect(() => {
     if (!turnRef.current) return;
@@ -155,17 +136,6 @@ export function ControlBar({
       },
     });
   }, [turn]);
-
-  // ControlBar entrance
-  useGSAP(() => {
-    gsap.from(barRef.current, {
-      y: -8,
-      opacity: 0,
-      duration: 0.3,
-      ease: "power2.out",
-      clearProps: "transform",
-    });
-  }, { scope: barRef });
 
   return (
     <div
@@ -188,6 +158,7 @@ export function ControlBar({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
             ref={liveDotRef}
+            className={playing ? "anim-glow" : ""}
             style={{
               width: 8,
               height: 8,

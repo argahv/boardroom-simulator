@@ -1,25 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  /* Open Design — Atelier Zero palette */
-  --color-canvas: #efe7d2;         /* warm parchment */
-  --color-ink: #15140f;            /* near-black */
-  --color-primary: #ed6f5c;        /* coral accent */
-  --color-primary-active: #e05844; /* darker coral */
-  --color-surface-card: #f7f1de;   /* bone */
-  --color-surface-dark: #2a2620;   /* ink-soft */
+  /* Vantage palette — warm parchment + coral */
+  --color-canvas: #efe7d2;           /* warm parchment */
+  --color-ink: #15140f;              /* near-black */
+  --color-primary: #ed6f5c;          /* coral accent */
+  --color-primary-active: #e05844;   /* darker coral */
+  --color-primary-soft: rgba(237,111,92,.12);
+  --color-surface-card: #f7f1de;     /* bone */
+  --color-surface-card-elevated: #faf6e8;
+  --color-surface-dark: #2a2620;     /* ink-soft */
   --color-surface-dark-elevated: #3a342e;
   --color-surface-dark-soft: #1f1e1b;
   --color-surface-container-low: #ece4cf;  /* paper-warm */
-  --color-muted: #5a5448;          /* ink-mute */
-  --color-hairline: rgba(21,20,15,.16);   /* line */
-  --color-on-dark: #faf9f5;
-  --color-on-dark-soft: #8b8676;   /* ink-faint */
-  --color-body-strong: #2a2620;    /* ink-soft */
-  --color-secondary: #6e7448;      /* olive */
+  --color-surface-container-high: #e3dac3;
+  --color-muted: #5a5448;            /* ink-mute */
+  --color-hairline: rgba(21,20,15,.12);    /* thinner line */
+  --color-on-dark: #f7f3e8;          /* warm white, tinted toward parchment */
+  --color-on-dark-soft: #8b8676;     /* ink-faint */
+  --color-body-strong: #2a2620;      /* ink-soft */
+  --color-secondary: #6e7448;        /* olive */
   --color-error: #ba1a1a;
-  --color-accent-amber: #e9b94a;   /* mustard */
+  --color-error-soft: rgba(186,26,26,.10);
+  --color-success: #3d9e8c;          /* alias accent-teal as success */
+  --color-success-soft: rgba(61,158,140,.12);
+  --color-warning: #c9952e;          /* deeper amber for readability */
+  --color-warning-soft: rgba(201,149,46,.12);
+  --color-accent-amber: #e9b94a;     /* mustard */
   --color-accent-teal: #3d9e8c;
+  --color-accent-blue: #4f8bc9;
+  --color-chart-1: #ed6f5c;          /* coral */
+  --color-chart-2: #3d9e8c;          /* teal */
+  --color-chart-3: #c9952e;          /* amber */
+  --color-chart-4: #4f8bc9;          /* blue */
+  --color-chart-5: #8b6f9e;          /* muted purple */
 }
 
 @theme inline {
@@ -27,11 +41,14 @@
   --color-ink: var(--color-ink);
   --color-primary: var(--color-primary);
   --color-primary-active: var(--color-primary-active);
+  --color-primary-soft: var(--color-primary-soft);
   --color-surface-card: var(--color-surface-card);
+  --color-surface-card-elevated: var(--color-surface-card-elevated);
   --color-surface-dark: var(--color-surface-dark);
   --color-surface-dark-elevated: var(--color-surface-dark-elevated);
   --color-surface-dark-soft: var(--color-surface-dark-soft);
   --color-surface-container-low: var(--color-surface-container-low);
+  --color-surface-container-high: var(--color-surface-container-high);
   --color-muted: var(--color-muted);
   --color-hairline: var(--color-hairline);
   --color-on-dark: var(--color-on-dark);
@@ -39,8 +56,19 @@
   --color-body-strong: var(--color-body-strong);
   --color-secondary: var(--color-secondary);
   --color-error: var(--color-error);
+  --color-error-soft: var(--color-error-soft);
+  --color-success: var(--color-success);
+  --color-success-soft: var(--color-success-soft);
+  --color-warning: var(--color-warning);
+  --color-warning-soft: var(--color-warning-soft);
   --color-accent-amber: var(--color-accent-amber);
   --color-accent-teal: var(--color-accent-teal);
+  --color-accent-blue: var(--color-accent-blue);
+  --color-chart-1: var(--color-chart-1);
+  --color-chart-2: var(--color-chart-2);
+  --color-chart-3: var(--color-chart-3);
+  --color-chart-4: var(--color-chart-4);
+  --color-chart-5: var(--color-chart-5);
   --font-display: var(--font-display);
   --font-sans-tight: var(--font-sans-tight);
   --font-sans: var(--font-sans);
@@ -246,6 +274,25 @@ a:focus-visible,
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+@keyframes enter-stagger {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-enter-stagger {
+  animation: enter-stagger 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
 }

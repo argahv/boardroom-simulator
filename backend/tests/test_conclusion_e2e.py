@@ -25,8 +25,7 @@ from typing import Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Use temp file database
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = os.path.join(tempfile.gettempdir(), f"boardroom_test_{datetime.now().timestamp()}.db")
+os.environ["DATABASE_TYPE"] = "prisma"
 
 import pytest
 from app.models import (
@@ -154,6 +153,7 @@ def make_config_consensus() -> SimulationConfig:
 # Unit Tests for Checkers
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 class TestVoteChecker:
     """Verify VoteChecker correctly tallies votes and triggers at threshold."""
 
@@ -230,6 +230,7 @@ class TestVoteChecker:
         assert result is None, "Should not trigger before turn 3"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestSocialPhysicsChecker:
     """Verify SocialPhysicsChecker detects agreement and deadlock."""
 
@@ -317,6 +318,7 @@ class TestSocialPhysicsChecker:
             assert result.walkaway_party == "urgent"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestTopicsAndPositions:
     """Verify TopicTracker and PositionTracker extract structured data from turns."""
 
@@ -388,6 +390,7 @@ class TestTopicsAndPositions:
         assert len(walkaway) >= 1, "Should detect walkaway from content pattern"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestPostmortemGenerator:
     """Verify PostmortemGenerator produces complete structured report."""
 
@@ -453,6 +456,7 @@ class TestPostmortemGenerator:
             f"Expected confidence_score=75 from confidence=0.75, got {pm.confidence_score}"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestEndConditionRegistry:
     """Verify EndConditionRegistry builds correct checkers for each config type."""
 
@@ -504,6 +508,7 @@ class TestEndConditionRegistry:
         assert "TimeoutChecker" in types, f"Expected TimeoutChecker safety net in {types}"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestActionTypeExpansion:
     """Verify 'vote' and 'walkaway' are valid action types."""
 
@@ -528,6 +533,7 @@ class TestActionTypeExpansion:
 # Full Integration: Simulation → Checkers → Done Event → Postmortem
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 class TestFullConclusionCycle:
     """Complete end-to-end test of the conclusion system."""
 
@@ -647,6 +653,7 @@ class TestFullConclusionCycle:
 # Database Persistence Test
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_database_persistence():
     """Verify simulation data is persisted to the database correctly."""
@@ -661,71 +668,56 @@ async def test_database_persistence():
         cfg = make_config_vote()
         cfg_dict = cfg.model_dump(mode="json")
         sim_id = "db-test-sim-001"
-        if hasattr(db, 'create_new_simulation'):
-            await db.create_new_simulation(sim_id, cfg_dict)
-            print(f"\n  DB: Created simulation {sim_id}")
-        else:
-            print("  DB: create_new_simulation not available (old schema)")
+        await db.create_new_simulation(sim_id, cfg_dict)
+        print(f"\n  DB: Created simulation {sim_id}")
 
         # 2. Verify we can retrieve it
-        if hasattr(db, 'get_simulation_config'):
-            retrieved = await db.get_simulation_config(sim_id)
-            if retrieved:
-                print(f"  DB: Retrieved simulation config — "
-                      f"stakeholders={len(retrieved.get('stakeholders', []))}")
-                assert len(retrieved.get('stakeholders', [])) == 4
-        else:
-            print("  DB: get_simulation_config not available")
+        retrieved = await db.get_simulation_config(sim_id)
+        if retrieved:
+            print(f"  DB: Retrieved simulation config — "
+                  f"stakeholders={len(retrieved.get('stakeholders', []))}")
+            assert len(retrieved.get('stakeholders', [])) == 4
 
         # 3. Save state snapshots (as scheduler does)
-        if hasattr(db, 'create_state_snapshot'):
-            snapshot = {"turn_count": 5, "social_physics": {"a": {"trust": 0.8}}}
-            await db.create_state_snapshot(sim_id, 5, json.dumps(snapshot), version=1)
-            print(f"  DB: Saved state snapshot at turn 5")
+        snapshot = {"turn_count": 5, "social_physics": {"a": {"trust": 0.8}}}
+        await db.create_state_snapshot(sim_id, 5, json.dumps(snapshot), version=1)
+        print(f"  DB: Saved state snapshot at turn 5")
 
-            if hasattr(db, 'get_state_snapshots_by_simulation'):
-                snapshots = await db.get_state_snapshots_by_simulation(sim_id)
-                print(f"  DB: Retrieved {len(snapshots)} snapshots")
-                assert len(snapshots) >= 1
-        else:
-            print("  DB: create_state_snapshot not available")
+        snapshots = await db.get_state_snapshots_by_simulation(sim_id)
+        print(f"  DB: Retrieved {len(snapshots)} snapshots")
+        assert len(snapshots) >= 1
 
         # 4. Save and retrieve postmortem
-        if hasattr(db, 'save_postmortem') and hasattr(db, 'get_postmortem'):
-            pm_data = json.dumps({
-                "simulation_id": sim_id,
-                "confidence_score": 85,
-                "consensus_rating": 90,
-                "end_reason": "vote_majority",
-                "verdict": "Deal reached",
-                "topics": [{"topic": "revenue_split", "resolved": True}],
-                "summary": "Consensus reached on all terms.",
-            })
-            await db.save_postmortem(sim_id, pm_data)
-            print(f"  DB: Saved postmortem")
+        pm_data = json.dumps({
+            "simulation_id": sim_id,
+            "confidence_score": 85,
+            "consensus_rating": 90,
+            "end_reason": "vote_majority",
+            "verdict": "Deal reached",
+            "topics": [{"topic": "revenue_split", "resolved": True}],
+            "summary": "Consensus reached on all terms.",
+        })
+        await db.save_postmortem(sim_id, pm_data)
+        print(f"  DB: Saved postmortem")
 
-            cached = await db.get_postmortem(sim_id)
-            if cached:
-                cached_d = json.loads(cached) if isinstance(cached, str) else cached
-                confidence = cached_d.get("confidence_score", 0)
-                print(f"  DB: Retrieved postmortem — confidence_score={confidence}")
-                assert confidence == 85
-            else:
-                print("  DB: get_postmortem returned None")
+        cached = await db.get_postmortem(sim_id)
+        if cached:
+            cached_d = json.loads(cached) if isinstance(cached, str) else cached
+            confidence = cached_d.get("confidence_score", 0)
+            print(f"  DB: Retrieved postmortem — confidence_score={confidence}")
+            assert confidence == 85
         else:
-            print("  DB: postmortem save/load not available")
+            print("  DB: get_postmortem returned None")
 
         # 5. Update simulation status
-        if hasattr(db, 'update_simulation_status_v2'):
-            await db.update_simulation_status_v2(sim_id, "complete")
-            print(f"  DB: Updated simulation status to 'complete'")
+        await db.update_simulation_status_v2(sim_id, "complete")
+        print(f"  DB: Updated simulation status to 'complete'")
 
         # 6. List simulations
-        if hasattr(db, 'list_simulations_v2'):
-            all_sims = await db.list_simulations_v2()
-            sim_ids = [s["simulation_id"] for s in all_sims]
-            print(f"  DB: Listed simulations — {sim_ids}")
-            assert sim_id in sim_ids
+        all_sims = await db.list_simulations_v2()
+        sim_ids = [s["simulation_id"] for s in all_sims]
+        print(f"  DB: Listed simulations — {sim_ids}")
+        assert sim_id in sim_ids
 
     except Exception as exc:
         print(f"  DB ERROR: {exc}")
@@ -740,6 +732,7 @@ async def test_database_persistence():
 # Agent Behavior Analysis
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_agent_behavior_full_trace(monkeypatch):
     """Deep trace of agent behavior: what they say, when, and how they respond."""
@@ -805,6 +798,7 @@ async def test_agent_behavior_full_trace(monkeypatch):
         assert d.get("total_turns", 0) >= 1
 
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_simulation_with_behavior_engine(monkeypatch):
     """Verify state snapshots are published when BehaviorEngine is wired."""

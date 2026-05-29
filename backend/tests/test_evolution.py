@@ -14,8 +14,7 @@ import asyncio
 import json
 import os
 
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = ":memory:"
+os.environ["DATABASE_TYPE"] = "prisma"
 
 import pytest
 from fastapi.testclient import TestClient
@@ -66,6 +65,7 @@ def evo_service(fresh_db):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestComputeEvolutionDeltas:
     """Pure-function tests for compute_evolution_deltas."""
 
@@ -156,6 +156,7 @@ class TestComputeEvolutionDeltas:
                 assert d == base, f"Stance '{stance}' differed for '{outcome_type}'"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestClampTrait:
     """Boundary and edge-case tests for _clamp_trait / clamp_trait."""
 
@@ -182,6 +183,7 @@ class TestClampTrait:
         assert clamp_trait(MAX_TRAIT) == MAX_TRAIT
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestComputeEvolution:
     """Full pipeline tests for compute_evolution."""
 
@@ -269,6 +271,7 @@ class TestComputeEvolution:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestEvolutionService:
     """Database-backed EvolutionService tests."""
 
@@ -377,6 +380,7 @@ class TestEvolutionService:
 # ═══════════════════════════════════════════════════════════════════════════
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestEvolutionAPI:
     """Full HTTP integration tests for evolution endpoints."""
 
