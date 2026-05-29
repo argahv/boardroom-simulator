@@ -26,6 +26,19 @@ _DEFAULT_EMOTIONS: dict[str, float] = {
 
 _UNKNOWN_EVENT_DECAY: float = 0.01
 
+
+def personality_modulate(base_delta: float, trait_value: int, strength: float = 0.5) -> float:
+    normalized = (trait_value - 50) / 50
+    return base_delta * (1.0 + normalized * strength)
+
+
+PERSONALITY_EMOTION_MAP: dict[str, list[tuple[str, str, float]]] = {
+    "challenge": [("aggressiveness", "anger", 0.6), ("empathy", "anger", -0.3)],
+    "compromise": [("stubbornness", "joy", -0.4), ("aggressiveness", "joy", -0.2)],
+    "escalate": [("aggressiveness", "fear", -0.3), ("empathy", "fear", 0.4)],
+}
+
+
 # ── Emotional Modulation Thresholds ──────────────────────────────────────
 # All modulation is deterministic math. Same emotions → same behavior biases.
 
@@ -126,19 +139,15 @@ class InternalState:
         directed_at = event.get("directed_at")
         cs = self.cognitive_state
 
+        deltas: dict[str, float] = {}
         if action_type == "challenge" and directed_at == self.agent_id:
-            cs.emotion["anger"] = _clamp01(cs.emotion["anger"] + 0.15)
-            cs.confidence = _clamp01(cs.confidence - 0.1)
+            deltas = {"anger": 0.15, "confidence": -0.1}
         elif action_type == "compromise":
-            cs.emotion["joy"] = _clamp01(cs.emotion["joy"] + 0.1)
-            cs.certainty = _clamp01(cs.certainty + 0.05)
+            deltas = {"joy": 0.1, "certainty": 0.05}
         elif action_type == "agreement":
-            cs.emotion["joy"] = _clamp01(cs.emotion["joy"] + 0.08)
-            cs.confidence = _clamp01(cs.confidence + 0.05)
+            deltas = {"joy": 0.08, "confidence": 0.05}
         elif action_type == "escalate" and directed_at == self.agent_id:
-            cs.emotion["fear"] = _clamp01(cs.emotion["fear"] + 0.1)
-            cs.emotion["shame"] = _clamp01(cs.emotion["shame"] + 0.05)
-            cs.confidence = _clamp01(cs.confidence - 0.15)
+            deltas = {"fear": 0.1, "shame": 0.05, "confidence": -0.15}
         elif not action_type:
             pass
         else:
@@ -148,6 +157,19 @@ class InternalState:
                     cs.emotion[key] = _clamp01(cs.emotion[key] - _UNKNOWN_EVENT_DECAY)
                 elif cs.emotion[key] < base:
                     cs.emotion[key] = _clamp01(cs.emotion[key] + _UNKNOWN_EVENT_DECAY)
+
+        for trait_name, target_emotion, strength in PERSONALITY_EMOTION_MAP.get(action_type, []):
+            if target_emotion in deltas:
+                trait_val = getattr(self._personality, trait_name, 50)
+                deltas[target_emotion] = personality_modulate(deltas[target_emotion], trait_val, strength)
+
+        for key, delta in deltas.items():
+            if key in ("anger", "fear", "joy", "shame", "surprise"):
+                cs.emotion[key] = _clamp01(cs.emotion.get(key, 0.5) + delta)
+            elif key == "confidence":
+                cs.confidence = _clamp01(cs.confidence + delta)
+            elif key == "certainty":
+                cs.certainty = _clamp01(cs.certainty + delta)
 
         cs.modulation = compute_modulation(cs.emotion)
         self.history.append(dict(event))

@@ -5,6 +5,11 @@ from typing import Self
 from pydantic import BaseModel, Field
 
 
+def personality_modulate(base_delta: float, trait_value: int, strength: float = 0.5) -> float:
+    normalized = (trait_value - 50) / 50
+    return base_delta * (1.0 + normalized * strength)
+
+
 # ── default deltas ─────────────────────────────────────────────────────────
 
 DEFAULT_DELTAS: dict[str, dict[str, float]] = {
@@ -38,6 +43,12 @@ DEFAULT_DELTAS: dict[str, dict[str, float]] = {
     },
 }
 
+PERSONALITY_SOCIAL_MAP: dict[str, list[tuple[str, str, float]]] = {
+    "challenge": [("aggressiveness", "tension", 0.5), ("aggressiveness", "dominance", 0.4)],
+    "compromise": [("stubbornness", "tension", -0.3), ("empathy", "trust", 0.3)],
+    "interrupt": [("aggressiveness", "dominance", 0.3), ("empathy", "trust", 0.2)],
+}
+
 DECAY_RATE = 0.05
 
 
@@ -66,7 +77,25 @@ class SocialPhysics(BaseModel):
     ) -> Self:
         if action_type not in DEFAULT_DELTAS:
             raise ValueError(f"Unknown action_type: {action_type}")
-        delta = DEFAULT_DELTAS[action_type]
+        base = DEFAULT_DELTAS[action_type]
+        delta = dict(base)
+
+        personality = context.get("personality") if isinstance(context, dict) else None
+        if personality:
+            for trait_name, field, strength in PERSONALITY_SOCIAL_MAP.get(action_type, []):
+                if field in delta:
+                    trait_val = getattr(personality, trait_name, 50)
+                    delta[field] = personality_modulate(delta[field], trait_val, strength)
+
+        # Modulate by archetype from context dict (after personality)
+        archetype = context.get("archetype") if isinstance(context, dict) else None
+        if archetype:
+            from .archetypes import ARCHETYPE_DELTA_MULTIPLIERS
+            arch_deltas = ARCHETYPE_DELTA_MULTIPLIERS.get(archetype, {}).get(action_type, {})
+            for field, mult in arch_deltas.items():
+                if field in delta:
+                    delta[field] *= mult
+
         return SocialPhysics(
             trust=_clamp01(self.trust + delta["trust"]),
             leverage=_clamp01(self.leverage + delta["leverage"]),

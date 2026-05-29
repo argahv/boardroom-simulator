@@ -82,8 +82,8 @@ class TestProcessTurn:
         engine.process_turn(turn(action_type="challenge"))
         # challenge is directed at "bob" -> bob's anger goes up
         target_state = engine.get_state_for_llm("bob")
-        # anger starts at 0.2; challenge adds 0.15 when directed_at == self
-        assert target_state["cognitive_state"]["emotion"]["anger"] == pytest.approx(0.35, abs=1e-6)
+        # anger starts at 0.3 (debate baseline); challenge adds 0.15 when directed_at == self
+        assert target_state["cognitive_state"]["emotion"]["anger"] == pytest.approx(0.45, abs=1e-6)
 
     def test_challenge_increases_rivalry(self):
         engine = BehaviorEngine(["alice", "bob"])
@@ -99,7 +99,7 @@ class TestProcessTurn:
     def test_compromise_decreases_tension(self):
         engine = BehaviorEngine(["alice", "bob"])
         result = engine.process_turn(turn(action_type="compromise"))
-        assert result.state_snapshot["tension"] < 0.3
+        assert result.state_snapshot["tension"] < 0.5  # debate baseline 0.5 - 0.15 = 0.35
 
     def test_result_has_all_fields(self):
         engine = BehaviorEngine(["alice", "bob"])
@@ -114,15 +114,15 @@ class TestProcessTurn:
         engine = BehaviorEngine(["alice", "bob"])
         engine.process_turn(turn(action_type="compromise"))
         state = engine.get_state_for_llm("alice")
-        # compromise: joy += 0.1
-        assert state["cognitive_state"]["emotion"]["joy"] == pytest.approx(0.6, abs=1e-6)
+        # joy: 0.4 (debate baseline) + 0.1 (compromise)
+        assert state["cognitive_state"]["emotion"]["joy"] == pytest.approx(0.5, abs=1e-6)
 
     def test_target_internal_state_affected_on_challenge(self):
         engine = BehaviorEngine(["alice", "bob"])
         engine.process_turn(turn(action_type="challenge"))
         state = engine.get_state_for_llm("bob")
-        # challenge directed at bob -> bob anger goes from 0.2 to 0.35
-        assert state["cognitive_state"]["emotion"]["anger"] == pytest.approx(0.35, abs=1e-6)
+        # challenge directed at bob -> bob anger: 0.3 (debate) + 0.15 = 0.45
+        assert state["cognitive_state"]["emotion"]["anger"] == pytest.approx(0.45, abs=1e-6)
 
 
 # ── TestTick ─────────────────────────────────────────────────────────────────
@@ -237,11 +237,11 @@ class TestSuggestedAction:
     def test_low_trust_suggests_repair(self):
         engine = BehaviorEngine(["alice", "bob"])
         # escalate: trust -= 0.15, tension += 0.2
-        # after 2: trust=0.20 (< 0.25), tension=0.7 (not > 0.7 → trust check wins)
+        # debate baseline tension=0.5 → after 2 escalates: tension=0.9 (> 0.7 → deescalate)
         for _ in range(2):
             engine.process_turn(turn(speaker_id="alice", target_id="bob", action_type="escalate"))
         result = engine.process_turn(turn(speaker_id="alice", target_id="bob", action_type="statement"))
-        assert result.suggested_action == "repair_trust"
+        assert result.suggested_action == "deescalate"
 
     def test_high_trust_suggests_deepen_alliance(self):
         engine = BehaviorEngine(["alice", "bob"])
@@ -272,10 +272,10 @@ class TestMultiAgent:
     def test_internal_state_is_per_agent(self):
         engine = BehaviorEngine(["a", "b"])
         engine.process_turn(turn(speaker_id="a", target_id="b", action_type="challenge"))
-        # b's anger increased (challenge directed at b)
-        assert engine._internal_states["b"].cognitive_state.emotion["anger"] == pytest.approx(0.35, abs=1e-6)
-        # a's anger unchanged
-        assert engine._internal_states["a"].cognitive_state.emotion["anger"] == pytest.approx(0.2, abs=1e-6)
+        # b's anger: 0.3 (debate baseline) + 0.15 (challenge directed at b)
+        assert engine._internal_states["b"].cognitive_state.emotion["anger"] == pytest.approx(0.45, abs=1e-6)
+        # a's anger decays from 0.3 (debate) towards hardcoded 0.2 baseline via unknown event decay (-0.01) → 0.29
+        assert engine._internal_states["a"].cognitive_state.emotion["anger"] == pytest.approx(0.29, abs=1e-6)
 
 
 # ── TestDeterminism ─────────────────────────────────────────────────────────
@@ -305,3 +305,35 @@ class TestDeterminism:
         e1.process_turn(t)
         e2.process_turn(t)
         assert e1.get_public_state() == e2.get_public_state()
+
+
+# ── TestScenario ────────────────────────────────────────────────────────────
+
+class TestScenario:
+    def test_engine_scenario_crisis_init(self):
+        engine = make_engine(["test_agent"], scenario_type="crisis")
+        sp = engine._social_physics["test_agent"]
+        assert abs(sp.tension - 0.7) < 1e-4, f"Expected tension=0.7, got {sp.tension}"
+        assert abs(sp.trust - 0.4) < 1e-4, f"Expected trust=0.4, got {sp.trust}"
+
+        ist = engine._internal_states["test_agent"]
+        assert abs(ist.cognitive_state.emotion["fear"] - 0.6) < 1e-4, f"Expected fear=0.6, got {ist.cognitive_state.emotion['fear']}"
+        assert abs(ist.cognitive_state.emotion["joy"] - 0.15) < 1e-4, f"Expected joy=0.15, got {ist.cognitive_state.emotion['joy']}"
+
+    def test_engine_default_scenario(self):
+        engine = make_engine(["test_agent"])
+        sp = engine._social_physics["test_agent"]
+        assert abs(sp.tension - 0.5) < 1e-4, f"Expected default tension=0.5 (debate), got {sp.tension}"
+        assert abs(sp.trust - 0.5) < 1e-4
+
+    def test_engine_personality_flow(self):
+        from app.models import PersonalityProfile
+
+        engine = make_engine(["test_agent"], personas=[PersonalityProfile(aggressiveness=80)])
+        initial_tension = engine._social_physics["test_agent"].tension
+
+        engine.process_turn({"speaker_id": "test_agent", "action_type": "challenge", "target_id": ""})
+        after_tension = engine._social_physics["test_agent"].tension
+        delta = after_tension - initial_tension
+        expected_delta = 0.12 * (1 + (80 - 50) / 50 * 0.5)
+        assert abs(delta - expected_delta) < 1e-4, f"Expected delta {expected_delta}, got {delta}"

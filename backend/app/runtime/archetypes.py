@@ -63,6 +63,33 @@ ARCHETYPES = {
 }
 
 
+ARCHETYPE_DELTA_MULTIPLIERS: dict[str, dict[str, dict[str, float]]] = {
+    "agitator": {
+        "challenge": {"tension": 1.5, "dominance": 1.4, "trust": -1.2},
+        "interrupt": {"dominance": 1.4, "tension": 1.3},
+        "escalate": {"tension": 1.3, "dominance": 1.2},
+    },
+    "diplomat": {
+        "challenge": {"tension": 0.7, "trust": -0.6},
+        "compromise": {"trust": 1.3, "tension": -1.3},
+        "coalition_signal": {"trust": 1.4},
+    },
+    "guardian": {
+        "challenge": {"tension": 1.2, "credibility": -1.1},
+        "escalate": {"tension": 1.5},
+        "compromise": {"trust": 1.2},
+    },
+    "idealist": {
+        "challenge": {"tension": 1.3, "credibility": -1.2},
+    },
+    "opportunist": {
+        "challenge": {"trust": -0.8, "tension": 0.9},
+        "compromise": {"trust": 0.8, "leverage": 0.8},
+    },
+    "pragmatist": {},
+}
+
+
 class ArchetypeRegistry:
     def __init__(self):
         self._data: dict[str, AgentArchetype] = {}

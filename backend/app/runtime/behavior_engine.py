@@ -27,6 +27,10 @@ RelationshipGraph = _load_sibling("relationship_graph").RelationshipGraph
 # PersonalityProfile — safe import, app/__init__.py is empty
 from app.models import PersonalityProfile
 
+ScenarioProfile = _load_sibling("scenario_profile").ScenarioProfile
+SCENARIO_PROFILES = _load_sibling("scenario_profile").SCENARIO_PROFILES
+ARCHETYPE_DELTA_MULTIPLIERS = _load_sibling("archetypes").ARCHETYPE_DELTA_MULTIPLIERS
+
 
 @dataclass
 class BehaviorResult:
@@ -38,18 +42,30 @@ class BehaviorResult:
 
 
 class BehaviorEngine:
-    def __init__(self, agent_ids: list[str]) -> None:
+    def __init__(self, agent_ids: list[str], scenario_type: str = "debate", personas: list[PersonalityProfile] | None = None) -> None:
         self._social_physics: dict[str, object] = {}
         self._internal_states: dict[str, object] = {}
         self._graph = RelationshipGraph()
         self._turn_count: int = 0
         self._plan_manager = None
+        self._scenario = SCENARIO_PROFILES.get(scenario_type, SCENARIO_PROFILES["debate"])
+        self._personas: dict[str, PersonalityProfile] = {}
+        self._agent_archetypes: dict[str, str] = {}
+        persona_iter = iter(personas) if personas else iter([])
         for aid in agent_ids:
-            self.register_agent(aid)
+            p = next(persona_iter, None)
+            self.register_agent(aid, personality=p)
 
-    def register_agent(self, agent_id: str) -> Self:
-        self._social_physics[agent_id] = SocialPhysics()
-        self._internal_states[agent_id] = InternalState(agent_id, PersonalityProfile())
+    def register_agent(self, agent_id: str, personality: PersonalityProfile | None = None, archetype: str | None = None) -> Self:
+        sp = SocialPhysics(**self._scenario.social)
+        ist = InternalState(agent_id, personality or PersonalityProfile())
+        ist.cognitive_state.emotion = dict(self._scenario.emotion)
+        self._social_physics[agent_id] = sp
+        self._internal_states[agent_id] = ist
+        if personality:
+            self._personas[agent_id] = personality
+        if archetype:
+            self._agent_archetypes[agent_id] = archetype
         return self
 
     def process_turn(self, turn: dict) -> BehaviorResult:
@@ -61,7 +77,10 @@ class BehaviorEngine:
         logger.debug("Turn %d processed: speaker=%s action=%s", self._turn_count, speaker_id, action_type, extra={"turn": self._turn_count, "speaker": speaker_id, "action_type": action_type, "event": "turn_processed"})
 
         if speaker_id in self._social_physics:
-            self._social_physics[speaker_id] = self._social_physics[speaker_id].update(action_type, speaker_id, target_id, turn)
+            context = dict(turn)
+            context["personality"] = self._personas.get(speaker_id)
+            context["archetype"] = self._agent_archetypes.get(speaker_id)
+            self._social_physics[speaker_id] = self._social_physics[speaker_id].update(action_type, speaker_id, target_id, context)
         if speaker_id in self._internal_states:
             self._internal_states[speaker_id].apply_event({"action_type": action_type, "directed_at": target_id})
         if target_id and target_id != speaker_id and target_id in self._internal_states:
@@ -118,5 +137,5 @@ class BehaviorEngine:
         return None
 
 
-def make_engine(agent_ids: list[str]) -> BehaviorEngine:
-    return BehaviorEngine(agent_ids)
+def make_engine(agent_ids: list[str], scenario_type: str = "debate", personas: list | None = None) -> BehaviorEngine:
+    return BehaviorEngine(agent_ids, scenario_type=scenario_type, personas=personas)
