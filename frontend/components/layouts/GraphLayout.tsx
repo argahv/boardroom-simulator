@@ -10,6 +10,7 @@ import type {
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import { ActionGlyph, actionLabel } from "@/components/ActionGlyph";
 import { SimBadge } from "@/components/SimBadge";
+import { ExpandableText } from "@/components/ExpandableText";
 
 interface GraphLayoutProps {
   turns: Turn[];
@@ -93,7 +94,7 @@ function StatementBubble({ pos, content, action }: StatementBubbleProps) {
           letterSpacing: "-0.2px",
         }}
       >
-        &ldquo;{content.length > 100 ? content.slice(0, 100) + "…" : content}&rdquo;
+        &ldquo;<ExpandableText text={content} limit={100} />&rdquo;
       </div>
     </div>
   );
@@ -497,7 +498,7 @@ export function GraphLayout({
               Event stream
             </span>
             <div style={{ display: "flex", gap: 6 }}>
-              {["#a09d96", "#a09d96", "#cc785c"].map((c, i) => (
+              {["var(--color-muted)", "var(--color-muted)", "var(--color-chart-1)"].map((c, i) => (
                 <div key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: c }} />
               ))}
             </div>

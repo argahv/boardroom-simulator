@@ -13,6 +13,7 @@ import { Avatar, initialsFromName } from "@/components/Avatar";
 import { ActionGlyph, actionLabel } from "@/components/ActionGlyph";
 import { Voltage } from "@/components/Voltage";
 import { SimBadge } from "@/components/SimBadge";
+import { ExpandableText } from "@/components/ExpandableText";
 
 interface TableLayoutProps {
   turns: Turn[];
@@ -342,8 +343,7 @@ export function TableLayout({
                     letterSpacing: "-0.3px",
                   }}
                 >
-                  &ldquo;{currentTurn.content.slice(0, 140)}
-                  {currentTurn.content.length > 140 ? "…" : ""}&rdquo;
+                  &ldquo;<ExpandableText text={currentTurn.content} limit={140} />&rdquo;
                 </div>
                 <div
                   style={{
@@ -442,7 +442,7 @@ export function TableLayout({
               Event stream
             </span>
             <div style={{ display: "flex", gap: 6 }}>
-              {["#a09d96", "#a09d96", "#cc785c"].map((c, i) => (
+              {["var(--color-muted)", "var(--color-muted)", "var(--color-chart-1)"].map((c, i) => (
                 <div key={i} style={{ width: 7, height: 7, borderRadius: "50%", background: c }} />
               ))}
             </div>

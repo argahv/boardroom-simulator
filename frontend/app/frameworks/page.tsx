@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
-import { createSimulationV2, fetchTemplates, type TemplateListItem } from "@/lib/api";
+import { createSimulation, fetchTemplates, type TemplateListItem } from "@/lib/api";
 
 export default function FrameworksPage() {
   const router = useRouter();
@@ -15,7 +15,7 @@ export default function FrameworksPage() {
   useEffect(() => {
     fetchTemplates()
       .then(setTemplates)
-      .catch(() => {})
+      .catch((err) => console.error("Failed to load:", err))
       .finally(() => setLoading(false));
   }, []);
 
@@ -26,7 +26,7 @@ export default function FrameworksPage() {
     setCreating(t.slug);
     try {
       if (!t.config) throw new Error("Template has no config");
-      const res = await createSimulationV2(t.config as any);
+      const res = await createSimulation(t.config as any);
       router.push(`/simulate/${res.simulation_id}`);
     } catch {
       setCreating(null);
@@ -63,11 +63,11 @@ export default function FrameworksPage() {
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1,2,3,4,5,6].map(i => (
-              <div key={i} className="rounded-xl border border-hairline bg-surface-card p-5 animate-pulse">
-                <div className="h-4 w-20 rounded bg-ink/10 mb-3" />
-                <div className="h-5 w-3/4 rounded bg-ink/10 mb-2" />
-                <div className="h-4 w-full rounded bg-ink/10 mb-4" />
-                <div className="h-8 w-full rounded-full bg-ink/10" />
+              <div key={i} className="rounded-2xl border border-hairline bg-surface-card p-5">
+                <div className="h-4 w-20 rounded bg-ink/8 anim-shimmer mb-3" />
+                <div className="h-5 w-3/4 rounded bg-ink/8 anim-shimmer mb-2" />
+                <div className="h-4 w-full rounded bg-ink/8 anim-shimmer mb-4" />
+                <div className="h-9 w-full rounded-full bg-ink/8 anim-shimmer" />
               </div>
             ))}
           </div>
@@ -85,8 +85,9 @@ export default function FrameworksPage() {
 
             {/* ── Template grid ── */}
             {filtered.length === 0 ? (
-              <div className="rounded-xl border border-dashed border-hairline bg-surface-card/50 p-10 text-center">
-                <p className="text-sm text-muted">No templates in this category yet.</p>
+              <div className="rounded-2xl border-2 border-dashed border-hairline bg-surface-card/50 p-12 text-center">
+                <p className="text-sm text-muted font-medium">No templates in this category</p>
+                <p className="text-xs text-muted/70 mt-1">Try selecting a different category.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

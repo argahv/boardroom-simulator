@@ -1,5 +1,7 @@
 "use client";
 
+import { ExpandableText } from "@/components/ExpandableText";
+
 interface PlanEntry {
   goal_text: string;
   status: string;
@@ -43,12 +45,12 @@ export function StrategicPlanPanel({ plans, nameMap }: StrategicPlanPanelProps) 
             <div key={i} className="rounded-lg border border-hairline bg-canvas px-3 py-[10px]">
               <div className="mb-1 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className={`h-1.5 w-1.5 rounded-full ${plan.status === 'active' ? 'bg-green-500' : 'bg-muted'}`} />
+                  <span className={`h-1.5 w-1.5 rounded-full ${plan.status === 'active' ? 'bg-success' : 'bg-muted'}`} />
                   <span className="text-[12px] font-medium text-ink">{name}</span>
                 </div>
                 <span className="font-mono text-[10px] text-muted">{Math.round(plan.confidence * 100)}%</span>
               </div>
-              <p className="mb-1.5 text-[11px] text-ink/80 leading-relaxed">{plan.goal_text}</p>
+              <p className="mb-1.5 text-[11px] text-ink/80 leading-relaxed"><ExpandableText text={plan.goal_text} limit={150} /></p>
               <div className="mb-1 h-1.5 overflow-hidden rounded-full bg-ink/10">
                 <div className="h-full rounded-full bg-secondary" style={{ width: `${progress * 100}%` }} />
               </div>

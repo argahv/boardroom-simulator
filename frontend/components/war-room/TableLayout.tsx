@@ -3,7 +3,7 @@
 import { useMemo, useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
-import type { V2Turn } from "./TranscriptStream";
+import type { Turn } from "./TranscriptStream";
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import { ConflictTimeline } from "./ConflictTimeline";
 import { EventLog } from "./EventLog";
@@ -33,12 +33,12 @@ interface EventLogEntry {
 
 interface TableLayoutProps {
   turn: number;
-  current?: V2Turn;
+  current?: Turn;
   playing: boolean;
   stakeholders: TableStakeholder[];
   speakerId: string | null;
   eventLog: EventLogEntry[];
-  turns: V2Turn[];
+  turns: Turn[];
   totalTurns: number;
   simState?: SimulationStateData;
   nameMap?: Record<string, string>;

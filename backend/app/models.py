@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import json
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, BeforeValidator
 
 ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
 ModelTemperature = Literal["stable", "volatile"]
@@ -60,6 +61,11 @@ class ObjectiveStore(BaseModel):
             for o in active[:len(active) - self.max_active]:
                 o.is_active = False
 
+def _json_str(v: object) -> str:
+    if isinstance(v, str):
+        return v
+    return json.dumps(v, separators=(",", ":"))
+
 class Stakeholder(BaseModel):
     id: str
     name: str
@@ -71,8 +77,8 @@ class Stakeholder(BaseModel):
     tool_profile: ToolProfile = "none"  # determines which tools this agent gets
     backstory: str = ""
     stance: str = "neutral"
-    personality: str = "{}"
-    tools: str = "[]"
+    personality: Annotated[str, BeforeValidator(_json_str)] = "{}"
+    tools: Annotated[str, BeforeValidator(_json_str)] = "[]"
 
 
 class ScenarioTemplate(BaseModel):
@@ -203,7 +209,7 @@ class SimulationState(BaseModel):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# v2 — Agentic Architecture Models (user-defined config, engine has zero opinions)
+# Agentic Architecture Models (user-defined config, engine has zero opinions)
 # ═══════════════════════════════════════════════════════════════════════
 
 class Subject(BaseModel):
@@ -283,7 +289,7 @@ EndCondition = Annotated[
 ]
 
 
-class StakeholderV2(BaseModel):
+class AgentConfig(BaseModel):
     """A stakeholder with stance + personality. No hardcoded tags."""
     id: str
     name: str
@@ -296,10 +302,10 @@ class StakeholderV2(BaseModel):
     inject_knowledge: bool | None = None  # Per-agent override (None = use global config)
 
 
-class SimulationV2Config(BaseModel):
+class SimulationConfig(BaseModel):
     """Full user-defined simulation config — engine has zero domain opinions."""
     subject: Subject
-    stakeholders: list[StakeholderV2]
+    stakeholders: list[AgentConfig]
     action_space: ActionSpace
     speaker_rules: SpeakerRules = Field(default_factory=SpeakerRules)
     end_condition: EndCondition = Field(default_factory=lambda: TimeoutCondition())
@@ -314,6 +320,10 @@ class SimulationV2Config(BaseModel):
     auto_research: bool = True
     research_topics: list[str] = Field(default_factory=list)
     inject_knowledge: bool = True  # Global toggle for Chroma RAG injection
+
+# Backward compatibility aliases
+StakeholderV2 = AgentConfig
+SimulationV2Config = SimulationConfig
 
 
 class SimulationDocument(BaseModel):

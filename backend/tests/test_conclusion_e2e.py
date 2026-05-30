@@ -25,15 +25,14 @@ from typing import Any
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Use temp file database
-os.environ["DATABASE_TYPE"] = "sqlite"
-os.environ["SQLITE_PATH"] = os.path.join(tempfile.gettempdir(), f"boardroom_test_{datetime.now().timestamp()}.db")
+os.environ["DATABASE_TYPE"] = "prisma"
 
 import pytest
 from app.models import (
-    Subject, StakeholderV2, PersonalityProfile,
+    Subject, AgentConfig, PersonalityProfile,
     ActionSpace, CustomActionDef, SpeakerRules,
     VoteCondition, TimeoutCondition, ConsensusCondition, JudgeCondition,
-    SimulationV2Config, Postmortem, TerminationResult,
+    SimulationConfig, Postmortem, TerminationResult,
     ActionType,
 )
 from app.runtime.space import SharedSpace
@@ -41,7 +40,7 @@ from app.runtime.scheduler import (
     Scheduler, VoteChecker, SocialPhysicsChecker, TimeoutChecker,
     TerminationContext, EndConditionRegistry,
 )
-from app.runtime.simulation import run_simulation_v2
+from app.runtime.simulation import run_simulation
 from app.runtime.postmortem_generator import (
     PostmortemGenerator, TopicTracker, PositionTracker,
     KeyMomentDetector, SocialDynamicsAggregator,
@@ -108,18 +107,18 @@ async def mock_llm_walkaway(messages, temperature=0.6, simulation_id=None, turn_
 # Test Configurations
 # ═══════════════════════════════════════════════════════════════════════
 
-def make_config_vote() -> SimulationV2Config:
+def make_config_vote() -> SimulationConfig:
     """Config that uses VoteCondition — agents reach consensus via vote."""
-    return SimulationV2Config(
+    return SimulationConfig(
         subject=Subject(name="Partnership Terms", description="Negotiate revenue split and governance"),
         stakeholders=[
-            StakeholderV2(id="alpha", name="Alpha", role="CEO", stance="champion",
+            AgentConfig(id="alpha", name="Alpha", role="CEO", stance="champion",
                 personality=PersonalityProfile(aggressiveness=70, verbosity=60)),
-            StakeholderV2(id="beta", name="Beta", role="CFO", stance="detractor",
+            AgentConfig(id="beta", name="Beta", role="CFO", stance="detractor",
                 personality=PersonalityProfile(empathy=40, stubbornness=80)),
-            StakeholderV2(id="charlie", name="Charlie", role="Moderator", stance="moderator",
+            AgentConfig(id="charlie", name="Charlie", role="Moderator", stance="moderator",
                 personality=PersonalityProfile(verbosity=50, empathy=80)),
-            StakeholderV2(id="diana", name="Diana", role="Analyst", stance="neutral",
+            AgentConfig(id="diana", name="Diana", role="Analyst", stance="neutral",
                 personality=PersonalityProfile(aggressiveness=40, empathy=70)),
         ],
         action_space=ActionSpace(),
@@ -130,16 +129,16 @@ def make_config_vote() -> SimulationV2Config:
     )
 
 
-def make_config_consensus() -> SimulationV2Config:
+def make_config_consensus() -> SimulationConfig:
     """Config that uses ConsensusCondition — detects agreement from social physics."""
-    return SimulationV2Config(
+    return SimulationConfig(
         subject=Subject(name="Merger Timeline", description="Decide on merger timeline"),
         stakeholders=[
-            StakeholderV2(id="urgent", name="Urgent", role="VP Ops", stance="champion",
+            AgentConfig(id="urgent", name="Urgent", role="VP Ops", stance="champion",
                 personality=PersonalityProfile(aggressiveness=80, verbosity=30)),
-            StakeholderV2(id="cautious", name="Cautious", role="Legal", stance="detractor",
+            AgentConfig(id="cautious", name="Cautious", role="Legal", stance="detractor",
                 personality=PersonalityProfile(stubbornness=90, empathy=30)),
-            StakeholderV2(id="neutral1", name="Neutral", role="Advisor", stance="neutral",
+            AgentConfig(id="neutral1", name="Neutral", role="Advisor", stance="neutral",
                 personality=PersonalityProfile(verbosity=50)),
         ],
         action_space=ActionSpace(),
@@ -154,6 +153,7 @@ def make_config_consensus() -> SimulationV2Config:
 # Unit Tests for Checkers
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 class TestVoteChecker:
     """Verify VoteChecker correctly tallies votes and triggers at threshold."""
 
@@ -230,6 +230,7 @@ class TestVoteChecker:
         assert result is None, "Should not trigger before turn 3"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestSocialPhysicsChecker:
     """Verify SocialPhysicsChecker detects agreement and deadlock."""
 
@@ -317,6 +318,7 @@ class TestSocialPhysicsChecker:
             assert result.walkaway_party == "urgent"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestTopicsAndPositions:
     """Verify TopicTracker and PositionTracker extract structured data from turns."""
 
@@ -388,6 +390,7 @@ class TestTopicsAndPositions:
         assert len(walkaway) >= 1, "Should detect walkaway from content pattern"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestPostmortemGenerator:
     """Verify PostmortemGenerator produces complete structured report."""
 
@@ -453,6 +456,7 @@ class TestPostmortemGenerator:
             f"Expected confidence_score=75 from confidence=0.75, got {pm.confidence_score}"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestEndConditionRegistry:
     """Verify EndConditionRegistry builds correct checkers for each config type."""
 
@@ -504,6 +508,7 @@ class TestEndConditionRegistry:
         assert "TimeoutChecker" in types, f"Expected TimeoutChecker safety net in {types}"
 
 
+@pytest.mark.usefixtures("db_setup")
 class TestActionTypeExpansion:
     """Verify 'vote' and 'walkaway' are valid action types."""
 
@@ -528,6 +533,7 @@ class TestActionTypeExpansion:
 # Full Integration: Simulation → Checkers → Done Event → Postmortem
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 class TestFullConclusionCycle:
     """Complete end-to-end test of the conclusion system."""
 
@@ -541,7 +547,7 @@ class TestFullConclusionCycle:
         cfg = make_config_vote()
         cfg.speaker_rules.mode = "freeform"
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-vote-test"):
+        async for event in run_simulation(cfg, simulation_id="e2e-vote-test"):
             events.append(event)
 
         # 1. Verify done event was emitted
@@ -596,7 +602,7 @@ class TestFullConclusionCycle:
         cfg = make_config_consensus()
         cfg.speaker_rules.mode = "freeform"
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-walkaway"):
+        async for event in run_simulation(cfg, simulation_id="e2e-walkaway"):
             events.append(event)
 
         done_events = [e for e in events if e.get("type") == "done"]
@@ -631,7 +637,7 @@ class TestFullConclusionCycle:
 
         cfg = make_config_vote()
         events: list[dict] = []
-        async for event in run_simulation_v2(cfg, simulation_id="e2e-postmortem"):
+        async for event in run_simulation(cfg, simulation_id="e2e-postmortem"):
             events.append(event)
 
         done_events = [e for e in events if e.get("type") == "done"]
@@ -647,11 +653,12 @@ class TestFullConclusionCycle:
 # Database Persistence Test
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_database_persistence():
     """Verify simulation data is persisted to the database correctly."""
     from app.database import initialize_database, get_database, close_database
-    from app.models import SimulationV2Config
+    from app.models import SimulationConfig
 
     await initialize_database()
     db = get_database()
@@ -661,71 +668,56 @@ async def test_database_persistence():
         cfg = make_config_vote()
         cfg_dict = cfg.model_dump(mode="json")
         sim_id = "db-test-sim-001"
-        if hasattr(db, 'create_new_simulation'):
-            await db.create_new_simulation(sim_id, cfg_dict)
-            print(f"\n  DB: Created simulation {sim_id}")
-        else:
-            print("  DB: create_new_simulation not available (old schema)")
+        await db.create_new_simulation(sim_id, cfg_dict)
+        print(f"\n  DB: Created simulation {sim_id}")
 
         # 2. Verify we can retrieve it
-        if hasattr(db, 'get_simulation_config'):
-            retrieved = await db.get_simulation_config(sim_id)
-            if retrieved:
-                print(f"  DB: Retrieved simulation config — "
-                      f"stakeholders={len(retrieved.get('stakeholders', []))}")
-                assert len(retrieved.get('stakeholders', [])) == 4
-        else:
-            print("  DB: get_simulation_config not available")
+        retrieved = await db.get_simulation_config(sim_id)
+        if retrieved:
+            print(f"  DB: Retrieved simulation config — "
+                  f"stakeholders={len(retrieved.get('stakeholders', []))}")
+            assert len(retrieved.get('stakeholders', [])) == 4
 
         # 3. Save state snapshots (as scheduler does)
-        if hasattr(db, 'create_state_snapshot'):
-            snapshot = {"turn_count": 5, "social_physics": {"a": {"trust": 0.8}}}
-            await db.create_state_snapshot(sim_id, 5, json.dumps(snapshot), version=1)
-            print(f"  DB: Saved state snapshot at turn 5")
+        snapshot = {"turn_count": 5, "social_physics": {"a": {"trust": 0.8}}}
+        await db.create_state_snapshot(sim_id, 5, json.dumps(snapshot), version=1)
+        print(f"  DB: Saved state snapshot at turn 5")
 
-            if hasattr(db, 'get_state_snapshots_by_simulation'):
-                snapshots = await db.get_state_snapshots_by_simulation(sim_id)
-                print(f"  DB: Retrieved {len(snapshots)} snapshots")
-                assert len(snapshots) >= 1
-        else:
-            print("  DB: create_state_snapshot not available")
+        snapshots = await db.get_state_snapshots_by_simulation(sim_id)
+        print(f"  DB: Retrieved {len(snapshots)} snapshots")
+        assert len(snapshots) >= 1
 
         # 4. Save and retrieve postmortem
-        if hasattr(db, 'save_postmortem') and hasattr(db, 'get_postmortem'):
-            pm_data = json.dumps({
-                "simulation_id": sim_id,
-                "confidence_score": 85,
-                "consensus_rating": 90,
-                "end_reason": "vote_majority",
-                "verdict": "Deal reached",
-                "topics": [{"topic": "revenue_split", "resolved": True}],
-                "summary": "Consensus reached on all terms.",
-            })
-            await db.save_postmortem(sim_id, pm_data)
-            print(f"  DB: Saved postmortem")
+        pm_data = json.dumps({
+            "simulation_id": sim_id,
+            "confidence_score": 85,
+            "consensus_rating": 90,
+            "end_reason": "vote_majority",
+            "verdict": "Deal reached",
+            "topics": [{"topic": "revenue_split", "resolved": True}],
+            "summary": "Consensus reached on all terms.",
+        })
+        await db.save_postmortem(sim_id, pm_data)
+        print(f"  DB: Saved postmortem")
 
-            cached = await db.get_postmortem(sim_id)
-            if cached:
-                cached_d = json.loads(cached) if isinstance(cached, str) else cached
-                confidence = cached_d.get("confidence_score", 0)
-                print(f"  DB: Retrieved postmortem — confidence_score={confidence}")
-                assert confidence == 85
-            else:
-                print("  DB: get_postmortem returned None")
+        cached = await db.get_postmortem(sim_id)
+        if cached:
+            cached_d = json.loads(cached) if isinstance(cached, str) else cached
+            confidence = cached_d.get("confidence_score", 0)
+            print(f"  DB: Retrieved postmortem — confidence_score={confidence}")
+            assert confidence == 85
         else:
-            print("  DB: postmortem save/load not available")
+            print("  DB: get_postmortem returned None")
 
         # 5. Update simulation status
-        if hasattr(db, 'update_simulation_status_v2'):
-            await db.update_simulation_status_v2(sim_id, "complete")
-            print(f"  DB: Updated simulation status to 'complete'")
+        await db.update_simulation_status_v2(sim_id, "complete")
+        print(f"  DB: Updated simulation status to 'complete'")
 
         # 6. List simulations
-        if hasattr(db, 'list_simulations_v2'):
-            all_sims = await db.list_simulations_v2()
-            sim_ids = [s["simulation_id"] for s in all_sims]
-            print(f"  DB: Listed simulations — {sim_ids}")
-            assert sim_id in sim_ids
+        all_sims = await db.list_simulations_v2()
+        sim_ids = [s["simulation_id"] for s in all_sims]
+        print(f"  DB: Listed simulations — {sim_ids}")
+        assert sim_id in sim_ids
 
     except Exception as exc:
         print(f"  DB ERROR: {exc}")
@@ -740,6 +732,7 @@ async def test_database_persistence():
 # Agent Behavior Analysis
 # ═══════════════════════════════════════════════════════════════════════
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_agent_behavior_full_trace(monkeypatch):
     """Deep trace of agent behavior: what they say, when, and how they respond."""
@@ -749,7 +742,7 @@ async def test_agent_behavior_full_trace(monkeypatch):
     cfg = make_config_vote()
     cfg.speaker_rules.mode = "freeform"
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="agent-trace"):
+    async for event in run_simulation(cfg, simulation_id="agent-trace"):
         events.append(event)
 
     print("\n\n  ════════════════════════════════════════════════")
@@ -805,6 +798,7 @@ async def test_agent_behavior_full_trace(monkeypatch):
         assert d.get("total_turns", 0) >= 1
 
 
+@pytest.mark.usefixtures("db_setup")
 @pytest.mark.asyncio
 async def test_simulation_with_behavior_engine(monkeypatch):
     """Verify state snapshots are published when BehaviorEngine is wired."""
@@ -818,7 +812,7 @@ async def test_simulation_with_behavior_engine(monkeypatch):
     be = make_engine([s.id for s in cfg.stakeholders])
 
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="e2e-with-be", behavior_engine=be):
+    async for event in run_simulation(cfg, simulation_id="e2e-with-be", behavior_engine=be):
         events.append(event)
 
     # Verify state snapshots

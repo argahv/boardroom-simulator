@@ -275,3 +275,37 @@ class TestDefaultDeltas:
         required_keys = {"trust", "leverage", "tension", "dominance", "credibility", "momentum"}
         for action_type, delta in DEFAULT_DELTAS.items():
             assert set(delta.keys()) == required_keys, f"{action_type} missing keys"
+
+
+class TestPersonalityModulation:
+    def test_personality_social_default(self):
+        from app.models import PersonalityProfile
+
+        sp = SocialPhysics()
+        result = sp.update("challenge", "a", None, {"personality": PersonalityProfile()})
+        delta = result.tension - 0.3  # base tension is 0.3
+        assert abs(delta - 0.12) < 1e-4, f"Expected delta 0.12, got {delta}"
+
+    def test_personality_social_high_agg_challenge(self):
+        from app.models import PersonalityProfile
+
+        sp = SocialPhysics()
+        result = sp.update("challenge", "a", None, {"personality": PersonalityProfile(aggressiveness=80)})
+        delta = result.tension - 0.3
+        expected_delta = 0.12 * (1 + (80 - 50) / 50 * 0.5)  # 0.156
+        assert abs(delta - expected_delta) < 1e-4, f"Expected {expected_delta}, got {delta}"
+
+    def test_update_without_personality(self):
+        from app.models import PersonalityProfile
+
+        sp = SocialPhysics()
+        result_with = sp.update("challenge", "a", None, {"personality": PersonalityProfile()})
+        result_without = sp.update("challenge", "a", None, {})
+        assert abs(result_with.tension - result_without.tension) < 1e-6
+
+    def test_update_with_personality_context(self):
+        from app.models import PersonalityProfile
+
+        sp = SocialPhysics()
+        result = sp.update("challenge", "a", None, {"personality": PersonalityProfile(aggressiveness=80), "extra": "data"})
+        assert result.tension > 0.4  # Should be higher than baseline + default delta

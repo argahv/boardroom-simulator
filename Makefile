@@ -1,4 +1,4 @@
-.PHONY: help install backend frontend worker-sim worker-postmortem workers dev
+.PHONY: help setup install backend frontend worker-sim worker-postmortem workers dev db-generate test
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -11,14 +11,20 @@ RQ_POST := PYTHONPATH=$(BACKEND_DIR) $(VENV)/bin/python -m app.workers.postmorte
 
 help:
 	@echo ""
+	@echo "  make setup            Full project setup (Docker, env files, DB)"
 	@echo "  make install          Install all backend + frontend dependencies"
 	@echo "  make backend          Run FastAPI backend (port 8000)"
 	@echo "  make frontend         Run Next.js frontend (port 3000)"
 	@echo "  make worker-sim       Run simulation RQ worker"
 	@echo "  make worker-postmortem  Run postmortem RQ worker"
 	@echo "  make workers          Run both workers in parallel"
+	@echo "  make db-generate      Regenerate Prisma client and apply patches"
 	@echo "  make dev              Run backend + frontend + both workers"
 	@echo ""
+
+setup:
+	@echo "→ Running full project setup..."
+	bash scripts/setup.sh
 
 install:
 	@echo "→ Installing backend dependencies..."
@@ -27,6 +33,9 @@ install:
 	@echo "→ Installing frontend dependencies..."
 	cd $(FRONTEND_DIR) && npm install --silent
 	@echo "✓ Done"
+
+db-generate:  # Regenerate Prisma client and apply patches
+	cd backend && npm run generate
 
 backend:
 	@echo "→ Starting backend on :8000"
@@ -56,3 +65,17 @@ dev:
 	$(RQ_SIM) & \
 	$(RQ_POST) & \
 	wait
+
+test:
+	@echo "→ Starting PostgreSQL..."
+	docker compose up postgres -d
+	@echo "→ Waiting for PostgreSQL..."
+	@for i in $$(seq 1 15); do \
+		pg_isready -h localhost -U boardroom -d boardroom > /dev/null 2>&1 && echo "✓ PostgreSQL ready" && break; \
+		echo "  Waiting... ($$i/15)"; \
+		sleep 1; \
+	done
+	@echo "→ Running database migrations..."
+	cd backend && DATABASE_URL=postgresql://boardroom:boardroom@localhost:5432/boardroom npx prisma db push --skip-generate
+	@echo "→ Running tests..."
+	cd backend && DATABASE_URL=postgresql://boardroom:boardroom@localhost:5432/boardroom $(VENV)/bin/python -m pytest tests/

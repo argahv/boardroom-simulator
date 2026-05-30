@@ -1,15 +1,14 @@
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
+import { use, useEffect, useState } from "react";
 import Link from "next/link";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
+import { ExpandableText } from "@/components/ExpandableText";
 import {
   fetchAgentDetail,
   fetchPersonaResearch,
@@ -26,8 +25,6 @@ import {
   type PersonaResearchEntry,
 } from "@/lib/api";
 import type { DocumentMeta, EvolutionProposal, KnowledgeQueryResult } from "@/lib/types";
-
-gsap.registerPlugin(useGSAP);
 
 type PageProps = { params: Promise<{ slug: string }> };
 
@@ -186,57 +183,7 @@ export default function AgentDetailPage({ params }: PageProps) {
     });
   })();
 
-  const headerRef = useRef<HTMLDivElement>(null);
-  const statsRef = useRef<HTMLDivElement>(null);
-  const personalityRef = useRef<HTMLDivElement>(null);
-  const historyRef = useRef<HTMLDivElement>(null);
-  const memoriesRef = useRef<HTMLDivElement>(null);
-  const simCountRef = useRef<HTMLParagraphElement>(null);
-  const turnCountRef = useRef<HTMLParagraphElement>(null);
-  const memCountRef = useRef<HTMLParagraphElement>(null);
-  const sectionRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(() => {
-    if (!data) return;
-    const mm = gsap.matchMedia();
-    mm.add("(prefers-reduced-motion: no-preference)", () => {
-      if (headerRef.current) {
-        gsap.from(headerRef.current.querySelectorAll("[data-anim='fade']"), {
-          y: -20, opacity: 0, duration: 0.5, ease: "power2.out", stagger: 0.08, clearProps: "transform",
-        });
-      }
-      if (statsRef.current) {
-        gsap.from(statsRef.current.querySelectorAll("[data-anim='stat']"), {
-          scale: 0.6, opacity: 0, duration: 0.4, ease: "back.out(1.7)", stagger: 0.06,
-        });
-      }
-      if (simCountRef.current) {
-        const o = { v: 0 }; gsap.to(o, { v: data.stats.total_simulations, duration: 0.8, ease: "power2.out", onUpdate: () => { simCountRef.current!.textContent = String(Math.round(o.v)); } });
-      }
-      if (turnCountRef.current) {
-        const o = { v: 0 }; gsap.to(o, { v: data.stats.total_turns, duration: 0.8, ease: "power2.out", onUpdate: () => { turnCountRef.current!.textContent = String(Math.round(o.v)); } });
-      }
-      if (memCountRef.current) {
-        const o = { v: 0 }; gsap.to(o, { v: data.stats.total_memories, duration: 0.8, ease: "power2.out", onUpdate: () => { memCountRef.current!.textContent = String(Math.round(o.v)); } });
-      }
-      if (personalityRef.current) {
-        gsap.from(personalityRef.current.querySelectorAll("[data-anim='pbar']"), {
-          width: "0%", duration: 0.5, stagger: 0.04, ease: "power3.out",
-        });
-      }
-      if (historyRef.current) {
-        gsap.from(historyRef.current.querySelectorAll("[data-anim='hcard']"), {
-          y: 24, opacity: 0, duration: 0.4, ease: "back.out(1.7)", stagger: 0.08, clearProps: "transform",
-        });
-      }
-      if (memoriesRef.current) {
-        gsap.from(memoriesRef.current.querySelectorAll("[data-anim='mcard']"), {
-          y: 16, opacity: 0, duration: 0.4, ease: "power2.out", stagger: 0.06, clearProps: "transform",
-        });
-      }
-    });
-    return () => mm.revert();
-  }, { scope: sectionRef, dependencies: [data], revertOnUpdate: true });
+  // GSAP entrance animations removed
 
   return (
     <AppShell activeTab="Personas">
@@ -258,15 +205,15 @@ export default function AgentDetailPage({ params }: PageProps) {
         )}
 
         {data && (
-          <div ref={sectionRef} className="space-y-8 max-w-5xl">
+            <div className="space-y-8 max-w-5xl">
             {/* ── Profile Header ── */}
-            <div ref={headerRef} className="flex items-start gap-6 flex-wrap">
-              <div data-anim="fade" className="w-20 h-20 rounded-full bg-primary flex items-center justify-center shrink-0">
+            <div className="flex items-start gap-6 flex-wrap">
+              <div  className="w-20 h-20 rounded-full bg-primary flex items-center justify-center shrink-0">
                 <span className="text-canvas text-3xl font-bold font-serif-title">
                   {profile?.name ? (profile.name as string).charAt(0) : "?"}
                 </span>
               </div>
-              <div data-anim="fade" className="flex-1 min-w-0">
+              <div  className="flex-1 min-w-0">
                 <h1 className="font-display text-4xl font-semibold tracking-display">
                   {profile?.name as string}
                 </h1>
@@ -280,17 +227,17 @@ export default function AgentDetailPage({ params }: PageProps) {
                   ))}
                 </div>
               </div>
-              <div ref={statsRef} className="grid grid-cols-3 gap-4 text-center">
-                <div data-anim="stat" className="rounded-xl bg-surface-card border border-hairline p-4 min-w-[100px]">
-                  <p ref={simCountRef} className="font-display text-2xl font-semibold">{data.stats.total_simulations}</p>
+              <div className="grid grid-cols-3 gap-4 text-center">
+                <div  className="rounded-xl bg-surface-card border border-hairline p-4 min-w-[100px]">
+                  <p className="font-display text-2xl font-semibold">{data.stats.total_simulations}</p>
                   <p className="text-xs text-muted mt-1">Simulations</p>
                 </div>
-                <div data-anim="stat" className="rounded-xl bg-surface-card border border-hairline p-4">
-                  <p ref={turnCountRef} className="font-display text-2xl font-semibold">{data.stats.total_turns}</p>
+                <div  className="rounded-xl bg-surface-card border border-hairline p-4">
+                  <p className="font-display text-2xl font-semibold">{data.stats.total_turns}</p>
                   <p className="text-xs text-muted mt-1">Total Turns</p>
                 </div>
-                <div data-anim="stat" className="rounded-xl bg-surface-card border border-hairline p-4">
-                  <p ref={memCountRef} className="font-display text-2xl font-semibold">{data.stats.total_memories}</p>
+                <div  className="rounded-xl bg-surface-card border border-hairline p-4">
+                  <p className="font-display text-2xl font-semibold">{data.stats.total_memories}</p>
                   <p className="text-xs text-muted mt-1">Memories</p>
                 </div>
               </div>
@@ -298,7 +245,7 @@ export default function AgentDetailPage({ params }: PageProps) {
 
             {/* ── Personality ── */}
             {Object.keys(personality).length > 0 && (
-              <section ref={personalityRef} className="rounded-xl bg-surface-card border border-hairline p-6">
+              <section className="rounded-xl bg-surface-card border border-hairline p-6">
                 <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-muted mb-4">Personality Profile</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                   {Object.entries(personality).map(([trait, val]) => (
@@ -308,7 +255,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         <span className="font-mono text-xs">{val as number}</span>
                       </div>
                       <div className="h-2 rounded-full bg-ink/10">
-                        <div data-anim="pbar" className="h-2 rounded-full bg-primary" style={{ width: `${val as number}%` }} />
+                        <div  className="h-2 rounded-full bg-primary" style={{ width: `${val as number}%` }} />
                       </div>
                     </div>
                   ))}
@@ -577,7 +524,7 @@ export default function AgentDetailPage({ params }: PageProps) {
             ) : null}
 
             {/* ── Simulation History ── */}
-            <section ref={historyRef}>
+            <section>
               <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-muted mb-4">
                 Simulation History ({data.simulations.length})
               </h3>
@@ -589,7 +536,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                 <div className="space-y-2">
                   {data.simulations.map((sim: any) => (
                     <Link key={sim.id} href={`/simulate/${sim.id}`}
-                      data-anim="hcard"
+                      
                       className="block rounded-xl border border-hairline bg-surface-card p-4 hover:border-primary/30 transition">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <div className="flex items-center gap-3">
@@ -627,7 +574,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         {data.goals.map((g: any) => (
                           <div key={g.id}>
                             <div className="flex justify-between text-sm mb-1">
-                              <span className="text-ink">{g.goal_text}</span>
+                              <span className="text-ink"><ExpandableText text={g.goal_text} limit={150} /></span>
                               <span className="font-mono text-xs text-muted">p{g.priority.toFixed(1)}</span>
                             </div>
                             <div className="h-1.5 rounded-full bg-ink/10">
@@ -682,7 +629,7 @@ export default function AgentDetailPage({ params }: PageProps) {
             </section>
 
             {/* ── Semantic Memories ── */}
-            <section ref={memoriesRef}>
+            <section>
               <h3 className="text-xs font-bold uppercase tracking-[0.12em] text-muted mb-4">
                 Semantic Memories ({data.memories.length})
               </h3>
@@ -693,7 +640,7 @@ export default function AgentDetailPage({ params }: PageProps) {
               ) : (
                 <div className="space-y-2">
                   {data.memories.map((mem: any, i: number) => (
-                    <div key={i} data-anim="mcard" className="rounded-xl border border-hairline bg-surface-card p-4 flex items-start gap-3">
+                    <div key={i}  className="rounded-xl border border-hairline bg-surface-card p-4 flex items-start gap-3">
                       <span className={`mt-0.5 w-2 h-2 rounded-full shrink-0 ${
                         mem.memory_type === "position" ? "bg-accent-teal" :
                         mem.memory_type === "red_line" ? "bg-primary" :
@@ -705,7 +652,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                           <span className="text-xs text-muted">{mem.subject_name}</span>
                           {mem.turn_index !== null && <span className="text-xs text-muted font-mono">T{mem.turn_index}</span>}
                         </div>
-                        <p className="text-sm text-ink leading-relaxed">{mem.content.slice(0, 200)}{mem.content.length > 200 ? "…" : ""}</p>
+                        <p className="text-sm text-ink leading-relaxed"><ExpandableText text={mem.content} limit={200} /></p>
                       </div>
                     </div>
                   ))}
@@ -788,7 +735,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                                 {r.title ?? `Source ${i + 1}`}
                               </a>
                               {r.content && (
-                                <p className="text-xs text-muted mt-1 leading-relaxed line-clamp-3">{r.content}</p>
+                                <p className="text-xs text-muted mt-1 leading-relaxed"><ExpandableText text={r.content} limit={160} /></p>
                               )}
                               {r.url && (
                                 <p className="text-[11px] text-muted/60 mt-1 truncate font-mono">{r.url}</p>
@@ -934,7 +881,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         <span className="font-mono text-xs text-muted">T{t.turn_index}</span>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-ink/10 capitalize">{t.action_type}</span>
                       </div>
-                      <p className="text-sm text-ink leading-relaxed">{t.content.slice(0, 300)}{t.content.length > 300 ? "…" : ""}</p>
+                      <p className="text-sm text-ink leading-relaxed"><ExpandableText text={t.content} limit={300} /></p>
                       {t.internal_reasoning && (
                         <details className="mt-2">
                           <summary className="cursor-pointer text-xs text-muted">Reasoning</summary>

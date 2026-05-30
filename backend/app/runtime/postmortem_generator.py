@@ -19,7 +19,7 @@ import re
 from typing import Any
 
 from app.models import (
-    SimulationV2Config, Postmortem, TerminationResult,
+    SimulationConfig, Postmortem, TerminationResult,
     TopicSummary, KeyMoment, StakeholderReport,
     SocialDynamicsSummary, TVector, VoteEvent, JudgeEvent,
     AlignmentDelta, TopologyNode, StrategyCard,
@@ -173,7 +173,7 @@ class PositionTracker:
             if content and len(content) > 10:
                 self._statements[agent].append(content)
 
-    def to_stakeholder_reports(self, config: SimulationV2Config) -> list[StakeholderReport]:
+    def to_stakeholder_reports(self, config: SimulationConfig) -> list[StakeholderReport]:
         reports = []
         for s in config.stakeholders:
             agent_id = s.id
@@ -210,7 +210,7 @@ class PositionTracker:
         )
         return [s[0] for s in scored[:max_len]]
 
-    def _compute_alignment_delta(self, agent_id: str, config: SimulationV2Config) -> int:
+    def _compute_alignment_delta(self, agent_id: str, config: SimulationConfig) -> int:
         """Rough alignment delta based on stance."""
         for s in config.stakeholders:
             if s.id == agent_id:
@@ -350,7 +350,7 @@ class SocialDynamicsAggregator:
 class PostmortemGenerator:
     """Orchestrates postmortem generation: ground data → LLM enrichment → assemble."""
 
-    def __init__(self, space: SharedSpace, config: SimulationV2Config,
+    def __init__(self, space: SharedSpace, config: SimulationConfig,
                  behavior_engine: Any = None) -> None:
         self.space = space
         self.config = config

@@ -7,41 +7,41 @@ import pytest
 
 from app.models import (
     Subject,
-    StakeholderV2,
+    AgentConfig,
     PersonalityProfile,
     ActionSpace,
     CustomActionDef,
     SpeakerRules,
     TimeoutCondition,
-    SimulationV2Config,
+    SimulationConfig,
 )
 from app.runtime.space import SharedSpace
 from app.runtime.scheduler import Scheduler
-from app.runtime.simulation import run_simulation_v2
+from app.runtime.simulation import run_simulation
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
 
-def make_config(max_turns: int = 4) -> SimulationV2Config:
-    return SimulationV2Config(
+def make_config(max_turns: int = 4) -> SimulationConfig:
+    return SimulationConfig(
         subject=Subject(name="Test Subject", description="A test debate"),
         stakeholders=[
-            StakeholderV2(
+            AgentConfig(
                 id="s1", name="Alpha", role="Champion",
                 stance="champion",
                 personality=PersonalityProfile(aggressiveness=70, verbosity=50),
             ),
-            StakeholderV2(
+            AgentConfig(
                 id="s2", name="Beta", role="Detractor",
                 stance="detractor",
                 personality=PersonalityProfile(empathy=60, stubbornness=80),
             ),
-            StakeholderV2(
+            AgentConfig(
                 id="s3", name="Gamma", role="Moderator",
                 stance="moderator",
                 personality=PersonalityProfile(verbosity=30),
             ),
-            StakeholderV2(
+            AgentConfig(
                 id="s4", name="Delta", role="Analyst",
                 stance="neutral",
                 personality=PersonalityProfile(aggressiveness=40, empathy=70),
@@ -195,7 +195,7 @@ async def test_run_simulation_with_mock_llm(monkeypatch):
     cfg = make_config(max_turns=4)
 
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="test-int"):
+    async for event in run_simulation(cfg, simulation_id="test-int"):
         events.append(event)
 
     assert len(events) > 0
@@ -224,7 +224,7 @@ async def test_all_agents_speak(monkeypatch):
     cfg.stakeholders[2].stance = "champion"
     cfg.stakeholders[3].stance = "detractor"
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="test-all-speak"):
+    async for event in run_simulation(cfg, simulation_id="test-all-speak"):
         events.append(event)
 
     speakers = {e.get("agent_id") for e in events if e.get("type") == "turn"}
@@ -242,7 +242,7 @@ async def test_scheduler_moderator_led(monkeypatch):
     cfg.stakeholders[2].stance = "moderator"  # Gamma is moderator
 
     events: list[dict] = []
-    async for event in run_simulation_v2(cfg, simulation_id="test-moderator"):
+    async for event in run_simulation(cfg, simulation_id="test-moderator"):
         events.append(event)
 
     done_events = [e for e in events if e.get("type") == "done"]

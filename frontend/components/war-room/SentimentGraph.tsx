@@ -75,7 +75,8 @@ export function SentimentGraph({ sentimentHistory }: SentimentGraphProps) {
               fill="url(#sentimentFill)"
               dot={false}
               activeDot={{ r: 3, fill: lineColor }}
-              isAnimationActive={false}
+              isAnimationActive={true}
+              animationDuration={400}
             />
           </AreaChart>
         </ResponsiveContainer>

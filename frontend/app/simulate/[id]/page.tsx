@@ -1,19 +1,23 @@
 "use client";
 
 import { use, useEffect, useMemo, useRef, useState } from "react";
+import { useGSAP } from "@gsap/react";
+import gsap from "gsap";
 import { AppShell } from "@/components/AppShell";
 import { ControlBar, type WarRoomLayout, type PlaybackStatus, type SpeedMultiplier } from "@/components/ControlBar";
 import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulationV2, fetchSimulationTurns, streamSimulationV2, postmortemV2, injectV2Turn, exportSimulation } from "@/lib/api";
+import { fetchSimulation, fetchSimulationTurns, streamSimulation, fetchPostmortem, injectTurn, exportSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
-import type { SimulationV2Config } from "@/lib/types";
+import type { SimulationConfig } from "@/lib/types";
+import { Avatar, initialsFromName } from "@/components/Avatar";
+import { Button } from "@/components/Button";
 
 type PageProps = { params: Promise<{ id: string }> };
 
-type V2Turn = {
+type Turn = {
   turn_index: number;
   speaker: string;
   speaker_role?: string;
@@ -30,8 +34,8 @@ type V2Turn = {
 export default function WarRoomPage({ params }: PageProps) {
   const { id } = use(params);
 
-  const [config, setConfig] = useState<SimulationV2Config | null>(null);
-  const [turns, setTurns] = useState<V2Turn[]>([]);
+  const [config, setConfig] = useState<SimulationConfig | null>(null);
+  const [turns, setTurns] = useState<Turn[]>([]);
   const [status, setStatus] = useState<PlaybackStatus>("idle");
   const [error, setError] = useState("");
   const [layout, setLayout] = useState<WarRoomLayout>("roster");
@@ -58,6 +62,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const [humanError, setHumanError] = useState("");
 
   const streamCtrl = useRef<AbortController | null>(null);
+  const streamStartedRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const persistKey = `wr-session-${id}`;
@@ -65,12 +70,42 @@ export default function WarRoomPage({ params }: PageProps) {
 
   const baseInterval = 3800;
 
+  const [displayedLayout, setDisplayedLayout] = useState<WarRoomLayout>(layout);
+  const layoutRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (layout === displayedLayout) return;
+    const el = layoutRef.current;
+    if (!el) { setDisplayedLayout(layout); return; }
+    gsap.to(el, {
+      opacity: 0, y: 4, duration: 0.12, ease: "power2.in",
+      onComplete: () => setDisplayedLayout(layout),
+    });
+  }, [layout, displayedLayout]);
+
+  const layoutMounted = useRef(false);
+  useGSAP(() => {
+    if (!layoutMounted.current) { layoutMounted.current = true; return; }
+    if (layoutRef.current) {
+      gsap.fromTo(layoutRef.current,
+        { opacity: 0 },
+        { opacity: 1, duration: 0.2, ease: "power2.out" }
+      );
+    }
+  }, { dependencies: [displayedLayout], revertOnUpdate: true });
+
+
+
   const simState = useSimulationState({
     mode: isReplay ? "replay" : "live",
     events: stateSnapshots,
     simulationId: isReplay ? id : undefined,
     turnIndex: isReplay ? playTurn : undefined,
   });
+
+  useEffect(() => {
+    document.title = "War Room — Vantage Boardroom";
+  }, []);
 
   useEffect(() => {
     if (isReplay) return;
@@ -104,10 +139,10 @@ export default function WarRoomPage({ params }: PageProps) {
   }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey, isReplay]);
 
   useEffect(() => {
-    fetchSimulationV2(id)
+    fetchSimulation(id)
       .then((data) => {
         setConfig(data.config ?? null);
-        if (data.status === "complete") {
+        if (data.status === "complete" || data.status === "running") {
           setIsReplay(true);
           fetchSimulationTurns(id).then((turns) => {
             const mapped = (turns as Array<Record<string, unknown>>).map((t) => ({
@@ -120,8 +155,9 @@ export default function WarRoomPage({ params }: PageProps) {
               action_type: t.action_type ? String(t.action_type) : undefined,
             }));
             setTurns(mapped);
+            setStatus("complete");
           }).catch(() => {});
-        } else {
+        } else if (data.status === "idle") {
           startStream();
         }
       })
@@ -147,16 +183,17 @@ export default function WarRoomPage({ params }: PageProps) {
   }, [playTurn]);
 
   const startStream = () => {
-    if (status === "running" || isReplay) return;
+    if (status === "running" || isReplay || streamStartedRef.current) return;
+    streamStartedRef.current = true;
     setError("");
     setStatus("running");
     setPlaying(true);
-    streamCtrl.current = streamSimulationV2(
+    streamCtrl.current = streamSimulation(
       id,
       (event) => {
         const evt = event as Record<string, unknown>;
         if (evt.type === "turn") {
-          const turn: V2Turn = {
+          const turn: Turn = {
             turn_index: Number(evt.turn_index ?? evt._index ?? turns.length),
             speaker: String(evt.speaker ?? evt.agent_name ?? ""),
             speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : evt.agent_role ? String(evt.agent_role) : undefined,
@@ -172,7 +209,7 @@ export default function WarRoomPage({ params }: PageProps) {
           });
         } else if (evt.type === "system") {
           setTurns((prev) => {
-            const systemTurn: V2Turn = {
+            const systemTurn: Turn = {
               turn_index: prev.length,
               speaker: "⚙ System",
               content: String(evt.content ?? ""),
@@ -217,7 +254,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const loadPostmortem = async () => {
     setLoadingPostmortem(true);
     try {
-      const result = await postmortemV2(id);
+      const result = await fetchPostmortem(id);
       setPostmortem(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Postmortem failed");
@@ -231,7 +268,7 @@ export default function WarRoomPage({ params }: PageProps) {
     setSendingHumanTurn(true);
     setHumanError("");
     const stakeholder = config?.stakeholders.find((s) => s.id === selectedStakeholder);
-    const optimisticTurn: V2Turn = {
+    const optimisticTurn: Turn = {
       turn_index: turns.length,
       speaker: stakeholder?.name ?? "Human",
       speaker_role: stakeholder?.role,
@@ -242,7 +279,7 @@ export default function WarRoomPage({ params }: PageProps) {
     setPlayTurn((t) => t + 1);
     setHumanContent("");
     try {
-      await injectV2Turn(id, selectedStakeholder, humanContent.trim());
+      await injectTurn(id, selectedStakeholder, humanContent.trim());
     } catch (err) {
       setHumanError(err instanceof Error ? err.message : "Failed to send");
       setTurns((prev) => prev.filter((t) => t !== optimisticTurn));
@@ -272,7 +309,7 @@ export default function WarRoomPage({ params }: PageProps) {
   }));
 
   const eventLog = turns.slice(0, playTurn + 1).map((t) => ({
-    t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 60)}${t.content.length > 60 ? "…" : ""}`, type: "agent" as const,
+    t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 120)}${t.content.length > 120 ? "…" : ""}`, full: t.content, type: "agent" as const,
   }));
 
   const nameMap: Record<string, string> = useMemo(() => {
@@ -299,11 +336,11 @@ export default function WarRoomPage({ params }: PageProps) {
               )}
             </span>
           </div>
-          <h1 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 42, fontWeight: 700, letterSpacing: "-0.04em", margin: 0, lineHeight: 1.15 }}>
+          <h1 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: "clamp(28px,3.5vw,42px)", fontWeight: 700, letterSpacing: "-0.04em", margin: 0, lineHeight: 1.15 }}>
             {subjectName}
           </h1>
           {config?.subject?.description && (
-            <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: "50%", lineHeight: 1.6, marginTop: 12, marginBottom: 0 }}>
+            <p style={{ color: "var(--color-muted)", fontSize: 14, maxWidth: "min(50%,600px)", lineHeight: 1.6, marginTop: 12, marginBottom: 0 }}>
               {config.subject.description}
             </p>
           )}
@@ -343,48 +380,52 @@ export default function WarRoomPage({ params }: PageProps) {
             </div>
           )}
 
-          {(!isReplay || !simState.loading) && layout === "roster" && (
-            <RosterLayout
-              turn={playTurn}
-              current={current}
-              playing={playing && live}
-              stakeholders={stakeholders}
-              speakerId={speakerId}
-              eventLog={eventLog}
-              turns={turns.slice(0, playTurn + 1)}
-              scrollRef={scrollRef}
-              totalTurns={Math.max(turns.length, 30)}
-              simState={simState}
-              nameMap={nameMap}
-            />
-          )}
-          {(!isReplay || !simState.loading) && layout === "table" && (
-            <TableLayout
-              turn={playTurn}
-              current={current}
-              playing={playing && live}
-              stakeholders={stakeholders}
-              speakerId={speakerId}
-              eventLog={eventLog}
-              turns={turns.slice(0, playTurn + 1)}
-              totalTurns={Math.max(turns.length, 30)}
-              simState={simState}
-              nameMap={nameMap}
-            />
-          )}
-          {(!isReplay || !simState.loading) && layout === "graph" && (
-            <GraphLayout
-              turn={playTurn}
-              current={current}
-              playing={playing && live}
-              stakeholders={stakeholders}
-              speakerId={speakerId}
-              turns={turns.slice(0, playTurn + 1)}
-              totalTurns={Math.max(turns.length, 30)}
-              eventLog={eventLog}
-              simState={simState}
-              nameMap={nameMap}
-            />
+          {(!isReplay || !simState.loading) && (
+          <div ref={layoutRef}>
+            {displayedLayout === "roster" && (
+              <RosterLayout
+                turn={playTurn}
+                current={current}
+                playing={playing && live}
+                stakeholders={stakeholders}
+                speakerId={speakerId}
+                eventLog={eventLog}
+                turns={turns.slice(0, playTurn + 1)}
+                scrollRef={scrollRef}
+                totalTurns={Math.max(turns.length, 30)}
+                simState={simState}
+                nameMap={nameMap}
+              />
+            )}
+            {displayedLayout === "table" && (
+              <TableLayout
+                turn={playTurn}
+                current={current}
+                playing={playing && live}
+                stakeholders={stakeholders}
+                speakerId={speakerId}
+                eventLog={eventLog}
+                turns={turns.slice(0, playTurn + 1)}
+                totalTurns={Math.max(turns.length, 30)}
+                simState={simState}
+                nameMap={nameMap}
+              />
+            )}
+            {displayedLayout === "graph" && (
+              <GraphLayout
+                turn={playTurn}
+                current={current}
+                playing={playing && live}
+                stakeholders={stakeholders}
+                speakerId={speakerId}
+                turns={turns.slice(0, playTurn + 1)}
+                totalTurns={Math.max(turns.length, 30)}
+                eventLog={eventLog}
+                simState={simState}
+                nameMap={nameMap}
+              />
+            )}
+          </div>
           )}
 
           {done && !postmortem && (
@@ -559,89 +600,121 @@ export default function WarRoomPage({ params }: PageProps) {
         </div>
 
         {/* ── Human Turn Input ── */}
-        <div style={{
-          padding: "8px 16px",
-          borderTop: "1px solid var(--color-hairline)",
-          background: "var(--color-surface-card)",
-          flexShrink: 0,
-        }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "stretch" }}>
-            <select
-              value={selectedStakeholder}
-              onChange={(e) => setSelectedStakeholder(e.target.value)}
-              style={{
-                width: 160,
-                flexShrink: 0,
-                padding: "8px 10px",
-                borderRadius: 8,
-                border: "1px solid var(--color-hairline)",
-                background: "var(--color-canvas)",
-                color: "var(--color-ink)",
-                fontSize: 12,
-                fontFamily: "var(--font-mono)",
-                outline: "none",
-                cursor: "pointer",
-              }}
-            >
-              <option value="">Speak as…</option>
-              {config?.stakeholders.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-            <textarea
-              value={humanContent}
-              onChange={(e) => setHumanContent(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendHumanTurn(); } }}
-              placeholder="Type your intervention…"
-              rows={1}
-              style={{
-                flex: 1,
-                padding: "8px 12px",
-                borderRadius: 8,
-                border: "1px solid var(--color-hairline)",
-                background: "var(--color-canvas)",
-                color: "var(--color-ink)",
-                fontSize: 13,
-                fontFamily: "var(--font-body), Newsreader, Georgia, serif",
-                outline: "none",
-                resize: "none",
-                minHeight: 36,
-                lineHeight: 1.5,
-              }}
-            />
-            <button
+        <div className="flex-shrink-0 border-t border-hairline bg-surface-card px-4 py-3 anim-slide-up">
+          <div className="flex items-center gap-2">
+            {/* Stakeholder selector with inline context */}
+            <div className="relative shrink-0">
+              {selectedStakeholder ? (
+                <div className="flex items-center gap-2 rounded-xl border border-hairline bg-canvas px-3 py-2 min-w-[140px]">
+                  <Avatar
+                    initials={initialsFromName(
+                      config?.stakeholders.find((s) => s.id === selectedStakeholder)?.name ?? ""
+                    )}
+                    size={22}
+                    accent={(() => {
+                      const stance = config?.stakeholders.find((s) => s.id === selectedStakeholder)?.stance;
+                      return stance === "champion" ? "coral" : stance === "detractor" ? "ink" : "muted";
+                    })()}
+                  />
+                  <select
+                    value={selectedStakeholder}
+                    onChange={(e) => setSelectedStakeholder(e.target.value)}
+                    className="absolute inset-0 opacity-0 cursor-pointer w-full"
+                    aria-label="Select stakeholder"
+                  >
+                    <option value="">Speak as…</option>
+                    {config?.stakeholders.map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                  <span className="text-sm font-medium text-ink">
+                    {config?.stakeholders.find((s) => s.id === selectedStakeholder)?.name}
+                  </span>
+                  <span className="material-symbols-outlined text-[16px] text-muted">expand_more</span>
+                </div>
+              ) : (
+                <select
+                  value={selectedStakeholder}
+                  onChange={(e) => setSelectedStakeholder(e.target.value)}
+                  className="rounded-xl border border-hairline bg-canvas px-3 py-2 text-sm text-muted outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-all cursor-pointer min-w-[140px] appearance-none"
+                  aria-label="Select stakeholder"
+                >
+                  <option value="">Speak as…</option>
+                  {config?.stakeholders.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            {/* Message input */}
+            <div className="relative flex-1">
+              <textarea
+                value={humanContent}
+                onChange={(e) => {
+                  setHumanContent(e.target.value);
+                  e.target.style.height = "auto";
+                  e.target.style.height = Math.min(e.target.scrollHeight, 120) + "px";
+                }}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSendHumanTurn(); } }}
+                placeholder={selectedStakeholder ? "Type your intervention…" : "Select a stakeholder to speak as…"}
+                rows={1}
+                disabled={!selectedStakeholder}
+                className="w-full rounded-xl border border-hairline bg-canvas px-3 py-2 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/30 transition-all resize-none min-h-[36px] max-h-[120px] leading-relaxed placeholder:text-muted/50 disabled:opacity-50 disabled:cursor-not-allowed"
+              />
+              <span className="absolute right-3 bottom-2 text-[10px] text-muted/40 font-medium pointer-events-none">
+                {humanContent.length}
+              </span>
+            </div>
+
+            {/* Send button */}
+            <Button
+              variant="dark"
               onClick={handleSendHumanTurn}
               disabled={sendingHumanTurn || !humanContent.trim() || !selectedStakeholder}
-              style={{
-                padding: "8px 20px",
-                borderRadius: 8,
-                border: "none",
-                background: !humanContent.trim() || !selectedStakeholder
-                  ? "var(--color-hairline)"
-                  : "var(--color-ink)",
-                color: !humanContent.trim() || !selectedStakeholder
-                  ? "var(--color-muted)"
-                  : "var(--color-on-dark)",
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: !humanContent.trim() || !selectedStakeholder ? "not-allowed" : "pointer",
-                fontFamily: "var(--font-mono)",
-                letterSpacing: "0.04em",
-                whiteSpace: "nowrap",
-                transition: "all 0.15s ease",
-              }}
+              className="shrink-0"
             >
               {sendingHumanTurn ? (
-                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                <span className="inline-flex items-center gap-2">
                   <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                  Sending
+                  <span className="hidden sm:inline">Sending</span>
                 </span>
-              ) : "Send"}
-            </button>
+              ) : (
+                <span className="flex items-center gap-1.5">
+                  <span className="hidden sm:inline">Send</span>
+                  <span className="material-symbols-outlined text-[16px]">send</span>
+                </span>
+              )}
+            </Button>
           </div>
+
+          {/* Hints row */}
+          <div className="flex items-center justify-between mt-1.5 px-1">
+            {selectedStakeholder ? (
+              <span className="text-[10px] text-muted/40">
+                <kbd className="font-mono text-[9px] px-1 py-0.5 rounded border border-hairline bg-canvas">↵</kbd> Send ·{' '}
+                <kbd className="font-mono text-[9px] px-1 py-0.5 rounded border border-hairline bg-canvas">⇧↵</kbd> New line
+              </span>
+            ) : (
+              <span className="text-[10px] text-muted/40">Select a stakeholder above to speak</span>
+            )}
+            {!sendingHumanTurn && humanContent.length > 0 && (
+              <span className="text-[10px] text-muted/40">{humanContent.length} chars</span>
+            )}
+          </div>
+
+          {/* Error state */}
           {humanError && (
-            <div style={{ marginTop: 6, fontSize: 11, color: "var(--color-error)", fontFamily: "var(--font-mono)" }}>
-              {humanError}
+            <div className="mt-2 flex items-center gap-2 rounded-lg bg-error-soft px-3 py-2 text-xs text-error">
+              <span className="material-symbols-outlined text-[14px]">error_outline</span>
+              <span className="flex-1">{humanError}</span>
+              <button
+                onClick={() => setHumanError("")}
+                className="text-error/60 hover:text-error transition-colors cursor-pointer"
+                aria-label="Dismiss error"
+              >
+                <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
             </div>
           )}
         </div>

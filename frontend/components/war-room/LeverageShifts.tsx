@@ -76,7 +76,8 @@ export function LeverageShifts({ leverageHistory, nameMap }: LeverageShiftsProps
           return (
             <div
               key={i}
-              className="rounded-lg border border-hairline bg-canvas p-[10px]"
+              className="rounded-lg border border-hairline bg-canvas p-[10px] animate-enter-stagger"
+              style={{ animationDelay: `${i * 60}ms` }}
             >
               <div className="mb-1 flex items-center gap-2">
                 {e.from && <Avatar initials={initialsFromName(fromName)} size={24} accent="ink" />}

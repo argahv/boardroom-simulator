@@ -1,6 +1,7 @@
 [
   {
     "id": "partnership_negotiation",
+    "scenario_type": "partnership",
     "name": "Partnership Negotiation",
     "description": "Startup vs enterprise term sheet negotiation covering distribution scope, exclusivity, revenue share, and compliance.",
     "default_background": "Scenario: Startup–enterprise partnership negotiation. The startup prioritizes distribution, co-brand go-to-market velocity, and capital efficiency under a constrained budget. The counterparty behaves like a risk-averse telecom/global tech enterprise: favors exclusivity, compliance-heavy contractual posture, and prefers revenue-aligned economics over flat fees alone. Agenda: distribution scope, exclusivity & carve-outs, revenue share mechanics, compliance pack.",
@@ -11,6 +12,7 @@
   },
   {
     "id": "investor_meeting",
+    "scenario_type": "investor",
     "name": "Investor Meeting",
     "description": "Founder pitching to a VC partnership. VC team probes unit economics, market size, team, and competitive moat.",
     "default_background": "A Series A pitch meeting. The founder is presenting to the full partnership. The GP is broadly positive but the associate is tasked with finding deal-breakers. The market analyst has published a cautious sector view. The finance partner is focused on return profile and exit timeline.",
@@ -21,6 +23,7 @@
   },
   {
     "id": "internal_strategy",
+    "scenario_type": "debate",
     "name": "Internal Strategy Debate",
     "description": "C-suite alignment session on a high-stakes initiative: build vs buy, new market entry, or major org restructure.",
     "default_background": "Quarterly executive offsite. The leadership team must reach a go/no-go decision on a major strategic initiative before the board meeting next week. Each executive has different departmental incentives and risk tolerances. Tension between growth ambitions and financial constraints is at an all-time high.",
@@ -31,6 +34,7 @@
   },
   {
     "id": "crisis_simulation",
+    "scenario_type": "crisis",
     "name": "Crisis Simulation",
     "description": "High-pressure incident response: PR disaster, data breach, product failure, or regulatory action. Tests response coordination under fire.",
     "default_background": "A major incident has just become public. Internal teams are scrambling. Media is calling. Regulatory bodies have been notified. The leadership team must align on response strategy, public statement, and remediation timeline within the hour. Every word said in this room may surface in litigation.",
@@ -41,6 +45,7 @@
   },
   {
     "id": "legal_contract",
+    "scenario_type": "legal",
     "name": "Legal Contract Negotiation",
     "description": "Buyer and seller legal teams negotiate a complex commercial contract clause by clause.",
     "default_background": "Final-stage contract negotiation between buyer and seller legal teams. The business deal is agreed in principle; this session is to resolve remaining legal blockers: liability cap, indemnification, data processing terms, and termination rights. Both sides have hard deadlines.",
@@ -51,6 +56,7 @@
   },
   {
     "id": "podcast",
+    "scenario_type": "podcast",
     "name": "Podcast / Panel Debate",
     "description": "Recorded podcast or live panel where guests debate a contested topic. Good for media prep and argument stress-testing.",
     "default_background": "A recorded podcast episode on a contested topic in tech, business, or policy. The host is looking for heat and clarity. One guest holds the consensus view, the other is a contrarian. The audience is informed but not expert. The host will push all parties toward concrete, quotable positions.",

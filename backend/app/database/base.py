@@ -101,7 +101,7 @@ class DatabaseBackend(ABC):
         pass
 
     # ------------------------------------------------------------------
-    # v2 State Snapshots
+    # State Snapshots
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -149,7 +149,7 @@ class DatabaseBackend(ABC):
         pass
 
     # ------------------------------------------------------------------
-    # Persona Growth System (v2)
+    # Persona Growth System
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -157,7 +157,7 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
-    async def get_persona_v2(self, persona_id: str) -> dict | None:
+    async def get_persona_detail(self, persona_id: str) -> dict | None:
         pass
 
     # Persona documents
@@ -201,7 +201,7 @@ class DatabaseBackend(ABC):
         pass
 
     @abstractmethod
-    async def update_persona_v2(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
+    async def update_persona(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
         pass
 
     # Persona research

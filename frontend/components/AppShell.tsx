@@ -4,8 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useRef } from "react";
 import type { ReactNode } from "react";
-import { useGSAP } from "@gsap/react";
-import gsap from "gsap";
 
 type AppShellProps = {
   children: ReactNode;
@@ -35,78 +33,14 @@ const SIDE_NAV: SideNavItem[] = [
 export function AppShell({ children, activeTab = "War Room", hideTopNav = false }: AppShellProps) {
   const pathname = usePathname();
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const navRef = useRef<HTMLDivElement>(null);
-  const shellRef = useRef<HTMLDivElement>(null);
 
-  // Track active nav index for sidebar indicator animation
+  // Track index for indicator placement (CSS-based via data attribute)
   const activeSideIdx = SIDE_NAV.findIndex(
     ({ href }) => pathname === href || pathname.startsWith(`${href}/`),
   );
 
-  // Animate sidebar active indicator pill
-  useGSAP(
-    () => {
-      const indicator = sidebarRef.current?.querySelector("[data-indicator]") as HTMLElement | null;
-      const activeItem = sidebarRef.current?.querySelector(
-        `[data-nav-item="${activeSideIdx}"]`,
-      ) as HTMLElement | null;
-      if (!indicator || !activeItem) return;
-      gsap.to(indicator, {
-        y: activeItem.offsetTop - (sidebarRef.current?.querySelector("nav")?.offsetTop ?? 0),
-        duration: 0.35,
-        ease: "power2.out",
-      });
-    },
-    { scope: sidebarRef, dependencies: [activeSideIdx], revertOnUpdate: true },
-  );
-
-  // Stagger entrance for sidebar nav items
-  useGSAP(
-    () => {
-      gsap.from("[data-anim='nav-item']", {
-        x: -12,
-        opacity: 0,
-        duration: 0.35,
-        stagger: { amount: 0.3, from: "start" },
-        clearProps: "transform",
-      });
-    },
-    { scope: sidebarRef },
-  );
-
-  // Tab underline slide animation
-  useGSAP(
-    () => {
-      const activeTabEl = navRef.current?.querySelector("[data-tab-active='true']") as HTMLElement | null;
-      const underline = navRef.current?.querySelector("[data-tab-underline]") as HTMLElement | null;
-      if (!activeTabEl || !underline) return;
-      gsap.to(underline, {
-        x: activeTabEl.offsetLeft,
-        width: activeTabEl.offsetWidth - 32,
-        duration: 0.3,
-        ease: "power2.out",
-      });
-    },
-    { scope: navRef, dependencies: [pathname], revertOnUpdate: true },
-  );
-
-  // Sidebar entrance slide
-  useGSAP(
-    () => {
-      gsap.from(sidebarRef.current, {
-        x: -20,
-        opacity: 0,
-        duration: 0.4,
-        ease: "power2.out",
-        delay: 0.05,
-        clearProps: "transform",
-      });
-    },
-    { scope: sidebarRef },
-  );
-
   return (
-    <div ref={shellRef} className="min-h-screen bg-canvas text-ink overflow-x-hidden">
+    <div className="min-h-screen bg-canvas text-ink overflow-x-hidden">
       {!hideTopNav && (
       <nav
         className="fixed top-0 left-0 right-0 h-16 z-50 bg-canvas border-b border-hairline flex items-center px-6 gap-6"
@@ -121,7 +55,7 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
           </span>
         </Link>
 
-        <div ref={navRef} className="flex-1 flex items-center justify-center gap-1 relative" role="tablist">
+        <div className="flex-1 flex items-center justify-center gap-1 relative" role="tablist">
           {NAV_TABS.map((tab) => {
             const isActive = tab.label === activeTab || (tab.label === "War Room" && pathname.startsWith("/simulate"));
             return (
@@ -130,23 +64,19 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
                 href={tab.href}
                 role="tab"
                 aria-selected={isActive}
-                data-tab-active={isActive}
-                className={`relative px-5 py-2 text-sm font-medium transition-colors ${
+                className={`relative px-5 py-2 text-sm font-medium transition-colors duration-150 ${
                   isActive
                     ? "text-ink"
                     : "text-muted hover:text-ink"
                 }`}
               >
                 {tab.label}
+                {isActive && (
+                  <span className="absolute bottom-0 left-4 right-4 h-[2px] bg-primary rounded-full" />
+                )}
               </Link>
             );
           })}
-          {/* Animated underline indicator */}
-          <span
-            data-tab-underline
-            className="absolute bottom-0 h-[2px] bg-primary rounded-full pointer-events-none"
-            style={{ left: 16 }}
-          />
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
@@ -183,20 +113,17 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
         </div>
 
         <nav className="flex-1 px-3 space-y-0.5 relative">
-          {/* Animated indicator pill */}
+          {/* CSS-based active indicator (no JS animation) */}
           <span
-            data-indicator
-            className="absolute left-3 w-[calc(100%-24px)] h-[42px] bg-surface-container-low rounded-lg pointer-events-none"
-            style={{ top: 0 }}
+            className="absolute left-3 w-[calc(100%-24px)] h-[42px] bg-surface-container-low rounded-lg pointer-events-none transition-all duration-200 ease-out"
+            style={{ top: activeSideIdx >= 0 ? activeSideIdx * 44 : 0 }}
           />
-          {SIDE_NAV.map(({ label, href, icon }, idx) => {
+          {SIDE_NAV.map(({ label, href, icon }) => {
             const isActive = pathname === href || pathname.startsWith(`${href}/`);
             return (
               <Link
                 key={label}
                 href={href}
-                data-nav-item={idx}
-                data-anim="nav-item"
                 className={`relative flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
                   isActive
                     ? "text-primary font-medium"

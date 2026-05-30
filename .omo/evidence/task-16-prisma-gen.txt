@@ -1,0 +1,8 @@
+=== prisma generate ===
+Environment variables loaded from .env
+Prisma schema loaded from prisma/schema.prisma
+
+✔ Generated Prisma Client Python (v0.15.0) to ./.venv/lib/python3.12/site-packages/prisma in 200ms
+
+=== patch_prisma_client.py ===
+Base64 already available in prisma.fields

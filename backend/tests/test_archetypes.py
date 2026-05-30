@@ -48,3 +48,39 @@ def test_archetype_fields():
     assert a.description != ""
     assert "aggressiveness" in a.personality_bias
     assert "challenge" in a.tendencies
+
+
+def test_archetype_delta_agitator_challenge():
+    from app.runtime.social_physics import SocialPhysics
+    from app.runtime.archetypes import ARCHETYPE_DELTA_MULTIPLIERS
+    from app.models import PersonalityProfile
+
+    assert "agitator" in ARCHETYPE_DELTA_MULTIPLIERS
+    assert ARCHETYPE_DELTA_MULTIPLIERS["agitator"]["challenge"]["tension"] == 1.5
+
+    sp = SocialPhysics()
+    result = sp.update("challenge", "a", None, {"archetype": "agitator", "personality": PersonalityProfile()})
+    delta = result.tension - 0.3
+    assert abs(delta - 0.18) < 1e-4, f"Expected 0.18 (0.12 * 1.5), got {delta}"
+
+
+def test_archetype_delta_pragmatist():
+    from app.runtime.social_physics import SocialPhysics
+    from app.runtime.archetypes import ARCHETYPE_DELTA_MULTIPLIERS
+    from app.models import PersonalityProfile
+
+    assert ARCHETYPE_DELTA_MULTIPLIERS["pragmatist"] == {}
+    sp = SocialPhysics()
+    result_with = sp.update("challenge", "a", None, {"archetype": "pragmatist", "personality": PersonalityProfile()})
+    result_without = sp.update("challenge", "a", None, {"personality": PersonalityProfile()})
+    assert abs(result_with.tension - result_without.tension) < 1e-6
+
+
+def test_archetype_delta_unknown():
+    from app.runtime.social_physics import SocialPhysics
+    from app.models import PersonalityProfile
+
+    sp = SocialPhysics()
+    result = sp.update("challenge", "a", None, {"archetype": "nonexistent_type", "personality": PersonalityProfile()})
+    delta = result.tension - 0.3
+    assert abs(delta - 0.12) < 1e-4, f"Expected default 0.12, got {delta}"

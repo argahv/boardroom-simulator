@@ -264,3 +264,27 @@ class TestRepr:
         assert "test-agent" in r
         assert "confidence=1.0" in r
         assert "certainty=1.0" in r
+
+
+class TestPersonalityModulation:
+    def test_personality_modulate_default(self):
+        from internal_state import personality_modulate
+
+        ist = InternalState("test_agent", PersonalityProfile())
+        anger_before = ist.cognitive_state.emotion["anger"]
+        ist.apply_event({"action_type": "challenge", "directed_at": "test_agent"})
+        anger_after = ist.cognitive_state.emotion["anger"]
+        assert abs(anger_after - (anger_before + 0.15)) < 1e-4, f"Expected {anger_before + 0.15}, got {anger_after}"
+
+        result = personality_modulate(0.15, 50, 0.6)
+        assert abs(result - 0.15) < 1e-10, f"Expected 0.15, got {result}"
+
+    def test_personality_high_aggression_challenge(self):
+        ist = InternalState("test_agent", PersonalityProfile(aggressiveness=80))
+        anger_before = ist.cognitive_state.emotion["anger"]
+        ist.apply_event({"action_type": "challenge", "directed_at": "test_agent"})
+        anger_after = ist.cognitive_state.emotion["anger"]
+
+        expected_delta = 0.15 * (1 + (80 - 50) / 50 * 0.6)  # 0.204
+        expected = anger_before + expected_delta
+        assert abs(anger_after - expected) < 1e-4, f"Expected {expected}, got {anger_after}"

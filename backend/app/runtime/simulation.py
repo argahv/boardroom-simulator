@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import AsyncIterator
 
-from app.models import SimulationV2Config
+from app.models import SimulationConfig
 from app.runtime.space import SharedSpace
 from app.runtime.agent import AgentRuntime
 from app.runtime.scheduler import Scheduler
@@ -13,8 +13,8 @@ from app.llm import openrouter_completion, _trace_context
 logger = logging.getLogger(__name__)
 
 
-async def run_simulation_v2(
-    config: SimulationV2Config,
+async def run_simulation(
+    config: SimulationConfig,
     simulation_id: str,
     behavior_engine: Any = None,
     memory_system: Any = None,
@@ -52,7 +52,7 @@ async def run_simulation_v2(
                 if event.get("type") == "done":
                     break
     except Exception as exc:
-        logger.exception("V2_SIM_STREAM_ERR simulation_id=%s", simulation_id, extra={"simulation_id": simulation_id, "event": "simulation_error"})
+        logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id, extra={"simulation_id": simulation_id, "event": "simulation_error"})
         raise
     finally:
         space.shutdown()

@@ -172,12 +172,8 @@ lineHeight: {
    - Increased touch target sizes (min-h-touch)
 
 ### Backend
-4. **`backend/app/database/base.py`** - Database abstraction layer
-5. **`backend/app/database/sqlite.py`** - SQLite backend implementation
-6. **`backend/app/database/postgres.py`** - PostgreSQL backend implementation
-7. **`backend/app/database/__init__.py`** - Database factory with env-based switching
-8. **`backend/scripts/seed_db.py`** - Seed script for default personas
-9. **`backend/requirements.txt`** - Added `asyncpg` for PostgreSQL support
+4. **`backend/prisma/schema.prisma`** - Prisma schema for database models
+5. **`backend/scripts/seed_db.py`** - Seed script for default personas
 
 ---
 
@@ -216,21 +212,8 @@ lineHeight: {
 
 ## Database Layer Improvements
 
-### Switchable Backend ✅
-**Feature**: Environment-based database selection
-```bash
-# SQLite (default)
-DATABASE_TYPE=sqlite
-SQLITE_PATH=./data/boardroom.db
-
-# PostgreSQL
-DATABASE_TYPE=postgres
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DATABASE=boardroom
-```
+### Prisma ORM ✅
+**Feature**: Prisma is the only database backend. All data models are defined in `backend/prisma/schema.prisma` with auto-generated typed client.
 
 ### Seed Script ✅
 ```bash

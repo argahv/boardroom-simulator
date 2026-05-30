@@ -1,0 +1,4 @@
+Task 6: Deleted sqlite.py and postgres.py from backend/app/database/
+Verified: ls shows 'No such file or directory' for both.
+No other files import sqlite or postgres (only __init__.py which already had imports removed).
+__pycache__ cleaned.

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
-import { PersonaEditorV2, type PersonaEditorSubmitData } from "@/components/PersonaEditorV2";
+import { PersonaEditor, type PersonaEditorSubmitData } from "@/components/PersonaEditor";
 import { createStakeholder } from "@/lib/api";
 import type { Stakeholder } from "@/lib/types";
 
@@ -40,7 +40,7 @@ export default function NewPersonaPage() {
         {error && (
           <div className="mb-6 rounded-2xl bg-primary/10 p-4 text-sm text-primary-active">{error}</div>
         )}
-        <PersonaEditorV2
+        <PersonaEditor
           initialData={null}
           onSubmit={handleSubmit}
           onCancel={() => router.push("/personas")}

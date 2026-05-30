@@ -19,7 +19,7 @@ export type Stakeholder = {
   total_turns?: number;
   templates?: string[];
   evolution_pending?: boolean;
-  // v2 persona fields (optional for backwards compat with v1 records)
+  // Unified persona fields (optional for backwards compat with legacy records)
   backstory?: string;
   stance?: AgentStance;
   personality?: PersonalityProfile;
@@ -309,7 +309,7 @@ export type JobResponse = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
-// v2 — Agentic Architecture Types (user-defined config, engine has zero opinions)
+// Agentic Architecture Types (user-defined config, engine has zero opinions)
 // ═══════════════════════════════════════════════════════════════════════════
 
 export type AgentStance = "champion" | "detractor" | "neutral" | "moderator" | "wildcard";
@@ -380,7 +380,7 @@ export type HybridCondition = {
 export type EndCondition = VoteCondition | TimeoutCondition | JudgeCondition
   | ConsensusCondition | HybridCondition;
 
-export type StakeholderV2 = {
+export type AgentConfig = {
   id: string;
   name: string;
   role: string;
@@ -391,9 +391,9 @@ export type StakeholderV2 = {
   tools: string[];
 };
 
-export type SimulationV2Config = {
+export type SimulationConfig = {
   subject: Subject;
-  stakeholders: StakeholderV2[];
+  stakeholders: AgentConfig[];
   action_space: ActionSpace;
   speaker_rules: SpeakerRules;
   end_condition: EndCondition;
@@ -512,4 +512,111 @@ export type EvolutionProposal = {
   status: "pending" | "approved" | "rejected";
   applied_at: string | null;
   created_at: string;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Dashboard Analytics (from GET /analytics/dashboard)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type KpiOverview = {
+  total_simulations: number;
+  total_turns: number;
+  avg_voltage: number;
+  avg_participants: number;
+  completion_rate: string;
+  total_postmortems: number;
+  sims_per_month: { month: string; count: number }[];
+};
+
+export type SocialDynamicsData = {
+  trust_arcs: { simulation_id: string; subject_name: string; points: { turn: number; value: number }[] }[];
+  tension_arcs: { simulation_id: string; subject_name: string; points: { turn: number; value: number }[] }[];
+  leverage_arcs: { simulation_id: string; subject_name: string; points: { turn: number; value: number }[] }[];
+  peak_tension_summary: { max_value: number; simulation_id: string; turn: number } | null;
+  dominant_agent_frequency: Record<string, number>;
+};
+
+export type AgentIntelligenceData = {
+  agents: {
+    name: string;
+    role: string;
+    total_sims: number;
+    total_turns: number;
+    avg_turn_count: number;
+    stances: string[];
+  }[];
+};
+
+export type ActionDistributionData = {
+  total_by_type: Record<string, number>;
+  per_simulation: {
+    simulation_id: string;
+    subject_name: string;
+    breakdown: Record<string, number>;
+  }[];
+  by_stance: Record<string, Record<string, number>>;
+};
+
+export type RelationNode = {
+  id: string;
+  name: string;
+  sim_count: number;
+};
+
+export type RelationEdge = {
+  source: string;
+  target: string;
+  trust: number;
+  fear: number;
+  rivalry: number;
+};
+
+export type RelationshipNetworkData = {
+  nodes: RelationNode[];
+  edges: RelationEdge[];
+};
+
+export type EmotionalAnalyticsData = {
+  emotion_distribution: Record<string, number>;
+  trajectory: {
+    turn: number;
+    simulation_id: string;
+    anger: number;
+    fear: number;
+    joy: number;
+    shame: number;
+    surprise: number;
+  }[];
+};
+
+export type SimulationOutcomesData = {
+  status_breakdown: Record<string, number>;
+  voltage_distribution: { range: string; count: number }[];
+  avg_turns_per_status: Record<string, number>;
+  model_temp_comparison: { temperature: string; status: string; count: number }[];
+};
+
+export type TimelineMoment = {
+  turn: number;
+  kind: string;
+  description: string;
+  actors: string[];
+  simulation_id: string;
+  subject_name: string;
+};
+
+export type TemporalTimelineData = {
+  moments: TimelineMoment[];
+  topic_counts: { topic: string; count: number }[];
+};
+
+export type DashboardAnalytics = {
+  kpi: KpiOverview;
+  social_dynamics: SocialDynamicsData;
+  agent_intelligence: AgentIntelligenceData;
+  action_distribution: ActionDistributionData;
+  relationship_network: RelationshipNetworkData;
+  emotional_analytics: EmotionalAnalyticsData;
+  simulation_outcomes: SimulationOutcomesData;
+  temporal_timeline: TemporalTimelineData;
 };

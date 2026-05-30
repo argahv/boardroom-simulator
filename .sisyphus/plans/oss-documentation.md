@@ -51,11 +51,11 @@ Make project OSS-ready: fix broken/misleading docs, add standard OSS files, add 
 - Deprecation notices on 3 outdated docs
 
 ### Definition of Done
-- [ ] `grep -r "LangGraph\|Chroma.*memory\|Guardrails system\|Checkpoint System\|Agent-Tool Mapping" SETUP.md` → 0 matches
-- [ ] `grep "OPENROUTER_API_KEY" backend/.env.example` → 1 match
-- [ ] `./test-application.sh` exits 0
-- [ ] `cd frontend && npx tsc --noEmit` passes
-- [ ] `cd backend && PYTHONPATH=. python -m pytest tests/ -x -q` passes
+- [x] `grep -r "LangGraph\|Chroma.*memory\|Guardrails system\|Checkpoint System\|Agent-Tool Mapping" SETUP.md` → 0 matches
+- [x] `grep "OPENROUTER_API_KEY" backend/.env.example` → 1 match
+- [x] `./test-application.sh` exits 0
+- [x] `cd frontend && npx tsc --noEmit` passes
+- [x] `cd backend && PYTHONPATH=. python -m pytest tests/ -x -q` passes
 
 ### Must Have
 - LICENSE (MIT)
@@ -132,7 +132,7 @@ Wave FINAL:
 
 ## TODOs
 
-- [ ] 1. Create LICENSE (MIT)
+- [x] 1. Create LICENSE (MIT)
 
   **What to do**:
   - Create `LICENSE` at project root with MIT license text
@@ -162,7 +162,7 @@ Wave FINAL:
   **Commit**: YES
   - Message: `docs: add MIT LICENSE`
 
-- [ ] 2. Create CONTRIBUTING.md
+- [x] 2. Create CONTRIBUTING.md
 
   **What to do**:
   - Create `CONTRIBUTING.md` at project root
@@ -194,7 +194,7 @@ Wave FINAL:
   **Commit**: YES (groups with 3, 5)
   - Message: `docs: add CONTRIBUTING.md, CODE_OF_CONDUCT.md, SECURITY.md`
 
-- [ ] 3. Create CODE_OF_CONDUCT.md
+- [x] 3. Create CODE_OF_CONDUCT.md
 
   **What to do**:
   - Create `CODE_OF_CONDUCT.md` at project root
@@ -215,7 +215,7 @@ Wave FINAL:
 
   **Commit**: YES (with 2, 5)
 
-- [ ] 4. Create CHANGELOG.md
+- [x] 4. Create CHANGELOG.md
 
   **What to do**:
   - Create `CHANGELOG.md` at project root
@@ -245,7 +245,7 @@ Wave FINAL:
   **Commit**: YES
   - Message: `docs: add CHANGELOG.md`
 
-- [ ] 5. Create SECURITY.md
+- [x] 5. Create SECURITY.md
 
   **What to do**:
   - Create `SECURITY.md` at project root
@@ -268,7 +268,7 @@ Wave FINAL:
   **Commit**: YES (with 2, 3)
 
 
-- [ ] 6. Fix .env.example
+- [x] 6. Fix .env.example
 
   **What to do**:
   - Edit `backend/.env.example`
@@ -300,7 +300,7 @@ Wave FINAL:
   - Message: `fix: add OPENROUTER_API_KEY to .env.example`
 
 
-- [ ] 7. Fix SETUP.md — Purge v1 Ghosts + Fix API Paths + Reconcile Versions
+- [x] 7. Fix SETUP.md — Purge v1 Ghosts + Fix API Paths + Reconcile Versions
 
   **What to do**:
   - **PURGE** these entire sections from SETUP.md (grep for and remove):
@@ -352,7 +352,7 @@ Wave FINAL:
   - Message: `docs: fix SETUP.md — purge v1 ghosts, fix API paths, reconcile versions`
 
 
-- [ ] 8. Fix README.md — Badges + Cleanup
+- [x] 8. Fix README.md — Badges + Cleanup
 
   **What to do**:
   - Add badge row at top:
@@ -400,7 +400,7 @@ Wave FINAL:
   - Message: `docs: fix README.md — add badges, fix quick start`
 
 
-- [ ] 9. Fix test-application.sh
+- [x] 9. Fix test-application.sh
 
   **What to do**:
   - Read `test-application.sh`
@@ -430,7 +430,7 @@ Wave FINAL:
   - Message: `fix: repair test-application.sh API routes`
 
 
-- [ ] 10. Add Deprecation Notices to Outdated Docs
+- [x] 10. Add Deprecation Notices to Outdated Docs
 
   **What to do**:
   - Add a banner notice at TOP of these 3 files:
@@ -455,7 +455,7 @@ Wave FINAL:
   - Message: `docs: add deprecation notices to 3 outdated docs`
 
 
-- [ ] 11. Add GitHub Issue Templates
+- [x] 11. Add GitHub Issue Templates
 
   **What to do**:
   - Create directory: `.github/ISSUE_TEMPLATE/`
@@ -524,7 +524,7 @@ Wave FINAL:
   - Message: `github: add issue templates, PR template, CI workflow`
 
 
-- [ ] 12. Add GitHub PR Template
+- [x] 12. Add GitHub PR Template
 
   **What to do**:
   - Create `.github/PULL_REQUEST_TEMPLATE.md`:
@@ -566,7 +566,7 @@ Wave FINAL:
   **Commit**: YES (with 11, 13)
 
 
-- [ ] 13. Add GitHub CI Workflow
+- [x] 13. Add GitHub CI Workflow
 
   **What to do**:
   - Create `.github/workflows/ci.yml`:
@@ -625,7 +625,7 @@ Wave FINAL:
   **Commit**: YES (with 11, 12)
 
 
-- [ ] 14. Create basic_simulation.py Example
+- [x] 14. Create basic_simulation.py Example
 
   **What to do**:
   - Create `examples/basic_simulation.py`:
@@ -765,10 +765,10 @@ Wave FINAL:
 
 ## Final Verification Wave
 
-- [ ] F1. **Plan Compliance Audit** — `oracle`
-- [ ] F2. **Build + Lint + Test Suite** — `unspecified-high`
-- [ ] F3. **Real QA** — Run test-application.sh + check all docs
-- [ ] F4. **Scope Fidelity** — `deep`
+- [x] F1. **Plan Compliance Audit** — `oracle`
+- [x] F2. **Build + Lint + Test Suite** — `unspecified-high`
+- [x] F3. **Real QA** — Run test-application.sh + check all docs
+- [x] F4. **Scope Fidelity** — `deep`
 
 ---
 

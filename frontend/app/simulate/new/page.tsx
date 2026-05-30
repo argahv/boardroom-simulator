@@ -5,11 +5,11 @@ import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
 import { DocumentUpload } from "@/components/DocumentUpload";
-import { createSimulationV2, createSimulationWithDocuments, fetchStakeholders } from "@/lib/api";
+import { createSimulation, createSimulationWithDocuments, fetchStakeholders } from "@/lib/api";
 import type {
-  SimulationV2Config,
+  SimulationConfig,
   Subject,
-  StakeholderV2,
+  AgentConfig,
   PersonalityProfile,
   ActionSpace,
   CustomActionDef,
@@ -38,7 +38,7 @@ const ENV_FLAGS: { key: keyof EnvFlags; label: string; icon: string; desc: strin
 const emptyEnvFlags: EnvFlags = { hidden_motives: true, time_pressure: false, external_leaks: false, deadlock_risk: false };
 
 let nextPersonaId = 1;
-const freshPersona = (): StakeholderV2 => ({
+const freshPersona = (): AgentConfig => ({
   id: `p${nextPersonaId++}`,
   name: "",
   role: "",
@@ -72,7 +72,7 @@ export default function NewSimulationPage() {
   const [evidenceImportance, setEvidenceImportance] = useState<"high" | "medium" | "low">("medium");
 
   // Step 2 — Personas
-  const [personas, setPersonas] = useState<StakeholderV2[]>([freshPersona(), freshPersona()]);
+  const [personas, setPersonas] = useState<AgentConfig[]>([freshPersona(), freshPersona()]);
   const [library, setLibrary] = useState<Stakeholder[]>([]);
   const [selectedLibraryIdx, setSelectedLibraryIdx] = useState<number | null>(null);
 
@@ -120,7 +120,7 @@ export default function NewSimulationPage() {
     }]);
   };
 
-  const updatePersona = (id: string, patch: Partial<StakeholderV2>) => {
+  const updatePersona = (id: string, patch: Partial<AgentConfig>) => {
     setPersonas((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)));
   };
 
@@ -148,7 +148,7 @@ export default function NewSimulationPage() {
     return { type: "hybrid", conditions: subs, max_turns: maxTurns };
   };
 
-  const buildConfig = (): SimulationV2Config => ({
+  const buildConfig = (): SimulationConfig => ({
     subject,
     stakeholders: personas,
     action_space: { actions, default_trust_deltas: {}, default_leverage_deltas: {} },
@@ -180,14 +180,14 @@ export default function NewSimulationPage() {
     setError("");
     try {
       const config = buildConfig();
-      let result: Awaited<ReturnType<typeof createSimulationV2>>;
+      let result: Awaited<ReturnType<typeof createSimulation>>;
 
       if (uploadFiles.length > 0) {
         setIsUploading(true);
         result = await createSimulationWithDocuments(config, uploadFiles);
         setIsUploading(false);
       } else {
-        result = await createSimulationV2(config);
+        result = await createSimulation(config);
       }
 
       router.push(`/simulate/${result.simulation_id}`);

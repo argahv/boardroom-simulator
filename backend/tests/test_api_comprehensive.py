@@ -137,8 +137,8 @@ def test_vote_condition_flow():
     log_test("1.2 DB has simulation", sim_id in str(db_sim) or db_sim.get("status") == "idle",
              f"status={db_sim.get('status', '?')}")
 
-    db_row = boardroom_postgres_query(f"SELECT simulation_id, status, config_json FROM v2_simulations WHERE simulation_id = '{sim_id}'")
-    log_test("1.3 v2_simulations row exists", len(db_row) > 0,
+    db_row = boardroom_postgres_query(f"SELECT id, status, config FROM simulations WHERE id = '{sim_id}'::uuid")
+    log_test("1.3 simulations row exists", len(db_row) > 0,
              f"rows={len(db_row)}")
 
     # 3. Stream the simulation
@@ -178,7 +178,7 @@ def test_vote_condition_flow():
     print("\n  Step 5: Check database after simulation...")
     try:
         db_sim_after = boardroom_postgres_query(
-            f"SELECT simulation_id, status, config_json FROM v2_simulations WHERE simulation_id = '{sim_id}'"
+            f"SELECT id, status, config FROM simulations WHERE id = '{sim_id}'::uuid"
         )
         if db_sim_after:
             status = db_sim_after[0].get("status", "?")
@@ -190,7 +190,7 @@ def test_vote_condition_flow():
     # Check turns in database
     try:
         db_turns = boardroom_postgres_query(
-            f"SELECT COUNT(*) as cnt FROM v2_turns WHERE simulation_id = '{sim_id}'"
+            f"SELECT COUNT(*) as cnt FROM turns WHERE simulation_id = '{sim_id}'::uuid"
         )
         turn_count = db_turns[0]["cnt"] if db_turns else 0
         log_test("1.11 Turns saved to DB", turn_count >= 2,
@@ -201,7 +201,7 @@ def test_vote_condition_flow():
     # Check state snapshots
     try:
         db_snapshots = boardroom_postgres_query(
-            f"SELECT COUNT(*) as cnt FROM v2_state_snapshots WHERE simulation_id = '{sim_id}'"
+            f"SELECT COUNT(*) as cnt FROM state_snapshots WHERE simulation_id = '{sim_id}'"
         )
         snap_count = db_snapshots[0]["cnt"] if db_snapshots else 0
         log_test("1.12 State snapshots saved", snap_count >= 0,
@@ -218,7 +218,7 @@ def test_vote_condition_flow():
     # Check postmortem in DB
     try:
         db_pm = boardroom_postgres_query(
-            f"SELECT simulation_id FROM v2_postmortems WHERE simulation_id = '{sim_id}'"
+            f"SELECT simulation_id FROM postmortems WHERE simulation_id = '{sim_id}'"
         )
         log_test("1.14 Postmortem saved to DB", len(db_pm) > 0,
                  f"rows={len(db_pm)}")
@@ -552,7 +552,7 @@ def test_end_condition_config_verification():
             # Verify in DB
             try:
                 db_row = boardroom_postgres_query(
-                    f"SELECT status FROM v2_simulations WHERE simulation_id = '{sim_id}'"
+                    f"SELECT status FROM simulations WHERE id = '{sim_id}'::uuid"
                 )
                 log_test(f"6.2 [{label}] in DB", len(db_row) > 0)
             except Exception:

@@ -1,6 +1,6 @@
 import type {
-  SimulationV2Config,
-  StakeholderV2,
+  SimulationConfig,
+  AgentConfig,
   AgentStance,
 } from "@/lib/types";
 
@@ -13,7 +13,7 @@ export type SimulationTemplate = {
   estimated_duration: string;
   stakeholder_count: number;
   voltage: number;
-  config: SimulationV2Config;
+  config: SimulationConfig;
 };
 
 const makePersona = (
@@ -22,9 +22,9 @@ const makePersona = (
   role: string,
   backstory: string,
   stance: AgentStance,
-  personality?: Partial<StakeholderV2["personality"]>,
+  personality?: Partial<AgentConfig["personality"]>,
   hidden_agenda?: string,
-): StakeholderV2 => ({
+): AgentConfig => ({
   id,
   name,
   role,
