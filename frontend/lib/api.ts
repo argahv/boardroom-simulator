@@ -1,4 +1,5 @@
 import type {
+  DashboardAnalytics,
   DocumentMeta,
   EvolutionProposal,
   KnowledgeQueryResult,
@@ -363,6 +364,9 @@ export const streamSimulation = (
 
 export const fetchSimulationAnalytics = () =>
   request<SimulationAnalytics>("/simulations/analytics");
+
+export const fetchAnalyticsDashboard = () =>
+  request<DashboardAnalytics>("/analytics/dashboard");
 
 
 

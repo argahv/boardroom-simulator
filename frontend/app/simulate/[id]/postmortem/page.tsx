@@ -4,6 +4,7 @@ import { use, useEffect, useState } from "react";
 
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
+import { ExpandableText } from "@/components/ExpandableText";
 import { fetchPostmortem } from "@/lib/api";
 import type { AlignmentDelta, Postmortem, StrategyCard, TopologyNode } from "@/lib/types";
 
@@ -430,7 +431,7 @@ export default function PostmortemPage({ params }: PageProps) {
                           <div className="space-y-1.5">
                             {report.key_statements.map((stmt, j) => (
                               <p key={j} className="rounded bg-ink/[0.03] px-3 py-1.5 text-xs italic text-ink/70 leading-relaxed">
-                                &ldquo;{stmt.slice(0, 200)}{stmt.length > 200 ? "…" : ""}&rdquo;
+                                &ldquo;<ExpandableText text={stmt} limit={200} />&rdquo;
                               </p>
                             ))}
                           </div>

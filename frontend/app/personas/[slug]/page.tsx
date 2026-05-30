@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
+import { ExpandableText } from "@/components/ExpandableText";
 import {
   fetchAgentDetail,
   fetchPersonaResearch,
@@ -573,7 +574,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         {data.goals.map((g: any) => (
                           <div key={g.id}>
                             <div className="flex justify-between text-sm mb-1">
-                              <span className="text-ink">{g.goal_text}</span>
+                              <span className="text-ink"><ExpandableText text={g.goal_text} limit={150} /></span>
                               <span className="font-mono text-xs text-muted">p{g.priority.toFixed(1)}</span>
                             </div>
                             <div className="h-1.5 rounded-full bg-ink/10">
@@ -651,7 +652,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                           <span className="text-xs text-muted">{mem.subject_name}</span>
                           {mem.turn_index !== null && <span className="text-xs text-muted font-mono">T{mem.turn_index}</span>}
                         </div>
-                        <p className="text-sm text-ink leading-relaxed">{mem.content.slice(0, 200)}{mem.content.length > 200 ? "…" : ""}</p>
+                        <p className="text-sm text-ink leading-relaxed"><ExpandableText text={mem.content} limit={200} /></p>
                       </div>
                     </div>
                   ))}
@@ -734,7 +735,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                                 {r.title ?? `Source ${i + 1}`}
                               </a>
                               {r.content && (
-                                <p className="text-xs text-muted mt-1 leading-relaxed line-clamp-3">{r.content}</p>
+                                <p className="text-xs text-muted mt-1 leading-relaxed"><ExpandableText text={r.content} limit={160} /></p>
                               )}
                               {r.url && (
                                 <p className="text-[11px] text-muted/60 mt-1 truncate font-mono">{r.url}</p>
@@ -880,7 +881,7 @@ export default function AgentDetailPage({ params }: PageProps) {
                         <span className="font-mono text-xs text-muted">T{t.turn_index}</span>
                         <span className="text-xs px-2 py-0.5 rounded-full bg-ink/10 capitalize">{t.action_type}</span>
                       </div>
-                      <p className="text-sm text-ink leading-relaxed">{t.content.slice(0, 300)}{t.content.length > 300 ? "…" : ""}</p>
+                      <p className="text-sm text-ink leading-relaxed"><ExpandableText text={t.content} limit={300} /></p>
                       {t.internal_reasoning && (
                         <details className="mt-2">
                           <summary className="cursor-pointer text-xs text-muted">Reasoning</summary>

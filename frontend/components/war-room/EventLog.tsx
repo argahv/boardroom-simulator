@@ -2,11 +2,13 @@
 
 import { useEffect, useRef } from "react";
 import gsap from "gsap";
+import { ExpandableText } from "@/components/ExpandableText";
 
 interface EventLogEntry {
   t: number;
   text: string;
   type: string;
+  full?: string;
 }
 
 interface EventLogProps {
@@ -80,7 +82,7 @@ export function EventLog({ events }: EventLogProps) {
             style={{ opacity: 0 }}
           >
             <span className="min-w-[28px] text-on-dark-soft">T{String(e.t).padStart(2, "0")}</span>
-            <span className={TYPE_COLORS[e.type] ?? "text-on-dark-soft"}>{e.text}</span>
+            <span className={TYPE_COLORS[e.type] ?? "text-on-dark-soft"} title={e.full ?? e.text}>{e.text}</span>
           </div>
         ))}
         {events.length === 0 && (

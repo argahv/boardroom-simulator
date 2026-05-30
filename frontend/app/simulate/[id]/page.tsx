@@ -142,7 +142,7 @@ export default function WarRoomPage({ params }: PageProps) {
     fetchSimulation(id)
       .then((data) => {
         setConfig(data.config ?? null);
-        if (data.status === "complete") {
+        if (data.status === "complete" || data.status === "running") {
           setIsReplay(true);
           fetchSimulationTurns(id).then((turns) => {
             const mapped = (turns as Array<Record<string, unknown>>).map((t) => ({
@@ -155,8 +155,9 @@ export default function WarRoomPage({ params }: PageProps) {
               action_type: t.action_type ? String(t.action_type) : undefined,
             }));
             setTurns(mapped);
+            setStatus("complete");
           }).catch(() => {});
-        } else {
+        } else if (data.status === "idle") {
           startStream();
         }
       })
@@ -308,7 +309,7 @@ export default function WarRoomPage({ params }: PageProps) {
   }));
 
   const eventLog = turns.slice(0, playTurn + 1).map((t) => ({
-    t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 60)}${t.content.length > 60 ? "…" : ""}`, type: "agent" as const,
+    t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 120)}${t.content.length > 120 ? "…" : ""}`, full: t.content, type: "agent" as const,
   }));
 
   const nameMap: Record<string, string> = useMemo(() => {

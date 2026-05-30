@@ -1499,6 +1499,21 @@ async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
     return {"status": "ok", "turn": turn}
 
 
+@app.get("/analytics/dashboard")
+async def analytics_dashboard() -> dict:
+    """Aggregate cross-simulation dashboard analytics.
+
+    Returns an 8-section payload consumed by the analytics dashboard UI:
+    kpi, social_dynamics, agent_intelligence, action_distribution,
+    relationship_network, emotional_analytics, simulation_outcomes,
+    temporal_timeline.
+    """
+    from app.analytics import DashboardAggregator
+
+    aggregator = DashboardAggregator()
+    return await aggregator.aggregate()
+
+
 async def _cleanup_simulation(simulation_id: str, delay: float = 30.0) -> None:
     """Remove simulation from active dict after a delay (allows replay during that window)."""
     await asyncio.sleep(delay)
