@@ -9,7 +9,7 @@ from app.runtime.space import SharedSpace
 from app.runtime.agent import AgentRuntime
 from app.runtime.scheduler import Scheduler
 from app.runtime.context import SimulationContext, build_context
-from app.llm import openrouter_completion, _trace_context
+from app.llm import openrouter_completion, traced_span
 
 logger = logging.getLogger(__name__)
 
@@ -65,19 +65,30 @@ async def run_simulation(
                                  "total_turns": scheduler.turn_count})
             space.shutdown()
 
-    agent_tasks = [asyncio.create_task(a.run()) for a in agents]
-    scheduler_task = asyncio.create_task(_run_scheduler())
-
     logger.info("Simulation %s started: subject=%s stakeholders=%d", simulation_id, config.subject.name, len(config.stakeholders), extra={"simulation_id": simulation_id, "subject": config.subject.name, "stakeholders": len(config.stakeholders), "event": "simulation_started"})
 
+    agent_tasks: list[asyncio.Task] = []
+    scheduler_task: asyncio.Task | None = None
     try:
-        with _trace_context(name="boardroom_simulation", run_type="chain",
-                            inputs={"simulation_id": simulation_id,
-                                    "subject": config.subject.name,
-                                    "stakeholders": len(config.stakeholders)}):
+        # One trace per simulation: tasks created inside the span inherit it, so
+        # every turn and LLM call of this run nests under it.
+        with traced_span(
+            "boardroom_simulation",
+            inputs={"simulation_id": simulation_id, "subject": config.subject.name,
+                    "description": config.subject.description,
+                    "stakeholders": [f"{s.name} ({s.role}, {s.stance})" for s in config.stakeholders]},
+            metadata={"simulation_id": simulation_id, "scenario_type": config.scenario_type,
+                      "end_condition": config.end_condition.type, "speaker_mode": config.speaker_rules.mode},
+            tags=[f"sim:{simulation_id}"],
+        ) as root:
+            agent_tasks = [asyncio.create_task(a.run()) for a in agents]
+            scheduler_task = asyncio.create_task(_run_scheduler())
             async for event in space.stream():
                 yield event
                 if event.get("type") == "done":
+                    if root is not None:
+                        root.add_outputs({k: event.get(k) for k in
+                                          ("reason", "outcome_type", "summary", "total_turns", "vote_breakdown")})
                     break
     except Exception:
         logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id, extra={"simulation_id": simulation_id, "event": "simulation_error"})
@@ -88,7 +99,7 @@ async def run_simulation(
             t.cancel()
         try:
             await asyncio.wait_for(
-                asyncio.gather(*agent_tasks, scheduler_task, return_exceptions=True),
+                asyncio.gather(*agent_tasks, *([scheduler_task] if scheduler_task else []), return_exceptions=True),
                 timeout=3.0,
             )
         except asyncio.TimeoutError:

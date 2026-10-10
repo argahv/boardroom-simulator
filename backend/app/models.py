@@ -4,7 +4,7 @@ import json
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, Field, BeforeValidator
 
-ActionType = Literal["statement", "question", "challenge", "compromise", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
+ActionType = Literal["statement", "question", "challenge", "compromise", "agreement", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
 ModelTemperature = Literal["stable", "volatile"]
 SimulationStatus = Literal["idle", "running", "complete"]
 RuntimeStatus = Literal["idle", "ai_turn", "awaiting_human", "complete"]
@@ -249,10 +249,17 @@ class SpeakerRules(BaseModel):
     mode: Literal["moderator_led", "alternating", "freeform", "weighed_random"] = "weighed_random"
 
 
+def _fraction(value: object) -> object:
+    """Vote thresholds are fractions; accept percentages (e.g. 60) from older clients."""
+    if isinstance(value, (int, float)) and 1 < value <= 100:
+        return value / 100.0
+    return value
+
+
 class VoteCondition(BaseModel):
     type: Literal["vote"] = "vote"
     voters: list[str]
-    threshold: float = 0.5
+    threshold: Annotated[float, BeforeValidator(_fraction), Field(gt=0, le=1)] = 0.5
     max_turns: int = 10
 
 

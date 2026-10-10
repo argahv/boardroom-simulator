@@ -377,3 +377,19 @@ def test_cli_run_score_compare(tmp_path):
                  "--baseline", str(tmp_path / "baseline.json")]) == 0
     assert main(["compare", str(out / "report.json"), str(tmp_path / "baseline.json")]) == 0
     assert main(["list"]) == 0
+
+
+@pytest.mark.asyncio
+async def test_sensitivity_probes_break_one_thing_each(stub_recordings):
+    from app.eval import sensitivity
+    from app.eval.stub_llm import stub_judge
+
+    recs = list(stub_recordings.values())
+    probes = sensitivity.build_probes(recs, per_probe=2)
+    kinds = {p["probe"] for p in probes}
+    assert {"wrong_action", "wrong_target", "hollow_content"} <= kinds
+    for p in probes:
+        changed = {k for k in p["original"] if p["original"][k] != p["broken"].get(k)}
+        assert changed and changed <= {"action_type", "directed_at", "prompt_state", "content"}, p["probe"]
+    rep = await sensitivity.run(recs, llm=stub_judge, per_probe=2)
+    assert set(rep["probes"]) <= set(sensitivity.PROBES) and rep["rows"]

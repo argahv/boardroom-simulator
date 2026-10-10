@@ -36,6 +36,7 @@ class Plan:
     subgoals: list[SubGoal] = field(default_factory=list)
     status: str = "active"     # active | completed | abandoned
     confidence: float = 1.0    # 0.0-1.0
+    source: str = "initial"    # initial (the stance plan) | pressure (a tactical response)
 
 
 class PlanManager:
@@ -47,7 +48,7 @@ class PlanManager:
 
     def create_plan(self, agent_id: str, goal_text: str,
                     subgoals: list[SubGoal] | None = None,
-                    created_turn: int = 0) -> Plan:
+                    created_turn: int = 0, source: str = "initial") -> Plan:
         """Create a new plan from a goal and optional subgoals."""
         plan_id = uuid.uuid4().hex[:12]
         if subgoals is None:
@@ -58,17 +59,37 @@ class PlanManager:
             goal_text=goal_text,
             created_turn=created_turn,
             subgoals=subgoals,
+            source=source,
         )
         self._recalculate_progress(plan)
         self._plans[plan_id] = plan
         if agent_id not in self._agent_plans:
             self._agent_plans[agent_id] = []
         self._agent_plans[agent_id].append(plan_id)
-        # Keep focus: abandon the oldest active plans beyond the cap.
+        # Keep focus: abandon the oldest plans beyond the cap. The stance plan is the
+        # agent's reason for being in the room, so tactical plans make way first.
         active = self.get_active_plans(agent_id)
-        for old in active[:-MAX_ACTIVE_PLANS] if len(active) > MAX_ACTIVE_PLANS else []:
+        excess = len(active) - MAX_ACTIVE_PLANS
+        for old in sorted(active[:-1], key=lambda p: p.source == "initial"):
+            if excess <= 0:
+                break
             old.status = "abandoned"
+            excess -= 1
         return plan
+
+    def abandon_plans_for(self, agent_id: str, goal_text: str) -> None:
+        for plan in self.get_active_plans(agent_id):
+            if plan.goal_text == goal_text and plan.source != "initial":
+                plan.status = "abandoned"
+
+    def core_and_tactic(self, agent_id: str) -> tuple[Plan | None, Plan | None]:
+        """The agent's standing (stance) plan and its latest tactical plan, if any."""
+        active = self.get_active_plans(agent_id)
+        core = next((p for p in reversed(active) if p.source == "initial"), None)
+        tactic = next((p for p in reversed(active) if p.source != "initial"), None)
+        if core is None and tactic is None and active:
+            core = active[-1]
+        return core, tactic
 
     def _auto_generate_subgoals(self, goal_text: str) -> list[SubGoal]:
         """Auto-generate subgoals based on goal text patterns.
@@ -97,6 +118,15 @@ class PlanManager:
                  2, 0.8, ["challenge", "interrupt"]),
                 ("reframe the agenda", "redirect the discussion to your priorities",
                  4, 0.6, ["statement", "question"]),
+            ]
+        elif "guide the room" in text:  # the moderator's standing plan
+            specs = [
+                ("surface each side's bottom line", "ask each party what they need to say yes",
+                 2, 0.8, ["question"]),
+                ("test a middle ground", "float terms that address both sides' core concerns",
+                 4, 0.6, ["question", "compromise"]),
+                ("call for a decision", "ask the room to accept, reject or vote on what is on the table",
+                 6, 0.5, ["question", "statement", "vote"]),
             ]
         else:
             specs = [
@@ -199,21 +229,17 @@ class PlanManager:
         return completed / max(len(plan.subgoals), 1)
 
     def get_plan_summary(self, agent_id: str) -> str:
-        """Produce a concise plan summary for LLM injection (under 200 chars)."""
-        plans = self.get_active_plans(agent_id)
-        if not plans:
+        """Plan summary for the prompt: the standing plan, plus any tactical adjustment."""
+        core, tactic = self.core_and_tactic(agent_id)
+        if core is None and tactic is None:
             return ""
-        plan = plans[-1]  # most recent plan is the most pressing
-        goal = plan.goal_text.replace("_", " ")
-        active_sgs = [sg for sg in plan.subgoals if sg.status in ("pending", "in_progress")]
-        if active_sgs:
-            next_sg = active_sgs[0]
-            return (
-                f"Active plan: {goal} (progress {plan.confidence:.1f}). "
-                f"Current objective: {next_sg.description}. "
-                f"Strategy: {next_sg.strategy_hint}"
-            )
-        return f"Active plan: {goal} (progress {plan.confidence:.1f})"
+        parts = []
+        if core is not None:
+            parts.append(f"Active plan: {core.goal_text.replace('_', ' ')}.{_next_step(core)}")
+        if tactic is not None:
+            label = "Tactical adjustment" if core is not None else "Active plan"
+            parts.append(f"{label}: {tactic.goal_text.replace('_', ' ')}.{_next_step(tactic)}")
+        return "\n".join(parts)
 
     def serialize(self) -> dict:
         """Serialize all plans for snapshot persistence."""
@@ -269,3 +295,10 @@ class PlanManager:
 
 def make_plan_manager() -> PlanManager:
     return PlanManager()
+
+
+def _next_step(plan: Plan) -> str:
+    open_sgs = [sg for sg in plan.subgoals if sg.status in ("pending", "in_progress")]
+    if not open_sgs:
+        return ""
+    return f" Next step: {open_sgs[0].description} ({open_sgs[0].strategy_hint})."

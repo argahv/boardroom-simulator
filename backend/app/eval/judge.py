@@ -47,11 +47,13 @@ DIMENSION_GUIDE = {
     "persona_fit": "sounds like this role, stance, archetype and backstory (personality numbers included)",
     "emotion_fit": "tone reflects the recorded emotions: high anger shows as sharper, defensive or aggressive "
                    "phrasing, so calm text under high anger scores <= 2",
-    "plan_fit": "serves the active plan/subgoal, or departs from it for a reason visible in the transcript; "
-                "escalating while the plan is 'rebuild trust' / 'deescalate' scores 1",
+    "plan_fit": "serves the active plan/subgoal. If the plan is 'deescalate' or 'rebuild trust' and the turn "
+                "challenges, escalates or interrupts, score 1-2 unless internal_reasoning explicitly decides to "
+                "override the plan and says why",
     "action_text_match": "the text performs the labelled action_type; a 'challenge' that agrees or capitulates, "
                          "or a 'compromise' that offers nothing, scores <= 2",
-    "target_match": "the text is addressed to directed_at (by name or unmistakably); 3 only if directed_at is null",
+    "target_match": "the text is aimed at directed_at. Check the name: if directed_at is never named and the "
+                    "text is clearly aimed at someone else, score 1-2; 3 only if directed_at is null",
     "memory_consistency": "consistent with the red lines, concessions and earlier statements shown; contradicting "
                           "one without acknowledging it scores <= 2; 3 if nothing relevant was shown",
     "public_private_consistency": "the public text follows from internal_reasoning (a deliberate bluff the reasoning "
@@ -157,7 +159,8 @@ def build_transcript_prompt(rec: Recording) -> list[dict]:
             human = " [HUMAN]" if e.get("is_human") else ""
             lines.append(f"{rec.name_of(e.get('agent_id')) or e.get('speaker')}{to}{human} "
                          f"({e.get('action_type')}): {e.get('content', '')}")
-        elif e.get("type") == "system" and e.get("subtype") in ("external_event", "departure", "time_pressure"):
+        elif e.get("type") == "system" and e.get("subtype") in ("external_event", "departure", "time_pressure",
+                                                                 "vote_called", "roll_call"):
             lines.append(f"[ROOM] {e.get('content')}")
     done = rec.done or {}
     payload = {
@@ -176,9 +179,11 @@ def build_transcript_prompt(rec: Recording) -> list[dict]:
 async def judge_turn(rec: Recording, turn: dict, llm: JudgeLLM | None = None, model: str | None = None) -> dict:
     llm = llm or _default_llm()
     try:
+        from app.llm import trace_kwargs
         messages = build_turn_prompt(rec, turn)
-        raw, _, _ = await llm(messages, temperature=0.0, simulation_id="eval-judge",
-                              model=model or app_config.EVAL_JUDGE_MODEL)
+        named = trace_kwargs(llm, f"judge · turn {turn.get('_index')} · {rec.name_of(turn['agent_id'])}")
+        raw, _, _ = await llm(messages, temperature=0.0, simulation_id=f"eval-judge:{rec.simulation_id}",
+                              model=model or app_config.EVAL_JUDGE_MODEL, **named)
         data = _parse(raw)
         scores = _clamp_scores(data.get("scores", {}), TURN_DIMENSIONS)
         missing = [d for d in TURN_DIMENSIONS if d not in scores]
@@ -186,8 +191,8 @@ async def judge_turn(rec: Recording, turn: dict, llm: JudgeLLM | None = None, mo
             retry = messages + [{"role": "assistant", "content": raw},
                                 {"role": "user", "content": f"You omitted {missing}. Return the full JSON "
                                                             "again with all eight scores."}]
-            raw, _, _ = await llm(retry, temperature=0.0, simulation_id="eval-judge",
-                                  model=model or app_config.EVAL_JUDGE_MODEL)
+            raw, _, _ = await llm(retry, temperature=0.0, simulation_id=f"eval-judge:{rec.simulation_id}",
+                                  model=model or app_config.EVAL_JUDGE_MODEL, **named)
             data = _parse(raw)
             scores = {**scores, **_clamp_scores(data.get("scores", {}), TURN_DIMENSIONS)}
             missing = [d for d in TURN_DIMENSIONS if d not in scores]
@@ -206,8 +211,10 @@ async def judge_turn(rec: Recording, turn: dict, llm: JudgeLLM | None = None, mo
 async def judge_transcript(rec: Recording, llm: JudgeLLM | None = None, model: str | None = None) -> dict:
     llm = llm or _default_llm()
     try:
-        raw, _, _ = await llm(build_transcript_prompt(rec), temperature=0.0, simulation_id="eval-judge",
-                              model=model or app_config.EVAL_JUDGE_MODEL)
+        from app.llm import trace_kwargs
+        raw, _, _ = await llm(build_transcript_prompt(rec), temperature=0.0, simulation_id=f"eval-judge:{rec.simulation_id}",
+                              model=model or app_config.EVAL_JUDGE_MODEL,
+                              **trace_kwargs(llm, "judge · transcript"))
         data = _parse(raw)
         return {"scores": _clamp_scores(data.get("scores", {}), TRANSCRIPT_DIMENSIONS),
                 "artificial_consensus": bool(data.get("artificial_consensus", False)),
@@ -236,9 +243,14 @@ async def judge_recording(rec: Recording, llm: JudgeLLM | None = None, model: st
         async with sem:
             return await judge_turn(rec, t, llm=llm, model=model)
 
+    from app.llm import traced_span
     turns = sample_turns(rec, sample, max_turns, seed)
-    turn_results = await asyncio.gather(*(one(t) for t in turns))
-    transcript = await judge_transcript(rec, llm=llm, model=model)
+    # One trace per judged recording, so its judge calls nest together.
+    with traced_span(f"eval_judge · {rec.simulation_id}", inputs={"simulation_id": rec.simulation_id,
+                                                                  "judged_turns": len(turns)},
+                     tags=[f"sim:{rec.simulation_id}", "eval"]):
+        turn_results = await asyncio.gather(*(one(t) for t in turns))
+        transcript = await judge_transcript(rec, llm=llm, model=model)
     return {"model": model or app_config.EVAL_JUDGE_MODEL,
             "generator_model": app_config.OPENROUTER_MODEL,
             "turns": list(turn_results),

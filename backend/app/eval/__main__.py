@@ -5,6 +5,7 @@
                              [--judge none|llm|stub] [--judge-sample 0.3] [--judge-max 20]
                              [--out DIR] [--baseline report.json] [--save-baseline PATH]
     python -m app.eval score RECORDING_OR_DIR... [--judge ...] [--out DIR]
+    python -m app.eval sensitivity RECORDING_OR_DIR... [--judge llm] [--per-probe 8]
     python -m app.eval compare CURRENT_REPORT BASELINE_REPORT [--tolerance 0.05]
     python -m app.eval calibrate --labels labels.jsonl RECORDING_OR_DIR...
 
@@ -141,6 +142,21 @@ async def cmd_calibrate(args) -> int:
     return 0 if rep.get("trustworthy") else 1
 
 
+async def cmd_sensitivity(args) -> int:
+    from app.eval import sensitivity
+    recs = [Recording.load(p) for p in _recording_paths(args.recordings)]
+    rep = await sensitivity.run(recs, llm=runner.make_judge(args.judge), per_probe=args.per_probe, seed=args.seed)
+    if args.out:
+        _write(Path(args.out), rep)
+    print(f"\n{'probe':<16} {'dimension':<20} {'n':>3} {'caught':>7} {'mean drop':>10}")
+    for name, v in rep["probes"].items():
+        drop = "-" if v["mean_drop"] is None else f"{v['mean_drop']:.2f}"
+        print(f"{name:<16} {v['dimension']:<20} {v['n']:>3} {v['detection_rate']:>7.0%} {drop:>10}")
+    print(f"\noverall detection {rep['overall_detection_rate']}; sensitive={rep['sensitive']} "
+          "(every probe caught >= 80% of the time)")
+    return 0 if rep["sensitive"] else 1
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m app.eval", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -180,6 +196,13 @@ def main(argv: list[str] | None = None) -> int:
     k.add_argument("--labels", required=True, help="JSONL: {simulation_id, _index, scores:{dim:1-5}, agenda_leak?}")
     k.add_argument("--judge", choices=["llm", "stub"], default="llm")
 
+    z = sub.add_parser("sensitivity", help="break turns on purpose and check the judge notices")
+    z.add_argument("recordings", nargs="+")
+    z.add_argument("--judge", choices=["llm", "stub"], default="llm")
+    z.add_argument("--per-probe", type=int, default=8, help="turns per probe type")
+    z.add_argument("--seed", type=int, default=0)
+    z.add_argument("--out", help="write the full report (with per-turn rows) here")
+
     args = ap.parse_args(argv)
     if args.cmd == "list":
         for key, sc in SCENARIOS.items():
@@ -195,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_compare(args)
     if args.cmd == "calibrate":
         return asyncio.run(cmd_calibrate(args))
+    if args.cmd == "sensitivity":
+        return asyncio.run(cmd_sensitivity(args))
     return 2
 
 

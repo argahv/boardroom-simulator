@@ -29,6 +29,7 @@ class SharedSpace:
         self._running = True
         self.current_speaker: str | None = None
         self.floor_token = 0  # increments on every grant so an agent speaks once per grant
+        self.trace_parent = None  # LangSmith run of the current turn; agents' LLM calls nest under it
         self._version = 0
         # Bidding rounds: the scheduler opens a round, agents bid once per round.
         self.bid_round = 0

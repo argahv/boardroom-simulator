@@ -4,7 +4,8 @@ import json
 import logging
 import os
 import time
-from typing import Any, Optional
+from contextlib import contextmanager
+from typing import Any, Iterator, Optional
 
 import httpx
 
@@ -46,6 +47,46 @@ except ImportError:
     
     def _trace_context(*args, **kwargs):
         return _DummyTrace()
+
+
+@contextmanager
+def traced_span(name: str, *, run_type: str = "chain", inputs: dict | None = None,
+                metadata: dict | None = None, tags: list[str] | None = None) -> Iterator[Any]:
+    """A named LangSmith run (yields its RunTree) when tracing is on, otherwise a no-op (yields None).
+
+    Runs opened here become the parent of LLM calls made in the same context,
+    and of asyncio tasks created inside the block.
+    """
+    if not _LANGSMITH_ENABLED:
+        yield None
+        return
+    with _trace_context(name=name, run_type=run_type, inputs=inputs or {},
+                        metadata=metadata or {}, tags=tags or []) as run:
+        yield run
+
+
+@contextmanager
+def under_run(parent: Any) -> Iterator[None]:
+    """Attach LLM calls made inside the block to ``parent`` (a RunTree), e.g. across tasks."""
+    if not _LANGSMITH_ENABLED or parent is None:
+        yield
+        return
+    from langsmith import tracing_context
+    with tracing_context(parent=parent):
+        yield
+
+
+def trace_kwargs(llm: Any, name: str, metadata: dict | None = None) -> dict[str, Any]:
+    """Per-call run name/metadata for a traceable LLM function; {} for plain callables (stubs, tests)."""
+    if not _LANGSMITH_ENABLED:
+        return {}
+    try:
+        from langsmith.run_helpers import is_traceable_function
+    except ImportError:
+        return {}
+    if not is_traceable_function(llm):
+        return {}
+    return {"langsmith_extra": {"name": name, "metadata": metadata or {}}}
 
 
 def estimate_token_cost(total_tokens: int, cost_per_million: float = 3.00) -> float:

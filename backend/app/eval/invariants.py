@@ -138,6 +138,7 @@ def _cascades(rec: Recording) -> list[dict]:
     """A directed action must move the target's emotions and relationships the right way."""
     out = []
     humans = [h.get("_index", 0) for h in rec.human_turns]
+    agent_idx = [t["_index"] for t in rec.turns]
     for t in rec.turns:
         tgt, spk, act = t.get("directed_at"), t["agent_id"], t.get("action_type")
         if not tgt:
@@ -145,8 +146,11 @@ def _cascades(rec: Recording) -> list[dict]:
         before, after = rec.snapshot_before(t), rec.snapshot_after(t)
         if not before or not after:
             continue
-        if any(t["_index"] < h < after["_index"] for h in humans):
-            continue  # a human turn also landed in this window
+        # Human interjections are processed just before the next agent turn, so any since
+        # the previous agent turn land in this window too.
+        prev = max((i for i in agent_idx if i < t["_index"]), default=-1)
+        if any(prev < h < after["_index"] for h in humans):
+            continue
         b, a = before["data"], after["data"]
         if act in ("challenge", "interrupt"):
             ab = b["agent_states"][tgt]["emotion"]["anger"]

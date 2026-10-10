@@ -13,9 +13,11 @@ from statistics import mean, pstdev
 
 from app.eval.recording import Recording
 from app.runtime.archetypes import ARCHETYPES
+from app.runtime.context import uses_vote, voters_of
 
 AGGRESSIVE = {"challenge", "interrupt", "escalate"}
 CONCILIATORY = {"compromise", "agreement", "coalition_signal"}
+HOSTILE = {"challenge", "interrupt", "escalate", "walkaway"}
 POSITIVE = {"compromise", "agreement", "coalition_signal"}
 TARGETED = {"challenge", "question", "interrupt", "compromise", "coalition_signal", "escalate", "agreement"}
 
@@ -133,12 +135,27 @@ def plan_alignment(rec: Recording) -> dict:
     repair = [t for t in rec.turns
               if any(k in ((t.get("prompt_state", {}).get("plan") or {}).get("goal") or "")
                      for k in ("deescalate", "rebuild", "repair"))]
-    broken = sum(1 for t in repair if t.get("action_type") in {"escalate", "interrupt"})
+    broken = sum(1 for t in repair if t.get("action_type") in {"challenge", "escalate", "interrupt", "walkaway"})
+    # Backwards goal shifts: the agent who just attacked someone is told to calm the room.
+    turns_by_index = {t.get("_index"): t for t in rec.all_turns}
+    shifts = rec.system("goal_shift")
+    self_inflicted = 0
+    repair_shifts = 0
+    for e in shifts:
+        if not any(k in (e.get("content") or "") for k in ("deescalate", "rebuild trust")):
+            continue
+        repair_shifts += 1
+        prior = [t for i, t in turns_by_index.items() if i is not None and i < e.get("_index", 0)]
+        last = prior[-1] if prior else None
+        if last and last.get("agent_id") == e.get("target_agent") and last.get("action_type") in HOSTILE:
+            self_inflicted += 1
     return {
         "turns_with_plan": len(with_plan),
         "subgoal_alignment_rate": _rate(aligned, len(with_plan)),
         "repair_plan_turns": len(repair),
         "repair_plan_violation_rate": _rate(broken, len(repair)),
+        "repair_goal_shifts": repair_shifts,
+        "self_inflicted_repair_shift_rate": _rate(self_inflicted, repair_shifts),
     }
 
 
@@ -302,11 +319,26 @@ def urgency(rec: Recording) -> dict:
             "win_rate": _rate(wins.get(aid, 0), len(ds)),
         }
     sources = Counter(d.get("strategy_source", "none") for d in rows)
+    # Is the LLM strategy score informative? It should vary within an agent and
+    # rise when the agent was just addressed.
+    spreads = [pstdev([d["strategy"] for d in ds if d.get("strategy") is not None])
+               for ds in per_agent.values() if sum(d.get("strategy") is not None for d in ds) >= 3]
+    addressed, other = [], []
+    for e in rec.floor_events:
+        prior = [t for t in rec.all_turns if t.get("_index", 0) < e.get("_index", 0)]
+        target = prior[-1].get("directed_at") if prior else None
+        for aid, d in (e.get("bid_details") or {}).items():
+            if d.get("strategy") is not None:
+                (addressed if aid == target else other).append(d["strategy"])
     return {
         "bids": len(rows),
         "blend_max_error": max(blend_errors) if blend_errors else None,
         "det_strategy_correlation": _pearson(dets, strats),
         "strategy_sources": dict(sources),
+        "strategy_timeout_rate": _rate(sources.get("timeout", 0), len(rows)),
+        "strategy_within_agent_sd": round(mean(spreads), 2) if spreads else None,
+        "strategy_addressed_lift": (round(mean(addressed) - mean(other), 2)
+                                    if addressed and other else None),
         "per_agent": agents,
     }
 
@@ -365,10 +397,25 @@ def outcome(rec: Recording) -> dict:
     abrupt = [w for w in walkaways
               if (w.get("prompt_state", {}).get("emotion", {}).get("anger", 0) < 0.4
                   and w.get("prompt_state", {}).get("social_physics", {}).get("tension", 0) < 0.5)]
-    agreed = done.get("outcome_type") in ("agreement", "judge_ruling") or done.get("reason") == "consensus"
+    # Consensus claims, not a split vote: a majority vote with dissent is a decision, not harmony.
+    agreed = (done.get("outcome_type") in ("agreement", "judge_ruling") or done.get("reason") == "consensus") \
+        and done.get("reason") != "vote_majority"
+    # The ending must reflect what people actually did in the room.
+    departures = rec.system("departure")
+    unregistered_walkaway = bool(departures) and done.get("outcome_type") != "walkaway" and \
+        not _room_continues_after(rec, departures)
+    unregistered_vote = bool(votes) and uses_vote(rec.config) and not done.get("vote_breakdown")
+    votes_after_call = [t for t in votes if rec.system("vote_called")
+                        and t.get("_index", 0) > rec.system("vote_called")[0].get("_index", 0)]
+    voters = voters_of(rec.config)
     return {
         "reason": done.get("reason"),
         "outcome_type": done.get("outcome_type"),
+        "unregistered_walkaway": unregistered_walkaway,
+        "unregistered_vote": unregistered_vote,
+        "vote_called": bool(rec.system("vote_called")),
+        "votes_cast_after_call_rate": (_rate(len({t["agent_id"] for t in votes_after_call}), len(voters))
+                                       if rec.system("vote_called") and voters else None),
         "total_turns": done.get("total_turns", n),
         "final_avg_tension": avg_tension,
         "final_avg_trust": avg_trust,
@@ -378,6 +425,19 @@ def outcome(rec: Recording) -> dict:
         "premature_votes": len(early),
         "abrupt_walkaways": len(abrupt),
     }
+
+
+def _room_continues_after(rec: Recording, departures: list[dict]) -> bool:
+    """A walkout by one of several same-side members legitimately leaves the room negotiating."""
+    left = {e.get("departed") for e in departures}
+    principals = [s for s in rec.config.stakeholders if s.stance != "moderator" and s.id not in left]
+    if len(principals) < 2:
+        return False
+    for stance in ("champion", "detractor"):
+        side = [s for s in rec.config.stakeholders if s.stance == stance]
+        if side and all(s.id in left for s in side):
+            return False
+    return True
 
 
 # ── 13. Human injection response ─────────────────────────────────────
