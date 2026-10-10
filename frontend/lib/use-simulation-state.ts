@@ -60,9 +60,11 @@ export function useSimulationState(options: UseSimulationStateOptions): Simulati
     let effectiveSnapshots: { turn_index: number; data: StateSnapshotData }[];
     let latestData: StateSnapshotData | null;
 
-    if (mode === "replay" && turnIndex !== undefined) {
+    if (turnIndex !== undefined) {
+      // The state as of this turn: the latest snapshot at or before it. Turns without
+      // their own snapshot (timeouts, human interjections) show the state they happened in.
       effectiveSnapshots = rawSnapshots.filter((s) => s.turn_index <= turnIndex);
-      latestData = rawSnapshots.find((s) => s.turn_index === turnIndex)?.data ?? null;
+      latestData = effectiveSnapshots[effectiveSnapshots.length - 1]?.data ?? null;
     } else {
       effectiveSnapshots = rawSnapshots;
       latestData = rawSnapshots[rawSnapshots.length - 1]?.data ?? null;
@@ -154,6 +156,7 @@ export function useSimulationState(options: UseSimulationStateOptions): Simulati
       socialPhysics,
       agentStates: latestData?.agent_states ?? {},
       totalTurns: rawSnapshots[rawSnapshots.length - 1]?.data.turn_count ?? 0,
+      maxTurns: (rawSnapshots[rawSnapshots.length - 1]?.data as { max_turns?: number } | undefined)?.max_turns,
       getAgentState: (id: string) => latestData?.agent_states?.[id] ?? null,
       getSocialPhysics: (id: string) => socialPhysics[id] ?? null,
       agentPlans,
@@ -295,6 +298,8 @@ export type SimulationStateData = {
   socialPhysics: Record<string, SocialPhysicsSnapshot>;
   agentStates: Record<string, AgentStateSnapshot>;
   totalTurns: number;
+  /** The run's turn limit, from the latest snapshot. */
+  maxTurns?: number;
   getAgentState: (id: string) => AgentStateSnapshot | null;
   getSocialPhysics: (id: string) => SocialPhysicsSnapshot | null;
   agentPlans: Record<string, Array<{goal_text: string; status: string; confidence: number; subgoal_count: number; completed_subgoals: number}>>;

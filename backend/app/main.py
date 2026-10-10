@@ -245,10 +245,12 @@ async def list_stakeholders_api() -> list[dict]:
     db = get_database()
     try:
         personas = await db.list_personas_v2()
-        logger.info("list_stakeholders (detail): %d personas", len(personas))
-        return personas
-    except Exception:
-        return []
+    except Exception as exc:
+        # An outage must not look like an empty library.
+        logger.exception("list_stakeholders failed")
+        raise HTTPException(status_code=503, detail="Persona library unavailable") from exc
+    logger.info("list_stakeholders (detail): %d personas", len(personas))
+    return personas
 
 @app.post("/stakeholders", status_code=201)
 async def create_stakeholder_api(payload: Stakeholder) -> dict:
@@ -1038,81 +1040,99 @@ def _schedule_post_simulation(config: SimulationConfig, simulation_id: str, even
         logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
 
 
+async def _run_simulation_task(simulation_id: str, entry: dict, config: SimulationConfig, ctx) -> None:
+    """Run a simulation to completion, independent of any viewer's connection.
+
+    Viewers attach through ``/stream`` and read the shared space; closing a
+    tab or reloading the page no longer cancels the run.
+    """
+    try:
+        async for event in run_simulation(config, simulation_id, context=ctx):
+            if event.get("type") == "turn":
+                turn_idx = _extract_turn_index(event)
+                # Viewers read the same event object, so store a copy: the DB orders by
+                # event position, while turn_number keeps the room's turn clock for the UI.
+                saved = {**event, "turn_number": event.get("turn_index")}
+                if event.get("_index") is not None:
+                    saved["turn_index"] = event["_index"]
+                await _save_turn(simulation_id, turn_idx, json.dumps(saved, default=str))
+            elif event.get("type") == "done":
+                entry["status"] = "complete"
+                try:
+                    _db = get_database()
+                    await _db.update_simulation_status(simulation_id, "complete")
+                    await _db.update_participant_stats(simulation_id)
+                except Exception as exc:
+                    logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+                _schedule_post_simulation(config, simulation_id, event, ctx)
+                _save_recording(ctx)
+                asyncio.create_task(_cleanup_simulation(simulation_id))
+                return
+    except asyncio.CancelledError:
+        # Stopped on purpose (the stop endpoint already told viewers).
+        ctx.space.shutdown()
+        entry["status"] = "complete"
+        try:
+            await get_database().update_simulation_status(simulation_id, "complete")
+        except Exception as exc:
+            logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+        raise
+    except Exception as exc:
+        logger.exception("SIM_RUN_ERR simulation_id=%s", simulation_id)
+        ctx.space.events.append({"type": "error", "message": str(exc), "_index": len(ctx.space.events)})
+        ctx.space.shutdown()
+        entry["status"] = "error"
+
+
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
+    """Start the run if it has not started, then stream it from the first event.
+
+    A second viewer (or a reload) attaches to the same run and catches up from
+    the beginning instead of starting a new one.
+    """
     async with _simulations_lock:
         entry = _active_simulations.get(simulation_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Simulation not found")
-        already_complete = entry["status"] == "complete"
-        if entry["status"] == "running":
-            raise HTTPException(status_code=409, detail="Simulation is already running")
-        if not already_complete:
-            entry["status"] = "running"
-
-    config = SimulationConfig(**entry["config"])
-
-    # Inject document context into system prompt if available
-    doc_ctx = entry.get("_document_context")
-    if doc_ctx:
-        config.system_prompt_template = (
-            config.system_prompt_template + "\n" + doc_ctx
-            if config.system_prompt_template
-            else doc_ctx
-        )
-
-    async def event_stream():
-        try:
-            if not already_complete and not app_config.OPENROUTER_API_KEY:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'OPENROUTER_API_KEY is not set — add it to backend/.env to run simulations.'})}\n\n"
-                return
-            if already_complete:
-                db = get_database()
-                try:
-                    turns = await db.get_turns_by_simulation(simulation_id)
-                except Exception:
-                    turns = []
-                for turn in turns:
-                    yield f"data: {json.dumps(turn, default=str)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
-                return
-
+        status = entry["status"]
+        start_run = status == "idle" and bool(app_config.OPENROUTER_API_KEY)
+        if start_run:
+            config = SimulationConfig(**entry["config"])
+            # Inject document context into system prompt if available
+            doc_ctx = entry.get("_document_context")
+            if doc_ctx:
+                config.system_prompt_template = (
+                    config.system_prompt_template + "\n" + doc_ctx
+                    if config.system_prompt_template
+                    else doc_ctx
+                )
             # One context per run wires every behavioral subsystem together and
             # keeps a live handle on the shared space for human injection.
             ctx = build_context(config, simulation_id)
             entry["context"] = ctx
-            async for event in run_simulation(config, simulation_id, context=ctx):
-                if event.get("type") == "done":
-                    entry["status"] = "complete"
-                    try:
-                        _db = get_database()
-                        await _db.update_simulation_status(simulation_id, "complete")
-                        await _db.update_participant_stats(simulation_id)
-                    except Exception as exc:
-                        logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+            entry["status"] = "running"
+            entry["task"] = asyncio.create_task(_run_simulation_task(simulation_id, entry, config, ctx))
+        ctx = entry.get("context")
 
-                    _schedule_post_simulation(config, simulation_id, event, ctx)
-                    _save_recording(ctx)
-
-                    yield f"data: {json.dumps(event, default=str)}\n\n"
-                    asyncio.create_task(_cleanup_simulation(simulation_id))
-                    return
-                yield f"data: {json.dumps(event, default=str)}\n\n"
-                if event.get("type") == "turn":
-                    turn_idx = _extract_turn_index(event)
-                    if event.get("_index") is not None:
-                        event["turn_index"] = event["_index"]
-                    await _save_turn(simulation_id, turn_idx, json.dumps(event, default=str))
-        except asyncio.CancelledError:
-            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
-        except Exception as exc:
-            logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id)
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-        finally:
-            async with _simulations_lock:
-                _sim_entry = _active_simulations.get(simulation_id)
-                if _sim_entry and _sim_entry.get("status") == "running":
-                    _sim_entry["status"] = "idle"
+    async def event_stream():
+        if status == "idle" and not start_run:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'OPENROUTER_API_KEY is not set — add it to backend/.env to run simulations.'})}\n\n"
+            return
+        if ctx is None:  # finished earlier and no longer in memory: replay what was stored
+            try:
+                turns = await get_database().get_turns_by_simulation(simulation_id)
+            except Exception:
+                turns = []
+            for turn in turns:
+                yield f"data: {json.dumps(turn, default=str)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
+            return
+        # Leaving this loop (viewer disconnects) never touches the run itself.
+        async for event in ctx.space.stream():
+            yield f"data: {json.dumps(event, default=str)}\n\n"
+            if event.get("type") in ("done", "error"):
+                return
 
     return StreamingResponse(
         event_stream(),
@@ -1122,6 +1142,26 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.post("/simulations/{simulation_id}/stop")
+async def stop_simulation_handler(simulation_id: str) -> dict:
+    """Stop a running simulation on purpose."""
+    async with _simulations_lock:
+        entry = _active_simulations.get(simulation_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+        task = entry.get("task")
+        if entry["status"] != "running" or task is None or task.done():
+            raise HTTPException(status_code=409, detail="Simulation is not running")
+        ctx = entry["context"]
+        entry["status"] = "complete"  # visible at once; cancellation finishes in the background
+    # Viewers see the ending before the run shuts the room down.
+    await ctx.space.publish({"type": "done", "agent_id": "__scheduler__", "reason": "stopped",
+                             "outcome_type": "no_decision", "summary": "The simulation was stopped.",
+                             "total_turns": ctx.turn_count})
+    task.cancel()
+    return {"status": "stopping"}
 
 
 @app.get("/simulations/analytics")
@@ -1611,12 +1651,9 @@ async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
         )
         return {"status": "ok", "live": True, "turn": turn}
 
-    from app.runtime.space import SharedSpace
-    space = SharedSpace(config)
-    turn = await space.inject_turn(stakeholder.name, content, agent_id=stakeholder.id,
-                                   action_type=action_type, directed_at=directed_at)
-    await _save_turn(simulation_id, turn.get("turn_index", 0), json.dumps(turn))
-    return {"status": "ok", "live": False, "turn": turn}
+    # A finished (or not yet started) run has no room to speak into; writing the
+    # turn into its stored transcript would rewrite history.
+    raise HTTPException(status_code=409, detail="Simulation is not running")
 
 
 @app.get("/analytics/dashboard")

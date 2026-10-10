@@ -9,7 +9,7 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulation, fetchSimulationTurns, streamSimulation, fetchPostmortem, injectTurn, exportSimulation } from "@/lib/api";
+import { fetchSimulation, fetchSimulationTurns, streamSimulation, fetchPostmortem, injectTurn, exportSimulation, stopSimulation } from "@/lib/api";
 import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
 import type { SimulationConfig } from "@/lib/types";
 import { Avatar, initialsFromName } from "@/components/Avatar";
@@ -29,7 +29,17 @@ type Turn = {
   agent_name?: string;
   agent_role?: string;
   internal_reasoning?: string;
+  // The room's turn clock (matches state snapshots); system rows inherit the last agent turn's.
+  turn_number: number;
+  agent_id?: string;
+  directed_at?: string | null;
+  vote?: string | null;
+  is_human?: boolean;
+  subtype?: string;
 };
+
+// Turn number for a row appended after `prev`: agent turns carry their own.
+const lastTurnNumber = (prev: Turn[]) => (prev.length ? prev[prev.length - 1].turn_number : 0);
 
 export default function WarRoomPage({ params }: PageProps) {
   const { id } = use(params);
@@ -46,6 +56,8 @@ export default function WarRoomPage({ params }: PageProps) {
   const [loadingPostmortem, setLoadingPostmortem] = useState(false);
   const [stateSnapshots, setStateSnapshots] = useState<Record<string, unknown>[]>([]);
   const [isReplay, setIsReplay] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const failedRef = useRef(false);
   const [outcome, setOutcome] = useState<{
     reason?: string;
     outcome_type?: string;
@@ -66,7 +78,8 @@ export default function WarRoomPage({ params }: PageProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const persistKey = `wr-session-${id}`;
-  const saveTimer = useRef<NodeJS.Timeout | null>(null);
+  // Mirrors `playing` for the stream callback, which would otherwise see a stale value.
+  const followRef = useRef(true);
 
   const baseInterval = 3800;
 
@@ -96,57 +109,47 @@ export default function WarRoomPage({ params }: PageProps) {
 
 
 
+  useEffect(() => { followRef.current = playing; }, [playing]);
+
   const simState = useSimulationState({
     mode: isReplay ? "replay" : "live",
     events: stateSnapshots,
     simulationId: isReplay ? id : undefined,
-    turnIndex: isReplay ? playTurn : undefined,
+    turnIndex: turns.length ? turns[Math.min(playTurn, turns.length - 1)]?.turn_number : undefined,
   });
 
   useEffect(() => {
     document.title = "War Room — Vantage Boardroom";
   }, []);
 
+  // Only view preferences persist: the stream replays the whole run on reconnect,
+  // so restoring old turns would duplicate them.
   useEffect(() => {
-    if (isReplay) return;
     try {
       const saved = sessionStorage.getItem(persistKey);
       if (saved) {
         const state = JSON.parse(saved);
-        if (state.turns) setTurns(state.turns);
-        if (typeof state.playTurn === "number") setPlayTurn(state.playTurn);
         if (state.speedMul) setSpeedMul(state.speedMul);
         if (state.layout) setLayout(state.layout);
-        if (state.postmortem) setPostmortem(state.postmortem);
-        if (typeof state.playing === "boolean") setPlaying(state.playing);
-        if (state.status) setStatus(state.status);
-        if (state.stateSnapshots?.length) setStateSnapshots(state.stateSnapshots);
       }
     } catch {}
-  }, [id, isReplay]);
+  }, [persistKey]);
 
   useEffect(() => {
-    if (isReplay) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      try {
-        sessionStorage.setItem(persistKey, JSON.stringify({
-          turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots,
-        }));
-      } catch {}
-    }, 500);
-    return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [turns, playTurn, speedMul, layout, playing, status, postmortem, stateSnapshots, persistKey, isReplay]);
+    try { sessionStorage.setItem(persistKey, JSON.stringify({ speedMul, layout })); } catch {}
+  }, [speedMul, layout, persistKey]);
 
   useEffect(() => {
     fetchSimulation(id)
       .then((data) => {
         setConfig(data.config ?? null);
-        if (data.status === "complete" || data.status === "running") {
+        if (data.status === "complete") {
           setIsReplay(true);
+          setPlaying(false);
           fetchSimulationTurns(id).then((turns) => {
             const mapped = (turns as Array<Record<string, unknown>>).map((t) => ({
               turn_index: Number(t.turn_index ?? 0),
+              turn_number: Number(t.turn_number ?? t.turn_index ?? 0),
               speaker: String(t.speaker ?? ""),
               speaker_role: t.speaker_role ? String(t.speaker_role) : t.role ? String(t.role) : undefined,
               content: String(t.content ?? ""),
@@ -156,27 +159,35 @@ export default function WarRoomPage({ params }: PageProps) {
             }));
             setTurns(mapped);
             setStatus("complete");
-          }).catch(() => {});
-        } else if (data.status === "idle") {
+          }).catch((err) => setError(err instanceof Error ? err.message : "Could not load the transcript"));
+        } else if (data.status === "running" || data.status === "idle") {
+          // Starts the run if it has not started; otherwise attaches to it and catches up.
           startStream();
+        } else {
+          setError(`This simulation ended with an error (${data.status}).`);
+          setFailed(true);
         }
       })
       .catch(() => {
         setIsReplay(false);
       });
-    return () => streamCtrl.current?.abort();
+    return () => {
+      // Disconnecting only detaches this viewer; the run carries on server-side.
+      streamCtrl.current?.abort();
+      streamStartedRef.current = false;
+    };
   }, [id]);
 
   useEffect(() => {
     if (!playing) { if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; } return; }
-    const maxTurn = isReplay ? Math.max(0, simState.totalTurns - 1) : turns.length - 1;
+    const maxTurn = turns.length - 1;
     if (maxTurn <= 0) return;
     if (playTurn >= maxTurn && status === "complete") { setPlaying(false); return; }
     if (playTurn >= maxTurn) return;
     const interval = baseInterval / speedMul;
     timerRef.current = setTimeout(() => setPlayTurn((t) => Math.min(maxTurn, t + 1)), interval);
     return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [playing, playTurn, turns.length, speedMul, status, isReplay, simState.totalTurns]);
+  }, [playing, playTurn, turns.length, speedMul, status]);
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -185,6 +196,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const startStream = () => {
     if (status === "running" || isReplay || streamStartedRef.current) return;
     streamStartedRef.current = true;
+    failedRef.current = false;
     setError("");
     setStatus("running");
     setPlaying(true);
@@ -195,6 +207,11 @@ export default function WarRoomPage({ params }: PageProps) {
         if (evt.type === "turn") {
           const turn: Turn = {
             turn_index: Number(evt.turn_index ?? evt._index ?? turns.length),
+            turn_number: Number(evt.turn_index ?? 0),
+            agent_id: evt.agent_id ? String(evt.agent_id) : undefined,
+            directed_at: evt.directed_at ? String(evt.directed_at) : null,
+            vote: evt.vote ? String(evt.vote) : null,
+            is_human: Boolean(evt.is_human),
             speaker: String(evt.speaker ?? evt.agent_name ?? ""),
             speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : evt.agent_role ? String(evt.agent_role) : undefined,
             content: String(evt.content ?? ""),
@@ -204,7 +221,8 @@ export default function WarRoomPage({ params }: PageProps) {
           };
           setTurns((prev) => {
             const updated = [...prev, turn];
-            setPlayTurn(updated.length - 1);
+            // Follow the live edge only while playing; paused, the view stays put.
+            if (followRef.current) setPlayTurn(updated.length - 1);
             return updated;
           });
         } else if (evt.type === "system") {
@@ -213,8 +231,10 @@ export default function WarRoomPage({ params }: PageProps) {
           setTurns((prev) => {
             const systemTurn: Turn = {
               turn_index: prev.length,
+              turn_number: lastTurnNumber(prev),
               speaker: "⚙ System",
               content: String(evt.content ?? ""),
+              subtype: evt.subtype ? String(evt.subtype) : undefined,
             };
             const updated = [...prev, systemTurn];
             return updated;
@@ -244,13 +264,24 @@ export default function WarRoomPage({ params }: PageProps) {
             return [...prev, evt];
           });
         } else if (evt.type === "error") {
+          failedRef.current = true;
+          setFailed(true);
           setError(String(evt.message ?? "Unknown error"));
           setStatus("idle");
         }
       },
-      (err) => { setError(err.message); setStatus("idle"); },
-      () => setStatus("complete"),
+      (err) => { failedRef.current = true; setFailed(true); setError(err.message); setStatus("idle"); },
+      // A stream that ends after an error is not a completed meeting.
+      () => setStatus((s) => (failedRef.current ? s : "complete")),
     );
+  };
+
+  const handleStop = async () => {
+    try {
+      await stopSimulation(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not stop the simulation");
+    }
   };
 
   const loadPostmortem = async () => {
@@ -269,37 +300,31 @@ export default function WarRoomPage({ params }: PageProps) {
     if (!humanContent.trim() || !selectedStakeholder) return;
     setSendingHumanTurn(true);
     setHumanError("");
-    const stakeholder = config?.stakeholders.find((s) => s.id === selectedStakeholder);
-    const optimisticTurn: Turn = {
-      turn_index: turns.length,
-      speaker: stakeholder?.name ?? "Human",
-      speaker_role: stakeholder?.role,
-      content: humanContent.trim(),
-      action_type: "human_input",
-    };
-    setTurns((prev) => [...prev, optimisticTurn]);
-    setPlayTurn((t) => t + 1);
-    setHumanContent("");
+    const content = humanContent.trim();
     try {
-      await injectTurn(id, selectedStakeholder, humanContent.trim());
+      // The stream echoes the injected turn back, so it is not added here.
+      await injectTurn(id, selectedStakeholder, content);
+      setHumanContent("");
     } catch (err) {
       setHumanError(err instanceof Error ? err.message : "Failed to send");
-      setTurns((prev) => prev.filter((t) => t !== optimisticTurn));
-      setPlayTurn((t) => Math.max(0, t - 1));
     } finally {
       setSendingHumanTurn(false);
     }
   };
 
   useEffect(() => {
-    if (isReplay) return;
+    if (isReplay || failed || !outcome || turns.length === 0) return;
     const simDone = status === "complete" && playTurn >= turns.length - 1;
     if (simDone && !postmortem && !loadingPostmortem) {
       loadPostmortem();
     }
-  }, [status, playTurn, turns.length, postmortem, loadingPostmortem, isReplay]);
+  }, [status, playTurn, turns.length, postmortem, loadingPostmortem, isReplay, failed, outcome]);
 
   const current = turns[playTurn];
+  // Panels and timelines use the room's turn clock, not the row position.
+  const stateTurn = current?.turn_number ?? 0;
+  const ec = config?.end_condition as Record<string, unknown> | undefined;
+  const totalTurns = Math.max(1, simState.maxTurns ?? Number(ec?.max_normal_turns ?? ec?.max_turns ?? turns.length));
   const done = !isReplay && status === "complete" && playTurn >= turns.length - 1;
   const live = !isReplay && status === "running";
   const speakerId = current?.speaker ?? null;
@@ -355,21 +380,26 @@ export default function WarRoomPage({ params }: PageProps) {
         )}
 
         <ControlBar
-          turn={playTurn}
-          total={isReplay ? Math.max(1, simState.totalTurns) : Math.max(turns.length, 30)}
-          status={isReplay ? "complete" : (done ? "complete" : playing && live ? "running" : "idle")}
+          turn={stateTurn}
+          total={totalTurns}
+          status={isReplay || status === "complete" ? "complete" : live ? "running" : "idle"}
+          playing={playing}
+          onStop={live ? handleStop : undefined}
           speedMul={speedMul}
           layout={layout}
           scenarioLabel={subjectName.split(" ")[0]}
           voltage={config?.voltage}
-          onPlay={() => { if (isReplay) { setPlaying(true); return; } if (turns.length === 0) startStream(); setPlaying(true); }}
+          onPlay={() => {
+            if (!isReplay && turns.length === 0) startStream();
+            // Resuming a live run jumps back to the newest turn.
+            if (live) setPlayTurn(Math.max(0, turns.length - 1));
+            else if (playTurn >= turns.length - 1) setPlayTurn(0);
+            setPlaying(true);
+          }}
           onPause={() => setPlaying(false)}
           onRestart={() => { setPlayTurn(0); setPlaying(true); }}
-          onStepBack={() => setPlayTurn((t) => Math.max(0, t - 1))}
-          onStepForward={() => setPlayTurn((t) => {
-            const max = isReplay ? Math.max(0, simState.totalTurns - 1) : turns.length - 1;
-            return Math.min(max, t + 1);
-          })}
+          onStepBack={() => { setPlaying(false); setPlayTurn((t) => Math.max(0, t - 1)); }}
+          onStepForward={() => setPlayTurn((t) => Math.min(turns.length - 1, t + 1))}
           onSpeedChange={setSpeedMul}
           onLayoutChange={setLayout}
         />
@@ -386,7 +416,7 @@ export default function WarRoomPage({ params }: PageProps) {
           <div ref={layoutRef}>
             {displayedLayout === "roster" && (
               <RosterLayout
-                turn={playTurn}
+                turn={stateTurn}
                 current={current}
                 playing={playing && live}
                 stakeholders={stakeholders}
@@ -394,34 +424,34 @@ export default function WarRoomPage({ params }: PageProps) {
                 eventLog={eventLog}
                 turns={turns.slice(0, playTurn + 1)}
                 scrollRef={scrollRef}
-                totalTurns={Math.max(turns.length, 30)}
+                totalTurns={totalTurns}
                 simState={simState}
                 nameMap={nameMap}
               />
             )}
             {displayedLayout === "table" && (
               <TableLayout
-                turn={playTurn}
+                turn={stateTurn}
                 current={current}
                 playing={playing && live}
                 stakeholders={stakeholders}
                 speakerId={speakerId}
                 eventLog={eventLog}
                 turns={turns.slice(0, playTurn + 1)}
-                totalTurns={Math.max(turns.length, 30)}
+                totalTurns={totalTurns}
                 simState={simState}
                 nameMap={nameMap}
               />
             )}
             {displayedLayout === "graph" && (
               <GraphLayout
-                turn={playTurn}
+                turn={stateTurn}
                 current={current}
                 playing={playing && live}
                 stakeholders={stakeholders}
                 speakerId={speakerId}
                 turns={turns.slice(0, playTurn + 1)}
-                totalTurns={Math.max(turns.length, 30)}
+                totalTurns={totalTurns}
                 eventLog={eventLog}
                 simState={simState}
                 nameMap={nameMap}
@@ -601,7 +631,8 @@ export default function WarRoomPage({ params }: PageProps) {
           )}
         </div>
 
-        {/* ── Human Turn Input ── */}
+        {/* ── Human Turn Input (only while the room is live) ── */}
+        {live && (
         <div className="flex-shrink-0 border-t border-hairline bg-surface-card px-4 py-3 anim-slide-up">
           <div className="flex items-center gap-2">
             {/* Stakeholder selector with inline context */}
@@ -720,6 +751,7 @@ export default function WarRoomPage({ params }: PageProps) {
             </div>
           )}
         </div>
+        )}
       </div>
     </AppShell>
   );

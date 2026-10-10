@@ -91,6 +91,7 @@ export default function NewSimulationPage() {
   // Step 2 — Personas
   const [personas, setPersonas] = useState<AgentConfig[]>([freshPersona(), freshPersona()]);
   const [library, setLibrary] = useState<Stakeholder[]>([]);
+  const [libraryError, setLibraryError] = useState(false);
   const [selectedLibraryIdx, setSelectedLibraryIdx] = useState<number | null>(null);
 
   // Step 3 — Rules, Tension, Actions
@@ -118,23 +119,24 @@ export default function NewSimulationPage() {
   useEffect(() => {
     fetchStakeholders()
       .then(setLibrary)
-      .catch(() => {});
+      .catch(() => setLibraryError(true));
   }, []);
 
   const toggleEnvFlag = (key: keyof EnvFlags) => {
     setEnvFlags((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // Keep the library persona's id: its documents, evolution and memory are stored under it.
   const addLibraryPersona = (st: Stakeholder) => {
-    setPersonas((prev) => [...prev, {
-      id: `p${nextPersonaId++}`,
+    setPersonas((prev) => prev.some((p) => p.id === st.id) ? prev : [...prev, {
+      id: st.id,
       name: st.name,
       role: st.role,
-      backstory: st.focus || "",
-      stance: "neutral",
-      personality: { ...EMPTY_PERSONALITY },
+      backstory: st.backstory || st.focus || "",
+      stance: st.stance || "neutral",
+      personality: { ...EMPTY_PERSONALITY, ...(st.personality || {}) },
       hidden_agenda: st.hidden_agenda || "",
-      tools: [],
+      tools: st.tools || [],
     }]);
   };
 
@@ -556,20 +558,27 @@ export default function NewSimulationPage() {
                   </div>
                   <p className="text-[11px] text-muted/70 mb-4 leading-relaxed">Choose voices from your established persona library.</p>
                   <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
-                    {library.map((st, i) => (
+                    {library.map((st, i) => {
+                      const added = personas.some((p) => p.id === st.id);
+                      return (
                       <div key={st.id}
                         onClick={() => { setSelectedLibraryIdx(i); addLibraryPersona(st); }}
-                        className="group flex items-center justify-between p-3 rounded-xl bg-canvas/60 border border-hairline hover:border-primary/40 hover:bg-surface-card cursor-pointer transition-all">
+                        aria-disabled={added}
+                        className={`group flex items-center justify-between p-3 rounded-xl bg-canvas/60 border border-hairline transition-all ${added ? "opacity-60 cursor-default" : "hover:border-primary/40 hover:bg-surface-card cursor-pointer"}`}>
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-ink truncate">{st.name}</p>
                           <p className="text-[10px] text-muted/70 truncate">{st.role} · {st.tag}</p>
                         </div>
                         <div className="w-7 h-7 rounded-full border border-hairline flex items-center justify-center text-primary/60 group-hover:bg-primary group-hover:text-on-dark group-hover:border-primary transition-all shrink-0 ml-2">
-                          <span className="text-sm leading-none">+</span>
+                          <span className="text-sm leading-none">{added ? "✓" : "+"}</span>
                         </div>
                       </div>
-                    ))}
-                    {library.length === 0 && (
+                      );
+                    })}
+                    {libraryError && (
+                      <p className="text-xs text-red-400 text-center py-4">Could not load the persona library.</p>
+                    )}
+                    {library.length === 0 && !libraryError && (
                       <div className="text-center py-8">
                         <p className="text-xs text-muted/50 italic">Archive empty</p>
                         <p className="text-[10px] text-muted/40 mt-1">Build profiles from scratch below</p>

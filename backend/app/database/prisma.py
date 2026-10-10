@@ -338,8 +338,7 @@ class PrismaBackend(DatabaseBackend):
         # Create participants with persona_id lookup
         for s in config.get("stakeholders", []):
             sname = s.get("name", "")
-            pid_row = await client.personas.find_first(where={"name": sname})
-            persona_uuid = pid_row.id if pid_row else None
+            persona_uuid = await self._persona_id_for(client, s.get("id", ""), sname)
             existing_p = await client.simulation_participants.find_first(
                 where={"simulation_id": simulation_id, "name": sname},
             )
@@ -529,6 +528,17 @@ class PrismaBackend(DatabaseBackend):
     # ------------------------------------------------------------------
     # Agent detail methods
     # ------------------------------------------------------------------
+
+    async def _persona_id_for(self, client, stakeholder_id: str, name: str) -> Optional[str]:
+        """The personas row for a stakeholder: by id, then slug, then (legacy rows) by name."""
+        row = None
+        if stakeholder_id and self._is_valid_uuid(stakeholder_id):
+            row = await client.personas.find_first(where={"id": stakeholder_id})
+        if row is None and stakeholder_id:
+            row = await client.personas.find_first(where={"slug": stakeholder_id})
+        if row is None and name:
+            row = await client.personas.find_first(where={"name": name})
+        return row.id if row else None
 
     async def get_agent_by_id(self, persona_id: str) -> Optional[dict]:
         client = self._client_or_raise()
@@ -791,6 +801,19 @@ class PrismaBackend(DatabaseBackend):
             data=data,
             where={"id": stakeholder.id},
         )
+        # Keep the personas row (detail page, stats, history) in step with the edit.
+        pid = await self._persona_id_for(client, stakeholder.id, "")
+        if pid:
+            await client.personas.update(where={"id": pid}, data={
+                "name": stakeholder.name,
+                "role": stakeholder.role or "",
+                "focus": stakeholder.focus or "",
+                "backstory": stakeholder.backstory or "",
+                "hidden_agenda": stakeholder.hidden_agenda or "",
+                "tags": [stakeholder.tag] if stakeholder.tag else [],
+                "personality": PrismaJson(self._pydantic_to_json(stakeholder.personality)),
+                "updated_at": now,
+            })
         return stakeholder
 
     async def list_stakeholders(
@@ -1200,8 +1223,14 @@ class PrismaBackend(DatabaseBackend):
         )
         # Fetch persona stats (sim_count, total_turns) for each stakeholder
         persona_rows = await client.personas.find_many(take=1000)
-        persona_by_name: dict[str, str] = {p.name: p.id for p in persona_rows if p.name}
-        persona_ids = list(persona_by_name.values())
+        persona_by_key: dict[str, str] = {}
+        for p in persona_rows:  # id and slug first; name only for legacy rows
+            if p.name:
+                persona_by_key.setdefault(f"name:{p.name}", p.id)
+            persona_by_key[f"id:{p.id}"] = p.id
+            if p.slug:
+                persona_by_key[f"id:{p.slug}"] = p.id
+        persona_ids = list({v for v in persona_by_key.values()})
         participants = await client.simulation_participants.find_many(
             where={"persona_id": {"in": persona_ids}},
             take=10000,
@@ -1217,7 +1246,7 @@ class PrismaBackend(DatabaseBackend):
         result = []
         for r in rows:
             d = self._row_to_persona_detail(r)
-            pid = persona_by_name.get(r.name)
+            pid = persona_by_key.get(f"id:{r.id}") or persona_by_key.get(f"name:{r.name}")
             if pid and pid in stats_by_pid:
                 d["sim_count"] = stats_by_pid[pid]["sim_count"]
                 d["total_turns"] = stats_by_pid[pid]["total_turns"]

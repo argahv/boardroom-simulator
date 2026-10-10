@@ -320,6 +320,9 @@ export const fetchSimulationReplay = async (simulationId: string): Promise<State
   }));
 };
 
+export const stopSimulation = (simulationId: string) =>
+  request<{ status: string }>(`/simulations/${simulationId}/stop`, { method: "POST" });
+
 export const streamSimulation = (
   simulationId: string,
   onEvent: (event: Record<string, unknown>) => void,
