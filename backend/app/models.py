@@ -300,6 +300,8 @@ class AgentConfig(BaseModel):
     hidden_agenda: str = ""
     tools: list[str] = Field(default_factory=list)
     inject_knowledge: bool | None = None  # Per-agent override (None = use global config)
+    # Behavioral archetype: opportunist / idealist / diplomat / pragmatist / agitator / guardian
+    archetype: str | None = None
 
 
 class SimulationConfig(BaseModel):
@@ -320,6 +322,9 @@ class SimulationConfig(BaseModel):
     auto_research: bool = True
     research_topics: list[str] = Field(default_factory=list)
     inject_knowledge: bool = True  # Global toggle for Chroma RAG injection
+    # Scenario profile sets starting social/emotional climate:
+    # debate / crisis / investor / podcast / legal / partnership
+    scenario_type: str = "debate"
 
 # Backward compatibility aliases
 StakeholderV2 = AgentConfig

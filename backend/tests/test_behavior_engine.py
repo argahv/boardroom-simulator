@@ -149,11 +149,18 @@ class TestTick:
         after = engine._internal_states["bob"].cognitive_state.emotion["anger"]
         assert after <= before  # decays or stays same
 
-    def test_relationship_decay_after_coalition(self):
+    def test_alliance_survives_tick_while_trust_holds(self):
         engine = BehaviorEngine(["alice", "bob"])
         engine.process_turn(turn(action_type="coalition_signal"))
         assert engine._graph.get("alice", "bob").alliance is True
         engine.tick()
+        assert engine._graph.get("alice", "bob").alliance is True
+
+    def test_alliance_breaks_under_hostility(self):
+        engine = BehaviorEngine(["alice", "bob"])
+        engine.process_turn(turn(action_type="coalition_signal"))
+        for _ in range(3):
+            engine.process_turn(turn(action_type="challenge"))
         assert engine._graph.get("alice", "bob").alliance is False
 
 
@@ -191,7 +198,10 @@ class TestGetPublicState:
     def test_returns_all_expected_keys(self):
         engine = BehaviorEngine(["a", "b"])
         pub = engine.get_public_state()
-        assert set(pub.keys()) == {"turn_count", "relationship_matrix", "social_physics", "agent_states", "agent_plans"}
+        assert set(pub.keys()) == {
+            "turn_count", "relationship_matrix", "social_physics", "agent_states", "agent_plans",
+            "archetypes", "coalitions", "deadlock_risk",
+        }
 
     def test_social_physics_by_agent(self):
         engine = BehaviorEngine(["x", "y"])
@@ -274,8 +284,8 @@ class TestMultiAgent:
         engine.process_turn(turn(speaker_id="a", target_id="b", action_type="challenge"))
         # b's anger: 0.3 (debate baseline) + 0.15 (challenge directed at b)
         assert engine._internal_states["b"].cognitive_state.emotion["anger"] == pytest.approx(0.45, abs=1e-6)
-        # a's anger decays from 0.3 (debate) towards hardcoded 0.2 baseline via unknown event decay (-0.01) → 0.29
-        assert engine._internal_states["a"].cognitive_state.emotion["anger"] == pytest.approx(0.29, abs=1e-6)
+        # a's anger rises slightly from acting aggressively: 0.3 (debate) + 0.04 → 0.34
+        assert engine._internal_states["a"].cognitive_state.emotion["anger"] == pytest.approx(0.34, abs=1e-6)
 
 
 # ── TestDeterminism ─────────────────────────────────────────────────────────

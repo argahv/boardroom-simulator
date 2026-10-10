@@ -389,7 +389,11 @@ export type AgentConfig = {
   personality: PersonalityProfile;
   hidden_agenda: string;
   tools: string[];
+  archetype?: AgentArchetype | null;
 };
+
+export type AgentArchetype = "opportunist" | "idealist" | "diplomat" | "pragmatist" | "agitator" | "guardian";
+export type ScenarioType = "debate" | "crisis" | "investor" | "podcast" | "legal" | "partnership";
 
 export type SimulationConfig = {
   subject: Subject;
@@ -405,6 +409,7 @@ export type SimulationConfig = {
   auto_research?: boolean;
   research_topics?: string[];
   inject_knowledge?: boolean;
+  scenario_type?: ScenarioType;
 };
 
 export type DocumentMeta = {

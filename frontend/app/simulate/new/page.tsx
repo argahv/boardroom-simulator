@@ -19,13 +19,30 @@ import type {
   ConsensusCondition,
   JudgeCondition,
   AgentStance,
+  AgentArchetype,
+  ScenarioType,
   EnvFlags,
   Stakeholder,
 } from "@/lib/types";
 
 const EMPTY_PERSONALITY: PersonalityProfile = { aggressiveness: 50, empathy: 50, stubbornness: 50, verbosity: 50 };
 const STANCES: AgentStance[] = ["champion", "detractor", "neutral", "moderator", "wildcard"];
-const SPEAKER_MODES = ["moderator_led", "alternating", "freeform", "weighed_random"] as const;
+const SPEAKER_MODES = ["weighed_random", "freeform", "moderator_led", "alternating"] as const;
+const SPEAKER_MODE_LABELS: Record<(typeof SPEAKER_MODES)[number], string> = {
+  weighed_random: "Bidding",
+  freeform: "Most urgent",
+  moderator_led: "Moderator led",
+  alternating: "Alternating",
+};
+const ARCHETYPES: AgentArchetype[] = ["pragmatist", "diplomat", "agitator", "guardian", "idealist", "opportunist"];
+const SCENARIO_TYPES: { value: ScenarioType; label: string }[] = [
+  { value: "debate", label: "Debate" },
+  { value: "partnership", label: "Partnership" },
+  { value: "investor", label: "Investor pitch" },
+  { value: "legal", label: "Legal" },
+  { value: "crisis", label: "Crisis" },
+  { value: "podcast", label: "Podcast" },
+];
 const END_TYPES = ["timeout", "vote", "judge", "consensus", "hybrid"] as const;
 
 const ENV_FLAGS: { key: keyof EnvFlags; label: string; icon: string; desc: string }[] = [
@@ -77,7 +94,8 @@ export default function NewSimulationPage() {
   const [selectedLibraryIdx, setSelectedLibraryIdx] = useState<number | null>(null);
 
   // Step 3 — Rules, Tension, Actions
-  const [speakerMode, setSpeakerMode] = useState<SpeakerRules["mode"]>("alternating");
+  const [speakerMode, setSpeakerMode] = useState<SpeakerRules["mode"]>("weighed_random");
+  const [scenarioType, setScenarioType] = useState<ScenarioType>("debate");
   const [endConditionType, setEndConditionType] = useState<"timeout" | "vote" | "judge" | "consensus" | "hybrid">("timeout");
   const [maxTurns, setMaxTurns] = useState(10);
   const [thresholdPct, setThresholdPct] = useState(60);
@@ -153,6 +171,7 @@ export default function NewSimulationPage() {
     stakeholders: personas,
     action_space: { actions, default_trust_deltas: {}, default_leverage_deltas: {} },
     speaker_rules: { mode: speakerMode },
+    scenario_type: scenarioType,
     end_condition: buildEndCondition(),
     system_prompt_template: "",
     voltage,
@@ -601,6 +620,19 @@ export default function NewSimulationPage() {
                       ))}
                     </div>
 
+                    {/* Archetype — behavioral biases */}
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-muted">Archetype</span>
+                      <select value={p.archetype ?? ""}
+                        onChange={(e) => updatePersona(p.id, { archetype: (e.target.value || null) as AgentArchetype | null })}
+                        className="rounded-lg border border-hairline bg-canvas/50 px-2 py-1 text-[11px] capitalize outline-none focus:border-primary">
+                        <option value="">None</option>
+                        {ARCHETYPES.map((a) => (
+                          <option key={a} value={a}>{a}</option>
+                        ))}
+                      </select>
+                    </div>
+
                     {/* Backstory + hidden agenda + personality */}
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       <div className="space-y-2">
@@ -673,8 +705,22 @@ export default function NewSimulationPage() {
                     <button key={mode} onClick={() => setSpeakerMode(mode)}
                       className={`flex-1 rounded-lg px-3 py-2.5 text-xs font-semibold capitalize transition ${
                         speakerMode === mode ? "bg-surface-dark text-canvas shadow-sm" : "text-muted hover:text-ink"
-                      }`}>{mode.replace("_", " ")}</button>
+                      }`}>{SPEAKER_MODE_LABELS[mode]}</button>
                   ))}
+                </div>
+                <p className="text-[11px] text-muted/70 mt-2">
+                  Bidding: agents bid to speak each turn (urgency from personality, emotions and strategy). Most urgent: the highest bid always wins.
+                </p>
+                <div className="mt-5">
+                  <span className="font-mono text-[9px] font-bold uppercase tracking-wider text-muted block mb-1.5">Scenario climate</span>
+                  <div className="flex gap-1.5 flex-wrap">
+                    {SCENARIO_TYPES.map((sc) => (
+                      <button key={sc.value} onClick={() => setScenarioType(sc.value)}
+                        className={`rounded-full px-3 py-1 text-[10px] transition font-bold tracking-wider ${
+                          scenarioType === sc.value ? "bg-surface-dark text-canvas shadow-sm" : "bg-canvas/50 text-muted hover:text-ink border border-hairline"
+                        }`}>{sc.label}</button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
@@ -1080,7 +1126,7 @@ export default function NewSimulationPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted/60">Speaker Protocol</span>
-                  <span className="text-sm font-semibold text-ink capitalize">{speakerMode.replace("_", " ")}</span>
+                  <span className="text-sm font-semibold text-ink capitalize">{SPEAKER_MODE_LABELS[speakerMode]}</span>
                   <span className="text-[10px] font-bold uppercase tracking-wider text-muted/60">End Condition</span>
                   <span className="text-sm font-semibold text-ink">
                     {endConditionType === "timeout" && `Timeout (${maxTurns} turns)`}
