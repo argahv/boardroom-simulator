@@ -10,6 +10,10 @@ from dataclasses import dataclass, field
 from typing import Self
 
 
+MAX_ACTIVE_PLANS = 2
+PLAN_STALE_TURNS = 6
+
+
 @dataclass
 class SubGoal:
     id: str
@@ -20,6 +24,7 @@ class SubGoal:
     dependencies: list[str]    # subgoal IDs that must complete first
     status: str = "pending"    # pending | in_progress | completed | failed
     progress: float = 0.0      # 0.0-1.0
+    action_types: list[str] = field(default_factory=list)  # actions that advance this subgoal
 
 
 @dataclass
@@ -54,43 +59,95 @@ class PlanManager:
             created_turn=created_turn,
             subgoals=subgoals,
         )
+        self._recalculate_progress(plan)
         self._plans[plan_id] = plan
         if agent_id not in self._agent_plans:
             self._agent_plans[agent_id] = []
         self._agent_plans[agent_id].append(plan_id)
+        # Keep focus: abandon the oldest active plans beyond the cap.
+        active = self.get_active_plans(agent_id)
+        for old in active[:-MAX_ACTIVE_PLANS] if len(active) > MAX_ACTIVE_PLANS else []:
+            old.status = "abandoned"
         return plan
 
     def _auto_generate_subgoals(self, goal_text: str) -> list[SubGoal]:
-        """Auto-generate simple subgoals based on goal text patterns."""
-        subgoals = []
-        if "deescalate" in goal_text.lower() or "rebuild" in goal_text.lower() or "repair" in goal_text.lower():
-            subgoals = [
-                SubGoal(id=uuid.uuid4().hex[:8], description="acknowledge concerns",
-                        strategy_hint="validate the other side's position", turn_target=2,
-                        priority=0.8, dependencies=[], status="pending", progress=0.0),
-                SubGoal(id=uuid.uuid4().hex[:8], description="offer concessions",
-                        strategy_hint="propose a compromise on secondary issues", turn_target=4,
-                        priority=0.6, dependencies=[], status="pending", progress=0.0),
+        """Auto-generate subgoals based on goal text patterns.
+
+        Each subgoal lists the action types that count as progress on it, so
+        plan progress can be tracked from what the agent actually does.
+        """
+        text = goal_text.lower()
+        if any(k in text for k in ("deescalate", "rebuild", "repair")):
+            specs = [
+                ("acknowledge concerns", "validate the other side's position before arguing",
+                 2, 0.8, ["question", "agreement", "statement"]),
+                ("offer concessions", "propose a compromise on secondary issues",
+                 4, 0.6, ["compromise", "coalition_signal"]),
             ]
-        elif "defend" in goal_text.lower() or "leverage" in goal_text.lower():
-            subgoals = [
-                SubGoal(id=uuid.uuid4().hex[:8], description="restate position with evidence",
-                        strategy_hint="cite data and past agreements", turn_target=1,
-                        priority=0.9, dependencies=[], status="pending", progress=0.0),
-                SubGoal(id=uuid.uuid4().hex[:8], description="expose weakness in opposition",
-                        strategy_hint="challenge their assumptions", turn_target=3,
-                        priority=0.7, dependencies=[], status="pending", progress=0.0),
+        elif any(k in text for k in ("defend", "leverage", "regain")):
+            specs = [
+                ("restate position with evidence", "cite data and concrete facts",
+                 1, 0.9, ["statement"]),
+                ("expose weakness in opposition", "challenge their assumptions directly",
+                 3, 0.7, ["challenge", "question"]),
+            ]
+        elif "autonomy" in text or "assert" in text:
+            specs = [
+                ("push back on the dominant voice", "refuse to be steamrolled; contest their framing",
+                 2, 0.8, ["challenge", "interrupt"]),
+                ("reframe the agenda", "redirect the discussion to your priorities",
+                 4, 0.6, ["statement", "question"]),
             ]
         else:
-            subgoals = [
-                SubGoal(id=uuid.uuid4().hex[:8], description="establish position",
-                        strategy_hint="state your case clearly", turn_target=1,
-                        priority=0.7, dependencies=[], status="pending", progress=0.0),
-                SubGoal(id=uuid.uuid4().hex[:8], description="build support",
-                        strategy_hint="find common ground with allies", turn_target=3,
-                        priority=0.5, dependencies=[], status="pending", progress=0.0),
+            specs = [
+                ("establish position", "state your case clearly",
+                 1, 0.7, ["statement", "challenge"]),
+                ("build support", "find common ground with potential allies",
+                 3, 0.5, ["coalition_signal", "compromise", "question", "agreement"]),
+                ("secure a decision", "push the room toward a resolution on your terms",
+                 6, 0.5, ["vote", "compromise", "escalate"]),
             ]
-        return subgoals
+        return [
+            SubGoal(id=uuid.uuid4().hex[:8], description=desc, strategy_hint=hint,
+                    turn_target=target, priority=prio, dependencies=[],
+                    status="pending", progress=0.0, action_types=actions)
+            for desc, hint, target, prio, actions in specs
+        ]
+
+    def evaluate_turn(self, agent_id: str, action_type: str, turn: int = 0) -> list[str]:
+        """Advance the agent's active plans based on the action it just took.
+
+        Returns the descriptions of subgoals completed by this action.
+        Plans whose subgoals are long overdue are abandoned so stale plans
+        do not crowd out new ones.
+        """
+        completed: list[str] = []
+        for plan in self.get_active_plans(agent_id):
+            for sg in plan.subgoals:
+                if sg.status not in ("pending", "in_progress"):
+                    continue
+                if any(self._subgoal_status(plan, dep) != "completed" for dep in sg.dependencies):
+                    continue
+                if action_type in sg.action_types:
+                    sg.status = "completed"
+                    sg.progress = 1.0
+                    completed.append(sg.description)
+                else:
+                    sg.status = "in_progress"
+                    sg.progress = max(sg.progress, 0.25)
+                break  # only the first open subgoal of each plan is in focus
+            self._recalculate_progress(plan)
+            open_sgs = [sg for sg in plan.subgoals if sg.status != "completed"]
+            if plan.status == "active" and open_sgs and turn - plan.created_turn > max(
+                    sg.turn_target for sg in plan.subgoals) + PLAN_STALE_TURNS:
+                plan.status = "abandoned"
+        return completed
+
+    def _subgoal_status(self, plan: Plan, subgoal_id: str) -> str:
+        for sg in plan.subgoals:
+            if sg.id == subgoal_id:
+                return sg.status
+        return "completed"
 
     def advance_subgoal(self, plan_id: str, subgoal_id: str) -> Plan | None:
         """Mark a subgoal as completed, advancing plan progress."""
@@ -146,16 +203,17 @@ class PlanManager:
         plans = self.get_active_plans(agent_id)
         if not plans:
             return ""
-        plan = plans[0]
+        plan = plans[-1]  # most recent plan is the most pressing
+        goal = plan.goal_text.replace("_", " ")
         active_sgs = [sg for sg in plan.subgoals if sg.status in ("pending", "in_progress")]
         if active_sgs:
             next_sg = active_sgs[0]
             return (
-                f"Active plan: {plan.goal_text} (confidence {plan.confidence:.1f}). "
+                f"Active plan: {goal} (progress {plan.confidence:.1f}). "
                 f"Current objective: {next_sg.description}. "
                 f"Strategy: {next_sg.strategy_hint}"
             )
-        return f"Active plan: {plan.goal_text} (confidence {plan.confidence:.1f})"
+        return f"Active plan: {goal} (progress {plan.confidence:.1f})"
 
     def serialize(self) -> dict:
         """Serialize all plans for snapshot persistence."""
@@ -178,6 +236,7 @@ class PlanManager:
                         "dependencies": sg.dependencies,
                         "status": sg.status,
                         "progress": sg.progress,
+                        "action_types": sg.action_types,
                     }
                     for sg in plan.subgoals
                 ],

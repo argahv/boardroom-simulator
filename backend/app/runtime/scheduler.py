@@ -5,6 +5,7 @@ import json
 import logging
 from typing import Any
 
+from app import config as app_config
 from app.database import get_database
 from app.models import (
     SimulationConfig, VoteCondition, TimeoutCondition,
@@ -61,32 +62,39 @@ class VoteChecker(BaseChecker):
         if ctx.turn_count < 3:
             return None
 
-        # Scan events for vote actions FIRST (before max_turns check)
-        vote_tally: dict[str, int] = {}
+        # Latest vote per voter counts (people can change their mind).
+        latest: dict[str, str] = {}
         for event in ctx.space.events:
             if event.get("type") == "turn" and event.get("action_type") == "vote":
-                content = event.get("content", "")
                 agent = event.get("agent_id", "")
                 if agent not in self.condition.voters:
                     continue
-                position = self._extract_vote_position(content)
+                position = event.get("vote") or self._extract_vote_position(event.get("content", ""))
                 if position:
-                    vote_tally[position] = vote_tally.get(position, 0) + 1
+                    latest[agent] = position
+
+        vote_tally: dict[str, int] = {}
+        for position in latest.values():
+            vote_tally[position] = vote_tally.get(position, 0) + 1
 
         total_voters = len(self.condition.voters)
-        for position, count in vote_tally.items():
+        breakdown = {
+            "for": vote_tally.get("yes", 0),
+            "against": vote_tally.get("no", 0),
+            "abstain": vote_tally.get("abstain", 0),
+        }
+        for position in ("yes", "no"):
+            count = vote_tally.get(position, 0)
             if total_voters > 0 and count / total_voters >= self.condition.threshold:
+                carried = position == "yes"
                 return TerminationResult(
                     reason="vote_majority",
-                    outcome_type="agreement",
-                    summary=f"Motion carried {count}-{total_voters - count}: {position}.",
+                    outcome_type="agreement" if carried else "rejected",
+                    summary=(f"Motion carried {count}-{total_voters - count}."
+                             if carried else f"Motion rejected {count}-{total_voters - count}."),
                     confidence=count / total_voters,
                     total_turns=ctx.turn_count,
-                    vote_breakdown={
-                        "for": count,
-                        "against": total_voters - count,
-                        "abstain": 0,
-                    },
+                    vote_breakdown=breakdown,
                     agreed_issues=[{"position": position}],
                 )
 
@@ -102,18 +110,9 @@ class VoteChecker(BaseChecker):
         return None
 
     def _extract_vote_position(self, content: str) -> str | None:
-        """Extract what the agent voted for from content. Simple keyword matching."""
-        lower = content.lower()
-        for keyword in ["yes", "aye", "support", "in favor", "approve", "agree"]:
-            if keyword in lower:
-                return "yes"
-        for keyword in ["no", "nay", "oppose", "against", "reject", "disagree"]:
-            if keyword in lower:
-                return "no"
-        for keyword in ["abstain", "pass"]:
-            if keyword in lower:
-                return "abstain"
-        return None
+        """Extract what the agent voted for from content (whole-word matching)."""
+        from app.runtime.agent import _vote_position
+        return _vote_position(None, content)
 
 
 class SocialPhysicsChecker(BaseChecker):
@@ -184,6 +183,31 @@ class SocialPhysicsChecker(BaseChecker):
         return None
 
 
+class WalkawayChecker(BaseChecker):
+    """Always active: the negotiation ends once fewer than two parties remain."""
+
+    async def check(self, ctx: TerminationContext) -> TerminationResult | None:
+        departed = getattr(ctx.space, "departed", set())
+        if not departed:
+            return None
+        remaining = [s for s in ctx.config.stakeholders if s.id not in departed]
+        if len(remaining) >= 2:
+            return None
+        names = [s.name for s in ctx.config.stakeholders if s.id in departed]
+        last = None
+        for event in reversed(ctx.space.events):
+            if event.get("type") == "turn" and event.get("action_type") == "walkaway":
+                last = event.get("agent_id")
+                break
+        return TerminationResult(
+            reason="walkaway",
+            outcome_type="walkaway",
+            summary=f"Negotiation collapsed: {', '.join(names)} walked out.",
+            total_turns=ctx.turn_count,
+            walkaway_party=last,
+        )
+
+
 class JudgeChecker(BaseChecker):
     """Periodically ask a judge LLM to evaluate the negotiation."""
     def __init__(self, condition: JudgeCondition, llm: Any = None) -> None:
@@ -192,7 +216,7 @@ class JudgeChecker(BaseChecker):
         self._last_judge_turn = 0
 
     async def check(self, ctx: TerminationContext) -> TerminationResult | None:
-        from app.llm import openrouter_completion, parse_json_object
+        from app.llm import parse_json_object
 
         evaluate_every = max(3, ctx.turn_count // 3)
         if ctx.turn_count - self._last_judge_turn < evaluate_every:
@@ -211,7 +235,8 @@ class JudgeChecker(BaseChecker):
 
         judge_prompt = [
             {"role": "system", "content": (
-                "You are an impartial judge evaluating a boardroom negotiation. "
+                f"You are an impartial judge evaluating a negotiation about "
+                f"'{ctx.config.subject.name}'. "
                 "Assess whether the parties have reached a genuine agreement, "
                 "are at an impasse, or need more time.\n\n"
                 f"Your evaluation criteria:\n{criteria_str}\n\n"
@@ -226,7 +251,10 @@ class JudgeChecker(BaseChecker):
         ]
 
         try:
-            text, mocked, metadata = await openrouter_completion(
+            llm = self.llm
+            if llm is None:
+                from app.llm import openrouter_completion as llm
+            text, mocked, metadata = await llm(
                 judge_prompt, temperature=0.3, simulation_id="judge_check",
             )
             payload = parse_json_object(text) if text else {}
@@ -260,7 +288,7 @@ class EndConditionRegistry:
 
     @staticmethod
     def build_checkers(config: SimulationConfig, llm: Any = None) -> list[BaseChecker]:
-        checkers: list[BaseChecker] = []
+        checkers: list[BaseChecker] = [WalkawayChecker()]
         ec = config.end_condition
 
         if isinstance(ec, TimeoutCondition):
@@ -298,22 +326,33 @@ class Scheduler:
     """
     Traffic cop for the agent runtime.
 
-    - Reads bids and grants the floor
-    - Validates action types against allowed set
-    - Updates shared state (trust, leverage)
-    - Checks end condition via checkers after each turn
-    - Publishes system events
+    - Opens bidding rounds and grants the floor
+    - Feeds every completed turn through all behavioral layers exactly once
+      (social physics, emotions, relationships, coalitions, memory, private
+      thought, goals and plans)
+    - Injects environment pressure (time pressure, external events)
+    - Checks end conditions after each turn
+    - Publishes system events and state snapshots
     """
 
+    BID_WINDOW_SECONDS = 3.0
+
     def __init__(self, config: SimulationConfig, space: SharedSpace, simulation_id: str,
-                 behavior_engine: Any = None) -> None:
+                 behavior_engine: Any = None, context: Any = None, llm: Any = None) -> None:
         self.config = config
         self.space = space
         self.simulation_id = simulation_id
         self.turn_count = 0
-        self.behavior_engine = behavior_engine
+        self.context = context
+        self.behavior_engine = behavior_engine if behavior_engine is not None else getattr(context, "behavior_engine", None)
         self._termination_result: TerminationResult | None = None
-        self._checkers = EndConditionRegistry.build_checkers(config)
+        self._checkers = EndConditionRegistry.build_checkers(config, llm=llm)
+        self._last_speaker: str | None = None
+        self._last_spoke_turn: dict[str, int] = {}
+        self._processed_index = 0
+        import random as _random
+        import zlib as _zlib
+        self._rng = _random.Random(_zlib.crc32(simulation_id.encode()))
 
     async def run(self) -> None:
         await self.space.publish({
@@ -327,56 +366,50 @@ class Scheduler:
         while self.space.is_running():
             self.space.clear_bids()
 
+            # Human interjections since the last turn feed the dynamics too
+            await self._process_external_turns()
+
             # Check termination BEFORE processing next turn
             result = await self._check_all()
             if result is not None:
                 self._termination_result = result
                 break
 
-            # Signal new turn
-            await self.space.publish({
-                "type": "system",
-                "content": f"Turn {self.turn_count + 1} — agents may bid.",
-                "agent_id": "__scheduler__",
-            })
-            await asyncio.sleep(0.05)
+            await self._apply_environment()
 
             winner = await self._resolve_next_speaker()
+            if winner is None:
+                break
 
             await self.space.publish({
                 "type": "system",
                 "content": f"{self._name(winner)} has the floor.",
                 "agent_id": "__scheduler__",
                 "granted_to": winner,
+                "bids": {self._name(a): u for a, u in getattr(self, "_last_bids", {}).items()},
             })
 
+            start_index = len(self.space.events)
             await self.space.grant_floor(winner)
             logger.info("Turn %d — %s has the floor", self.turn_count + 1, self._name(winner), extra={"turn": self.turn_count + 1, "speaker": winner, "event": "turn_granted"})
 
-            turn = await self._wait_for_turn(winner, timeout=45.0)
+            turn = await self._wait_for_turn(winner, timeout=app_config.TURN_TIMEOUT_SECONDS, start_index=start_index)
             if turn is None:
                 logger.warning("Agent %s timed out, skipping", winner, extra={"agent": winner, "turn": self.turn_count, "event": "agent_timeout"})
                 self.space.release_floor()
                 self.turn_count += 1
+                self._sync_context()
                 continue
+            self._processed_index = max(self._processed_index, turn["_index"] + 1)
 
-            self._update_dynamics(turn)
+            await self._update_dynamics(turn)
+            self._last_speaker = winner
+            self._last_spoke_turn[winner] = self.turn_count
 
-            # Publish state snapshot
-            if self.behavior_engine is not None:
-                public_state = self.behavior_engine.get_public_state()
-                await self.space.publish({
-                    "type": "state_snapshot",
-                    "turn_index": self.turn_count,
-                    "data": public_state,
-                })
-                try:
-                    db = get_database()
-                    await db.create_state_snapshot(self.simulation_id, self.turn_count, json.dumps(public_state), version=1)
-                except Exception:
-                    pass
+            await self._publish_snapshot()
 
             self.turn_count += 1
+            self._sync_context()
 
             # Check termination AFTER turn
             result = await self._check_all()
@@ -422,6 +455,80 @@ class Scheduler:
         })
         self.space.shutdown()
 
+    def _sync_context(self) -> None:
+        if self.context is not None:
+            self.context.turn_count = self.turn_count
+
+    # ── environment pressure ───────────────────────────────────────
+
+    async def _apply_environment(self) -> None:
+        ctx = self.context
+        if ctx is None:
+            return
+        if ctx.time_pressure is not None:
+            pressure = ctx.time_pressure.tick(self.turn_count, ctx.max_turns)
+            remaining = max(0, ctx.max_turns - self.turn_count)
+            for level, label in ((0.5, "half"), (0.8, "critical")):
+                if pressure >= level and label not in ctx.announced_pressure:
+                    ctx.announced_pressure.add(label)
+                    await self.space.publish({
+                        "type": "system", "subtype": "time_pressure", "agent_id": "__scheduler__",
+                        "content": f"Time pressure: about {remaining} turns remain.",
+                        "pressure": round(pressure, 2),
+                    })
+                    if self.behavior_engine is not None and hasattr(self.behavior_engine, "apply_shock"):
+                        self.behavior_engine.apply_shock(
+                            social={"tension": 0.05 if label == "half" else 0.1},
+                            emotion={"fear": 0.05 if label == "half" else 0.1})
+        if ctx.external_events is not None:
+            event = ctx.external_events.check(self.turn_count)
+            if event is not None:
+                await self.space.publish({
+                    "type": "system", "subtype": "external_event", "agent_id": "__scheduler__",
+                    "content": f"⚡ {event['content']}", "event_kind": event.get("kind"),
+                })
+                if self.behavior_engine is not None and hasattr(self.behavior_engine, "apply_shock"):
+                    self.behavior_engine.apply_shock(social=event.get("social"), emotion=event.get("emotion"))
+
+    async def _process_external_turns(self) -> None:
+        """Run human-injected turns through the dynamics so agents react to them."""
+        events = self.space.events
+        for event in events[self._processed_index:]:
+            if event.get("type") == "turn" and event.get("is_human") and event.get("agent_id"):
+                await self._update_dynamics(event)
+        self._processed_index = len(events)
+
+    async def _publish_snapshot(self) -> None:
+        if self.behavior_engine is None:
+            return
+        public_state = self.public_state()
+        await self.space.publish({
+            "type": "state_snapshot",
+            "turn_index": self.turn_count,
+            "data": public_state,
+        })
+        try:
+            db = get_database()
+            await db.create_state_snapshot(self.simulation_id, self.turn_count, json.dumps(public_state, default=str), version=1)
+        except Exception as exc:
+            logger.warning("SNAPSHOT_SAVE_ERR %s: %s", self.simulation_id, exc)
+
+    def public_state(self) -> dict:
+        state = self.behavior_engine.get_public_state() if self.behavior_engine is not None else {}
+        ctx = self.context
+        if ctx is not None:
+            state["agent_goals"] = {
+                s.id: [{"goal_text": g.goal_text.replace("_", " "), "priority": round(g.priority, 2),
+                        "source": g.source} for g in ctx.goals.get_active_goals(s.id, 3)]
+                for s in self.config.stakeholders
+            }
+            state["private_thoughts"] = ctx.thoughts.get_all_snapshots()
+            state["memory"] = {s.id: ctx.memory.get_summary(s.id) for s in self.config.stakeholders}
+            state["time_pressure"] = round(ctx.pressure(), 3)
+            state["max_turns"] = ctx.max_turns
+        state["departed"] = sorted(self.space.departed)
+        return state
+
     # ── checker orchestration ──────────────────────────────────────
 
     async def _check_all(self) -> TerminationResult | None:
@@ -442,29 +549,48 @@ class Scheduler:
 
     # ── speaker resolution ─────────────────────────────────────────
 
-    async def _resolve_next_speaker(self) -> str:
+    def _active_ids(self) -> list[str]:
+        return [s.id for s in self.config.stakeholders if s.id not in self.space.departed]
+
+    async def _resolve_next_speaker(self) -> str | None:
+        self._last_bids = {}
+        if not self._active_ids():
+            return None
         mode = self.config.speaker_rules.mode
         if mode == "moderator_led":
+            await self._announce_turn()
             return await self._moderator_decides()
         elif mode == "alternating":
+            await self._announce_turn()
             return await self._alternating_side()
         elif mode == "freeform":
             return await self._freeform()
         else:
             return await self._highest_bid()
 
+    async def _announce_turn(self) -> None:
+        await self.space.publish({
+            "type": "system",
+            "content": f"Turn {self.turn_count + 1}.",
+            "agent_id": "__scheduler__",
+        })
+
     async def _moderator_decides(self) -> str:
-        moderators = [s for s in self.config.stakeholders if s.stance == "moderator"]
+        active = self._active_ids()
+        moderators = [s for s in self.config.stakeholders if s.stance == "moderator" and s.id in active]
         if moderators:
             if len(moderators) > 1:
                 return moderators[self.turn_count % len(moderators)].id
-            all_ids = [s.id for s in self.config.stakeholders]
             mod_id = moderators[0].id
-            others = [s for s in all_ids if s != mod_id]
+            others = [a for a in active if a != mod_id]
             if not others:
                 return mod_id
             if self.turn_count == 0:
                 return mod_id
+            # A tense room pulls the moderator back in to cool things down.
+            if self.behavior_engine is not None and self._last_speaker != mod_id:
+                if self.behavior_engine.deadlock_risk() >= 0.65:
+                    return mod_id
             cycle_pos = (self.turn_count - 1) % (len(others) + 1)
             if cycle_pos < len(others):
                 return others[cycle_pos]
@@ -472,61 +598,132 @@ class Scheduler:
         return await self._highest_bid()
 
     async def _alternating_side(self) -> str:
-        champions = [s.id for s in self.config.stakeholders if s.stance == "champion"]
-        detractors = [s.id for s in self.config.stakeholders if s.stance == "detractor"]
-        neutrals = [s.id for s in self.config.stakeholders if s.stance not in ("champion", "detractor")]
+        active = set(self._active_ids())
+        champions = [s.id for s in self.config.stakeholders if s.stance == "champion" and s.id in active]
+        detractors = [s.id for s in self.config.stakeholders if s.stance == "detractor" and s.id in active]
+        neutrals = [s.id for s in self.config.stakeholders if s.stance not in ("champion", "detractor") and s.id in active]
+        # Every third turn goes to the uncommitted voices so they are not silenced.
+        if neutrals and champions and detractors and self.turn_count % 3 == 2:
+            return neutrals[(self.turn_count // 3) % len(neutrals)]
         if self.turn_count % 2 == 0:
-            pool = champions or neutrals or detractors or [s.id for s in self.config.stakeholders]
+            pool = champions or neutrals or detractors or list(active)
         else:
-            pool = detractors or neutrals or champions or [s.id for s in self.config.stakeholders]
+            pool = detractors or neutrals or champions or list(active)
         idx = (self.turn_count // 2) % len(pool)
         return pool[idx]
 
+    async def _gather_bids(self) -> dict[str, int]:
+        active = self._active_ids()
+        await self.space.open_bidding(f"Turn {self.turn_count + 1} — agents may bid.")
+        bids = await self.space.collect_bids(set(active), timeout=self.BID_WINDOW_SECONDS)
+        bids = {a: u for a, u in bids.items() if a in active}
+        self._last_bids = bids
+        return bids
+
+    def _eligible(self, bids: dict[str, int]) -> dict[str, int]:
+        # Nobody holds the floor twice in a row while others want it.
+        if len(bids) > 1 and self._last_speaker in bids:
+            bids = {a: u for a, u in bids.items() if a != self._last_speaker}
+        return bids
+
+    def _fallback_speaker(self) -> str:
+        active = self._active_ids()
+        # Longest-silent agent speaks when nobody bid in time.
+        return min(active, key=lambda a: (self._last_spoke_turn.get(a, -1), active.index(a)))
+
     async def _freeform(self) -> str:
-        try:
-            return await asyncio.wait_for(self.space.resolve_bid(), timeout=10.0)
-        except asyncio.TimeoutError:
-            pool = [s.id for s in self.config.stakeholders]
-            return pool[self.turn_count % len(pool)]
+        """Pure competition: the most urgent bidder wins."""
+        bids = self._eligible(await self._gather_bids())
+        if not bids:
+            return self._fallback_speaker()
+        top = max(bids.values())
+        tied = [a for a, u in bids.items() if u == top]
+        return min(tied, key=lambda a: self._last_spoke_turn.get(a, -1))
 
     async def _highest_bid(self) -> str:
-        try:
-            return await asyncio.wait_for(self.space.resolve_bid(), timeout=8.0)
-        except asyncio.TimeoutError:
-            pool = [s.id for s in self.config.stakeholders]
-            return pool[self.turn_count % len(pool)]
+        """Weighted-random by urgency: urgent agents usually, but not always, win."""
+        bids = self._eligible(await self._gather_bids())
+        if not bids:
+            return self._fallback_speaker()
+        agents = list(bids)
+        weights = [max(1, bids[a]) ** 2 for a in agents]
+        return self._rng.choices(agents, weights=weights, k=1)[0]
 
     # ── turn validation ────────────────────────────────────────────
 
-    async def _wait_for_turn(self, agent_id: str, timeout: float) -> dict | None:
-        known = self.space._version
-        deadline = asyncio.get_event_loop().time() + timeout
-        while asyncio.get_event_loop().time() < deadline:
-            if self.space._version > known:
-                for event in self.space.events[self._last_index():]:
-                    if event.get("type") == "turn" and event.get("agent_id") == agent_id:
-                        return event
-                known = self.space._version
-            await asyncio.sleep(0.1)
+    async def _wait_for_turn(self, agent_id: str, timeout: float, start_index: int | None = None) -> dict | None:
+        start = len(self.space.events) if start_index is None else start_index
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while loop.time() < deadline and self.space.is_running():
+            for event in self.space.events[start:]:
+                if event.get("type") == "turn" and event.get("agent_id") == agent_id and not event.get("is_human"):
+                    return event
+            await asyncio.sleep(0.05)
         return None
-
-    def _last_index(self) -> int:
-        return len(self.space.events) - 1 if self.space.events else 0
 
     # ── dynamics ───────────────────────────────────────────────────
 
-    def _update_dynamics(self, turn: dict) -> None:
+    async def _update_dynamics(self, turn: dict) -> None:
+        """Feed one completed turn through every behavioral layer, exactly once."""
+        speaker = turn.get("agent_id", "")
         action_type = turn.get("action_type", "statement")
+        target = turn.get("directed_at") or None
+        content = turn.get("content", "")
+
+        triggers_by_agent: dict[str, list[str]] = {}
         if self.behavior_engine is not None:
             be_turn = {
-                "agent_id": turn.get("agent_id", ""),
+                "agent_id": speaker,
                 "action_type": action_type,
-                "target_id": turn.get("directed_at", None),
-                "speaker_id": turn.get("agent_id", ""),
-                "target": turn.get("directed_at", ""),
+                "target_id": target,
+                "speaker_id": speaker,
+                "target": target or "",
+                "content": content,
             }
-            self.behavior_engine.process_turn(be_turn)
-            self.behavior_engine.tick()
+            try:
+                self.behavior_engine.process_turn(be_turn)
+                self.behavior_engine.tick()
+            except Exception as exc:  # a bad turn must never stall the room
+                logger.warning("Behavior engine failed on turn: %s", exc)
+            if hasattr(self.behavior_engine, "triggers_for"):
+                triggers_by_agent = {s.id: self.behavior_engine.triggers_for(s.id)
+                                     for s in self.config.stakeholders}
+
+        ctx = self.context
+        if ctx is not None:
+            ctx.memory.add_event(speaker, {
+                "type": action_type, "content": content,
+                "metadata": {"target": target or "", "turn": self.turn_count},
+            })
+            ctx.thoughts.set_position(
+                speaker,
+                public=content,
+                private=turn.get("internal_reasoning", ""),
+                strategy=ctx.plans.get_plan_summary(speaker),
+                turn=self.turn_count,
+            )
+            ctx.goals.decay_all(self.turn_count)
+            for s in self.config.stakeholders:
+                ctx.goals.update_priorities(s.id, triggers_by_agent.get(s.id, []))
+                if ctx.goals.has_goal_shifted(s.id):
+                    top = ctx.goals.get_active_goals(s.id, 1)
+                    if top and self.behavior_engine is not None and hasattr(self.behavior_engine, "shift_focus"):
+                        self.behavior_engine.shift_focus(s.id, top[0].goal_text.replace("_", " "), int(top[0].priority))
+                        await self.space.publish({
+                            "type": "system", "subtype": "goal_shift", "agent_id": "__scheduler__",
+                            "content": f"{self._name(s.id)} shifts focus: {top[0].goal_text.replace('_', ' ')}.",
+                            "target_agent": s.id,
+                        })
+
+        if action_type == "walkaway" and speaker and speaker not in self.space.departed:
+            self.space.departed.add(speaker)
+            await self.space.publish({
+                "type": "system", "subtype": "departure", "agent_id": "__scheduler__",
+                "content": f"{self._name(speaker)} walked out of the negotiation.",
+                "departed": speaker,
+            })
+
         try:
             if neo4j_enabled():
                 driver = get_driver()
@@ -575,5 +772,6 @@ class Scheduler:
             content=turn.get("content", ""),
             action_type=turn.get("action_type", "statement"),
             internal_reasoning=turn.get("internal_reasoning", ""),
-            is_human=False, directed_at=None, coalition_with=None,
+            is_human=bool(turn.get("is_human")), directed_at=turn.get("directed_at"),
+            coalition_with=turn.get("directed_at") if turn.get("action_type") == "coalition_signal" else None,
         )

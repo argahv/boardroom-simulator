@@ -112,3 +112,30 @@ class ArchetypeRegistry:
 
 def make_registry() -> ArchetypeRegistry:
     return ArchetypeRegistry().load_defaults()
+
+def get_archetype(name: str | None) -> AgentArchetype | None:
+    if not name:
+        return None
+    return ARCHETYPES.get(name.lower())
+
+
+def bias_personality(traits: dict[str, int], archetype: str | None) -> dict[str, int]:
+    """Return ``traits`` shifted by the archetype's personality bias (clamped 0-100)."""
+    arch = get_archetype(archetype)
+    if arch is None:
+        return dict(traits)
+    out = dict(traits)
+    for trait, delta in arch.personality_bias.items():
+        if trait in out:
+            out[trait] = max(0, min(100, out[trait] + delta))
+    return out
+
+
+def tendency_hint(archetype: str | None) -> str:
+    """Human-readable summary of an archetype's action tendencies for prompts."""
+    arch = get_archetype(archetype)
+    if arch is None or not arch.tendencies:
+        return ""
+    ranked = sorted(arch.tendencies.items(), key=lambda kv: kv[1], reverse=True)
+    parts = ", ".join(f"{action} ({int(p * 100)}%)" for action, p in ranked)
+    return f"You are a {arch.name} ({arch.description}). Your natural tendencies: {parts}."

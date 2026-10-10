@@ -28,7 +28,14 @@ class SharedSpace:
         self._bid_queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._running = True
         self.current_speaker: str | None = None
+        self.floor_token = 0  # increments on every grant so an agent speaks once per grant
         self._version = 0
+        # Bidding rounds: the scheduler opens a round, agents bid once per round.
+        self.bid_round = 0
+        self._round_bids: dict[str, int] = {}
+        self._bid_signal = asyncio.Event()
+        # Agents that walked out of the room no longer bid or speak.
+        self.departed: set[str] = set()
 
     # ── lifecycle ────────────────────────────────────────────────────
 
@@ -56,6 +63,7 @@ class SharedSpace:
         """Grant speaking turn to an agent. Wakes all waiters."""
         async with self._event_condition:
             self.current_speaker = agent_id
+            self.floor_token += 1
             self._version += 1
             self._event_condition.notify_all()
 
@@ -65,22 +73,61 @@ class SharedSpace:
 
     # ── human injection ───────────────────────────────────────────────
 
-    async def inject_turn(self, speaker_name: str, content: str) -> dict:
+    async def inject_turn(self, speaker_name: str, content: str, agent_id: str | None = None,
+                          action_type: str = "statement", directed_at: str | None = None) -> dict:
         turn = {
             "type": "turn",
             "turn_index": len([e for e in self.events if e.get("type") == "turn"]),
             "speaker": speaker_name,
+            "agent_name": speaker_name,
             "content": content,
-            "action_type": "statement",
+            "action_type": action_type,
             "is_human": True,
         }
+        if agent_id:
+            turn["agent_id"] = agent_id
+        if directed_at:
+            turn["directed_at"] = directed_at
         await self.publish(turn)
         return turn
 
     # ── bidding ──────────────────────────────────────────────────────
 
-    def submit_bid(self, agent_id: str, urgency: int) -> None:
+    def submit_bid(self, agent_id: str, urgency: int, bid_round: int | None = None) -> None:
+        if agent_id in self.departed:
+            return
+        if bid_round is not None and bid_round != self.bid_round:
+            return  # stale bid from an earlier round
         self._bid_queue.put_nowait((-urgency, agent_id))
+        self._round_bids[agent_id] = urgency
+        self._bid_signal.set()
+
+    async def open_bidding(self, content: str, **extra) -> int:
+        """Start a new bidding round and announce it. Returns the round number."""
+        self.clear_bids()
+        self.bid_round += 1
+        await self.publish({"type": "system", "content": content, "agent_id": "__scheduler__",
+                            "bid_round": self.bid_round, **extra})
+        return self.bid_round
+
+    async def collect_bids(self, expected: set[str], timeout: float) -> dict[str, int]:
+        """Wait until every expected agent has bid this round (or timeout).
+
+        Returns {agent_id: urgency} for the bids received.
+        """
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        expected = set(expected) - self.departed
+        while not expected.issubset(self._round_bids.keys()):
+            remaining = deadline - loop.time()
+            if remaining <= 0 or not self._running:
+                break
+            self._bid_signal.clear()
+            try:
+                await asyncio.wait_for(self._bid_signal.wait(), timeout=remaining)
+            except asyncio.TimeoutError:
+                break
+        return dict(self._round_bids)
 
     async def resolve_bid(self) -> str:
         """Pop the highest-urgency bid. Blocks until at least one bid."""
@@ -88,6 +135,7 @@ class SharedSpace:
         return agent_id
 
     def clear_bids(self) -> None:
+        self._round_bids = {}
         while not self._bid_queue.empty():
             try:
                 self._bid_queue.get_nowait()

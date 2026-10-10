@@ -41,6 +41,30 @@ DEFAULT_DELTAS: dict[str, dict[str, float]] = {
         "trust": -0.15, "leverage": -0.05, "tension": 0.2,
         "dominance": 0.1, "credibility": -0.1, "momentum": -0.05,
     },
+    "vote": {
+        "trust": 0.0, "leverage": 0.02, "tension": 0.02,
+        "dominance": 0.0, "credibility": 0.02, "momentum": 0.03,
+    },
+    "agreement": {
+        "trust": 0.08, "leverage": 0.0, "tension": -0.1,
+        "dominance": -0.02, "credibility": 0.03, "momentum": 0.04,
+    },
+    "walkaway": {
+        "trust": -0.2, "leverage": 0.05, "tension": 0.25,
+        "dominance": 0.05, "credibility": -0.05, "momentum": -0.1,
+    },
+}
+
+# Effects on the agent an action is directed AT (applied to the target's own state).
+RECEIVED_DELTAS: dict[str, dict[str, float]] = {
+    "question": {"tension": 0.02, "credibility": -0.01},
+    "challenge": {"trust": -0.04, "tension": 0.08, "credibility": -0.04, "momentum": -0.03},
+    "interrupt": {"tension": 0.06, "dominance": -0.03, "momentum": -0.02},
+    "escalate": {"trust": -0.08, "tension": 0.1, "credibility": -0.03},
+    "compromise": {"trust": 0.06, "tension": -0.06, "leverage": 0.03},
+    "coalition_signal": {"trust": 0.06, "leverage": 0.03, "momentum": 0.03},
+    "agreement": {"trust": 0.05, "tension": -0.05, "momentum": 0.04},
+    "walkaway": {"tension": 0.1, "leverage": -0.03},
 }
 
 PERSONALITY_SOCIAL_MAP: dict[str, list[tuple[str, str, float]]] = {
@@ -80,6 +104,10 @@ class SocialPhysics(BaseModel):
         base = DEFAULT_DELTAS[action_type]
         delta = dict(base)
 
+        volatility = context.get("volatility", 1.0) if isinstance(context, dict) else 1.0
+        if volatility and volatility != 1.0:
+            delta = {k: v * volatility for k, v in delta.items()}
+
         personality = context.get("personality") if isinstance(context, dict) else None
         if personality:
             for trait_name, field, strength in PERSONALITY_SOCIAL_MAP.get(action_type, []):
@@ -90,8 +118,7 @@ class SocialPhysics(BaseModel):
         # Modulate by archetype from context dict (after personality)
         archetype = context.get("archetype") if isinstance(context, dict) else None
         if archetype:
-            from .archetypes import ARCHETYPE_DELTA_MULTIPLIERS
-            arch_deltas = ARCHETYPE_DELTA_MULTIPLIERS.get(archetype, {}).get(action_type, {})
+            arch_deltas = _archetype_multipliers().get(archetype, {}).get(action_type, {})
             for field, mult in arch_deltas.items():
                 if field in delta:
                     delta[field] *= mult
@@ -103,6 +130,29 @@ class SocialPhysics(BaseModel):
             dominance=_clamp01(self.dominance + delta["dominance"]),
             credibility=_clamp01(self.credibility + delta["credibility"]),
             momentum=_clamp11(self.momentum + delta["momentum"]),
+        )
+
+    def receive(self, action_type: str, volatility: float = 1.0) -> Self:
+        """Apply the effect of being on the receiving end of ``action_type``."""
+        delta = RECEIVED_DELTAS.get(action_type)
+        if not delta:
+            return self
+        return self.nudge(**{k: v * volatility for k, v in delta.items()})
+
+    def nudge(self, **deltas: float) -> Self:
+        """Return a copy with the given fields shifted by additive deltas."""
+        values = {f: getattr(self, f) for f in
+                  ("trust", "leverage", "tension", "dominance", "credibility", "momentum")}
+        for field, d in deltas.items():
+            if field in values:
+                values[field] += d
+        return SocialPhysics(
+            trust=_clamp01(values["trust"]),
+            leverage=_clamp01(values["leverage"]),
+            tension=_clamp01(values["tension"]),
+            dominance=_clamp01(values["dominance"]),
+            credibility=_clamp01(values["credibility"]),
+            momentum=_clamp11(values["momentum"]),
         )
 
     def decay(self) -> Self:
@@ -155,6 +205,25 @@ class SocialPhysics(BaseModel):
 
 
 # ── helpers ─────────────────────────────────────────────────────────────────
+
+def _archetype_multipliers() -> dict:
+    # This module is also loaded standalone by file path (see behavior_engine),
+    # where relative imports fail — fall back to loading the sibling the same way.
+    try:
+        from .archetypes import ARCHETYPE_DELTA_MULTIPLIERS
+        return ARCHETYPE_DELTA_MULTIPLIERS
+    except ImportError:
+        import importlib.util
+        import sys
+        from pathlib import Path
+        name = "_be_archetypes"
+        if name not in sys.modules:
+            spec = importlib.util.spec_from_file_location(name, Path(__file__).resolve().parent / "archetypes.py")
+            mod = importlib.util.module_from_spec(spec)
+            sys.modules[name] = mod
+            spec.loader.exec_module(mod)
+        return sys.modules[name].ARCHETYPE_DELTA_MULTIPLIERS
+
 
 def _clamp01(val: float) -> float:
     return max(0.0, min(1.0, val))

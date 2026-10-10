@@ -74,6 +74,20 @@ Bidding is **60% deterministic formula** (personality + state + emotions) **+ 40
 
 Agents maintain **multi-turn plans** with subgoals. Triggers (e.g., `trust_collapse`, `credibility_crisis`) auto-create plans ("rebuild trust", "defend position"). Plans are injected into the LLM's system prompt each turn.
 
+### Simulation Settings
+
+| Setting | Values | Effect |
+| ------- | ------ | ------ |
+| `speaker_rules.mode` | `weighed_random` (bidding, default), `freeform` (highest bid wins), `moderator_led`, `alternating` | How the floor is assigned each turn |
+| `scenario_type` | `debate`, `crisis`, `investor`, `podcast`, `legal`, `partnership` | Starting social/emotional climate and volatility |
+| `stakeholders[].archetype` | `opportunist`, `idealist`, `diplomat`, `pragmatist`, `agitator`, `guardian` | Personality/emotion bias, action tendencies, delta multipliers |
+| `env_flags.hidden_motives` | bool | Hidden agendas reach the agent's prompt and goals |
+| `env_flags.time_pressure` | bool | Pressure rises toward the turn limit (announced, raises urgency and fear) |
+| `env_flags.external_leaks` | bool | One external shock (leak, deadline, news, defection) hits mid-run |
+| `env_flags.deadlock_risk` | bool | Agents are warned when the room nears deadlock |
+
+Every turn names who it is `directed_at`, so challenges, compromises and coalition signals move the target's emotions and the pairwise relationship matrix. A `walkaway` removes the agent from the room; the run ends when fewer than two remain.
+
 ### Event Response Flow
 
 [![Event Response Flow](docs/02-event-response-flow.excalidraw.svg)](docs/02-event-response-flow.excalidraw.svg)

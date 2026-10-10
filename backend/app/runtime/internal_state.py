@@ -26,6 +26,18 @@ _DEFAULT_EMOTIONS: dict[str, float] = {
 
 _UNKNOWN_EVENT_DECAY: float = 0.01
 
+# Emotional effect on the agent performing an action.
+_SELF_ACTION_DELTAS: dict[str, dict[str, float]] = {
+    "challenge": {"anger": 0.04, "confidence": 0.03},
+    "escalate": {"anger": 0.1, "certainty": 0.05},
+    "interrupt": {"anger": 0.05},
+    "compromise": {"joy": 0.1, "certainty": 0.05},
+    "coalition_signal": {"joy": 0.04, "fear": -0.03},
+    "agreement": {"joy": 0.06},
+    "walkaway": {"anger": 0.08, "fear": 0.05},
+    "statement": {"confidence": 0.02},
+}
+
 
 def personality_modulate(base_delta: float, trait_value: int, strength: float = 0.5) -> float:
     normalized = (trait_value - 50) / 50
@@ -87,6 +99,7 @@ EMOTION_MODULATION_RULES: list[tuple[str, float, str, float]] = [
     ("joy", 0.7, "urgency_modifier", -10),
     ("shame", 0.6, "interrupt_bias", -0.2),
     ("shame", 0.6, "statement_bias", -0.15),
+    ("shame", 0.6, "urgency_modifier", -15),
     ("surprise", 0.7, "question_bias", 0.2),
     ("surprise", 0.7, "interrupt_bias", 0.15),
 ]
@@ -139,8 +152,21 @@ class InternalState:
         directed_at = event.get("directed_at")
         cs = self.cognitive_state
 
+        speaker_id = event.get("speaker_id")
         deltas: dict[str, float] = {}
-        if action_type == "challenge" and directed_at == self.agent_id:
+        if speaker_id and speaker_id == self.agent_id:
+            # How acting a certain way feels to the actor.
+            deltas = dict(_SELF_ACTION_DELTAS.get(action_type, {}))
+        elif action_type == "walkaway" and speaker_id:
+            # Someone leaving the table shocks everyone else in the room.
+            deltas = {"surprise": 0.2, "fear": 0.08, "confidence": -0.05}
+        elif action_type == "interrupt" and directed_at == self.agent_id:
+            deltas = {"anger": 0.12, "confidence": -0.05}
+        elif action_type == "coalition_signal" and directed_at == self.agent_id:
+            deltas = {"joy": 0.1, "fear": -0.05, "confidence": 0.05}
+        elif action_type == "question" and directed_at == self.agent_id:
+            deltas = {"surprise": 0.05, "certainty": -0.03}
+        elif action_type == "challenge" and directed_at == self.agent_id:
             deltas = {"anger": 0.15, "confidence": -0.1}
         elif action_type == "compromise":
             deltas = {"joy": 0.1, "certainty": 0.05}
@@ -184,6 +210,16 @@ class InternalState:
         for key in ("anger", "fear", "joy", "shame", "surprise"):
             baseline = _EMOTION_BASELINES[key]
             cs.emotion[key] = round(cs.emotion[key] + (baseline - cs.emotion[key]) * 0.03, 6)
+        cs.modulation = compute_modulation(cs.emotion)
+
+    def shift_emotions(self, deltas: dict[str, float]) -> Self:
+        """Apply additive emotion deltas directly (archetype bias, external shocks)."""
+        cs = self.cognitive_state
+        for key, delta in deltas.items():
+            if key in cs.emotion:
+                cs.emotion[key] = _clamp01(cs.emotion[key] + delta)
+        cs.modulation = compute_modulation(cs.emotion)
+        return self
 
     def snapshot(self) -> dict:
         cs = self.cognitive_state

@@ -179,9 +179,15 @@ class TestDecay:
             g.decay_all()
         assert g.get("a", "b").fear < 0.8
 
-    def test_decay_resets_alliance_to_false(self):
+    def test_decay_keeps_alliance_while_trust_holds(self):
         g = make_graph()
-        g.set("a", "b", RelationshipEntry(alliance=True))
+        g.set("a", "b", RelationshipEntry(alliance=True, trust=0.7))
+        g.decay_all()
+        assert g.get("a", "b").alliance is True
+
+    def test_decay_dissolves_alliance_when_trust_low(self):
+        g = make_graph()
+        g.set("a", "b", RelationshipEntry(alliance=True, trust=0.2))
         g.decay_all()
         assert g.get("a", "b").alliance is False
 

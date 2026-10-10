@@ -16,6 +16,10 @@ class RelationshipEntry(BaseModel):
 
 DECAY_RATE = 0.04
 
+# An alliance dissolves once trust falls below / rivalry rises above these.
+ALLIANCE_MIN_TRUST = 0.4
+ALLIANCE_MAX_RIVALRY = 0.5
+
 BASELINES: dict[str, float | bool] = {
     "trust": 0.5,
     "fear": 0.2,
@@ -51,6 +55,9 @@ class RelationshipGraph:
         action_type = turn.get("action_type", "")
         speaker = turn.get("speaker_id", "")
         target = turn.get("target_id", "")
+        if not speaker or not target or speaker == target:
+            return self
+        # speaker -> target (how the speaker now regards the target)
         if action_type == "coalition_signal":
             self.update(speaker, target, "trust", 0.08)
             self.get(speaker, target).alliance = True
@@ -64,17 +71,50 @@ class RelationshipGraph:
             self.update(speaker, target, "trust", 0.12)
             self.get(speaker, target).alliance = True
             self.update(speaker, target, "rivalry", -0.05)
+        elif action_type == "escalate":
+            self.update(speaker, target, "trust", -0.12)
+            self.update(speaker, target, "rivalry", 0.12)
+        elif action_type == "agreement":
+            self.update(speaker, target, "trust", 0.08)
+            self.update(speaker, target, "admiration", 0.05)
+        elif action_type == "question":
+            self.update(speaker, target, "dependency", 0.03)
+
+        # target -> speaker (how the target now regards the speaker)
+        if action_type in ("coalition_signal", "compromise", "agreement"):
+            self.update(target, speaker, "trust", 0.06)
+            self.update(target, speaker, "admiration", 0.04)
+            self.update(target, speaker, "rivalry", -0.03)
+        elif action_type == "challenge":
+            self.update(target, speaker, "trust", -0.05)
+            self.update(target, speaker, "rivalry", 0.08)
+        elif action_type == "interrupt":
+            self.update(target, speaker, "trust", -0.04)
+            self.update(target, speaker, "rivalry", 0.06)
+        elif action_type == "escalate":
+            self.update(target, speaker, "fear", 0.08)
+            self.update(target, speaker, "rivalry", 0.1)
+            self.update(target, speaker, "trust", -0.08)
+
+        # An alliance cannot survive open hostility.
+        if action_type in ("challenge", "escalate", "interrupt"):
+            for a, b in ((speaker, target), (target, speaker)):
+                entry = self.get(a, b)
+                if entry.alliance and (entry.trust < ALLIANCE_MIN_TRUST or entry.rivalry > ALLIANCE_MAX_RIVALRY):
+                    entry.alliance = False
         return self
 
     def decay_all(self) -> Self:
         for entry in self._edges.values():
             for key, baseline in BASELINES.items():
                 if isinstance(baseline, bool):
-                    setattr(entry, key, baseline)
-                else:
-                    current = getattr(entry, key)
-                    decayed = current + (baseline - current) * DECAY_RATE
-                    setattr(entry, key, max(0.0, min(1.0, decayed)))
+                    continue
+                current = getattr(entry, key)
+                decayed = current + (baseline - current) * DECAY_RATE
+                setattr(entry, key, max(0.0, min(1.0, decayed)))
+            # Alliances persist while the relationship supports them.
+            if entry.alliance and (entry.trust < ALLIANCE_MIN_TRUST or entry.rivalry > ALLIANCE_MAX_RIVALRY):
+                entry.alliance = False
         return self
 
     def get_allies(self, agent_id: str) -> list[str]:

@@ -268,6 +268,7 @@ class TestDefaultDeltas:
         expected = {
             "statement", "question", "challenge", "compromise",
             "coalition_signal", "interrupt", "escalate",
+            "vote", "agreement", "walkaway",
         }
         assert set(DEFAULT_DELTAS.keys()) == expected
 

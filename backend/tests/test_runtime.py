@@ -158,10 +158,12 @@ async def test_scheduler_alternating():
 
     champions = {s.id for s in cfg.stakeholders if s.stance == "champion"}
     detractors = {s.id for s in cfg.stakeholders if s.stance == "detractor"}
+    others = {s.id for s in cfg.stakeholders if s.stance not in ("champion", "detractor")}
 
     assert winner1 in champions
     assert winner2 in detractors
-    assert winner3 in champions
+    # every third turn goes to the uncommitted voices so they are not silenced
+    assert winner3 in others
     assert winner4 in detractors
 
 

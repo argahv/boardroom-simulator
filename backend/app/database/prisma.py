@@ -1080,7 +1080,7 @@ class PrismaBackend(DatabaseBackend):
         client = self._client_or_raise()
         rows = await client.state_snapshots.find_many(
             where={"simulation_id": simulation_id},
-            order={"turn_index": "asc", "created_at": "asc"},
+            order=[{"turn_index": "asc"}, {"created_at": "asc"}],
         )
         seen: set[int] = set()
         result = []

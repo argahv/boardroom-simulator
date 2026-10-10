@@ -14,13 +14,6 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
-import importlib.util as _iu
-from pathlib import Path as _P
-_be_spec = _iu.spec_from_file_location("_be_main",
-        _P(__file__).resolve().parent / "runtime" / "behavior_engine.py")
-_be_mod = _iu.module_from_spec(_be_spec)
-_be_spec.loader.exec_module(_be_mod)
-create_engine = _be_mod.make_engine
 
 from . import config
 from . import config as app_config
@@ -39,6 +32,8 @@ from .models import (
     TopologyNode,
 )
 from .runtime import run_simulation
+from .runtime.context import build_context
+from pathlib import Path as _P
 from .upload.utils import sanitize_filename
 
 from .llm import openrouter_completion, parse_json_object
@@ -912,6 +907,83 @@ async def create_simulation_with_documents(
     }
 
 
+def _evolution_result(event: dict, stance: str) -> dict:
+    """Map a termination event to the outcome vocabulary EvolutionService understands."""
+    reason = event.get("reason", "timeout")
+    outcome = event.get("outcome_type", "no_decision")
+    result: dict = {"total_turns": event.get("total_turns", 0),
+                    "vote_breakdown": event.get("vote_breakdown") or {}}
+    if reason == "vote_majority" and outcome in ("agreement", "rejected"):
+        if stance in ("champion", "detractor"):
+            carried = outcome == "agreement"
+            won = carried if stance == "champion" else not carried
+            result.update(outcome_type="vote", vote_result="win" if won else "loss")
+        else:
+            result["outcome_type"] = "consensus"
+    elif outcome == "agreement" or reason == "consensus" or outcome == "judge_ruling":
+        result["outcome_type"] = "consensus"
+    elif outcome == "walkaway" or reason in ("walkaway", "deadlock_walkaway"):
+        result["outcome_type"] = "walkaway" if event.get("walkaway_party") else "deadlock"
+    elif outcome == "impasse":
+        result["outcome_type"] = "deadlock"
+    else:
+        result["outcome_type"] = "timeout"
+    return result
+
+
+def _fire_and_forget(coro, label: str) -> None:
+    """Run a background coroutine, logging (not raising) its failure."""
+    async def _runner():
+        try:
+            await coro
+        except Exception as exc:
+            logger.info("%s skipped: %s", label, exc)
+    asyncio.ensure_future(_runner())
+
+
+def _schedule_post_simulation(config: SimulationConfig, simulation_id: str, event: dict, ctx) -> None:
+    """Fire-and-forget persona evolution + cross-session memory after a run."""
+    try:
+        from app.evolution import EvolutionService
+        evo_svc = EvolutionService(get_database())
+        for s in config.stakeholders:
+            pd = {
+                "aggressiveness": s.personality.aggressiveness,
+                "empathy": s.personality.empathy,
+                "stubbornness": s.personality.stubbornness,
+                "verbosity": s.personality.verbosity,
+            }
+            # Only library personas can evolve; ad-hoc stakeholders are skipped.
+            _fire_and_forget(evo_svc.compute_and_store(
+                persona_id=s.id, simulation_id=simulation_id,
+                current_personality=pd, current_stance=s.stance,
+                simulation_result=_evolution_result(event, s.stance),
+            ), f"Evolution for {s.id}")
+    except Exception as exc:
+        logger.warning("Evolution trigger sim=%s err=%s", simulation_id, exc)
+
+    try:
+        from app.cross_session_memory import store_cross_session_memory
+        for s in config.stakeholders:
+            lessons: list[str] = []
+            if event.get("summary"):
+                lessons.append(str(event["summary"])[:200])
+            if ctx is not None:
+                summary = ctx.memory.get_summary(s.id)
+                lessons += [f"Red line: {r[:120]}" for r in summary.get("red_lines", [])[-1:]]
+                lessons += [f"Conceded: {c[:120]}" for c in summary.get("concessions", [])[-1:]]
+            _fire_and_forget(store_cross_session_memory(
+                persona_id=s.id,
+                simulation_id=simulation_id,
+                subject=config.subject.name,
+                outcome_type=event.get("outcome_type", event.get("reason", "timeout")),
+                total_turns=event.get("total_turns", 0),
+                lessons=lessons,
+            ), f"Cross-session memory for {s.id}")
+    except Exception as exc:
+        logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
+
+
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
     async with _simulations_lock:
@@ -937,6 +1009,9 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
 
     async def event_stream():
         try:
+            if not already_complete and not app_config.OPENROUTER_API_KEY:
+                yield f"data: {json.dumps({'type': 'error', 'message': 'OPENROUTER_API_KEY is not set — add it to backend/.env to run simulations.'})}\n\n"
+                return
             if already_complete:
                 db = get_database()
                 try:
@@ -948,9 +1023,11 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                 yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
                 return
 
-            # Create BehaviorEngine for this simulation
-            _be = create_engine([s.id for s in config.stakeholders])
-            async for event in run_simulation(config, simulation_id, behavior_engine=_be):
+            # One context per run wires every behavioral subsystem together and
+            # keeps a live handle on the shared space for human injection.
+            ctx = build_context(config, simulation_id)
+            entry["context"] = ctx
+            async for event in run_simulation(config, simulation_id, context=ctx):
                 if event.get("type") == "done":
                     entry["status"] = "complete"
                     try:
@@ -960,63 +1037,17 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                     except Exception as exc:
                         logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
 
-                    # ── Evolution trigger (fire-and-forget) ──
-                    try:
-                        config_obj = SimulationConfig(**entry["config"])
-                        db = get_database()
-                        from app.evolution import EvolutionService
-                        evo_svc = EvolutionService(db)
-                        for s in config_obj.stakeholders:
-                            pd = {
-                                "aggressiveness": s.personality.aggressiveness,
-                                "empathy": s.personality.empathy,
-                                "stubbornness": s.personality.stubbornness,
-                                "verbosity": s.personality.verbosity,
-                            }
-                            sim_result = {
-                                "outcome_type": event.get("reason", "timeout"),
-                                "total_turns": event.get("total_turns", 0),
-                            }
-                            asyncio.ensure_future(evo_svc.compute_and_store(
-                                persona_id=s.id, simulation_id=simulation_id,
-                                current_personality=pd, current_stance=s.stance,
-                                simulation_result=sim_result,
-                            ))
-                    except Exception as exc:
-                        logger.warning("Evolution trigger sim=%s err=%s", simulation_id, exc)
+                    _schedule_post_simulation(config, simulation_id, event, ctx)
 
-                    # ── Cross-session memory (fire-and-forget) ──
-                    try:
-                        subject_name = ""
-                        if hasattr(config_obj, 'subject'):
-                            subject_name = getattr(config_obj.subject, 'name', '')
-                        from app.cross_session_memory import store_cross_session_memory
-                        for s in config_obj.stakeholders:
-                            asyncio.ensure_future(store_cross_session_memory(
-                                persona_id=s.id,
-                                simulation_id=simulation_id,
-                                subject=subject_name,
-                                outcome_type=event.get("reason", "timeout"),
-                                total_turns=event.get("total_turns", 0),
-                            ))
-                    except Exception as exc:
-                        logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
-
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
                     asyncio.create_task(_cleanup_simulation(simulation_id))
                     return
-                yield f"data: {json.dumps(event)}\n\n"
+                yield f"data: {json.dumps(event, default=str)}\n\n"
                 if event.get("type") == "turn":
                     turn_idx = _extract_turn_index(event)
                     if event.get("_index") is not None:
                         event["turn_index"] = event["_index"]
-                    await _save_turn(simulation_id, turn_idx, json.dumps(event))
-                    if _be is not None:
-                        try:
-                            public_state = _be.get_public_state()
-                            await _save_state_snapshot(simulation_id, turn_idx, json.dumps(public_state))
-                        except Exception as exc:
-                            logger.warning("SNAPSHOT_CAPTURE_ERR %s: %s", simulation_id, exc)
+                    await _save_turn(simulation_id, turn_idx, json.dumps(event, default=str))
         except asyncio.CancelledError:
             yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
         except Exception as exc:
@@ -1427,8 +1458,30 @@ async def agent_detail(name: str) -> dict:
                 **{k: v for k, v in es.items() if isinstance(v, (int, float))},
             })
 
-    # Goals — not persisted yet (agent goals live in simulation runtime state only)
+    # Goals + plans: read from the most recent state snapshot that tracked this agent
     goals: list[dict] = []
+    for sim in sims[:5]:
+        try:
+            snap = await db.get_latest_state_snapshot(sim.get("id", ""))
+        except Exception:
+            snap = None
+        if not snap:
+            continue
+        data = snap.get("snapshot_json") or snap.get("data") or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError:
+                data = {}
+        agent_goals = (data.get("agent_goals") or {}).get(persona_id)
+        if agent_goals:
+            plans = (data.get("agent_plans") or {}).get(persona_id, [])
+            goals = [{**g, "simulation_id": sim.get("id", ""),
+                      "subject_name": sim.get("subject_name", "")} for g in agent_goals]
+            if plans:
+                goals.append({"goal_text": "active plans", "plans": plans,
+                              "simulation_id": sim.get("id", "")})
+            break
 
     # Strategies: extract internal_reasoning as strategy hints, grouped by simulation
     strategies: list[dict] = []
@@ -1477,8 +1530,6 @@ async def agent_detail(name: str) -> dict:
 
 @app.post("/simulations/{simulation_id}/inject")
 async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
-    from app.runtime.space import SharedSpace
-
     entry = _active_simulations.get(simulation_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="Simulation not found")
@@ -1493,10 +1544,24 @@ async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
     if not stakeholder:
         raise HTTPException(status_code=422, detail=f"Stakeholder {speaker_id} not found")
 
+    action_type = payload.get("action_type") or "statement"
+    directed_at = payload.get("directed_at") or None
+    ctx = entry.get("context")
+    if ctx is not None and entry.get("status") == "running" and ctx.space.is_running():
+        # Live run: publish into the shared space. Agents hear it, the scheduler
+        # feeds it through the behavior engine, and the stream loop persists it.
+        turn = await ctx.space.inject_turn(
+            stakeholder.name, content, agent_id=stakeholder.id,
+            action_type=action_type, directed_at=directed_at,
+        )
+        return {"status": "ok", "live": True, "turn": turn}
+
+    from app.runtime.space import SharedSpace
     space = SharedSpace(config)
-    turn = await space.inject_turn(stakeholder.name, content)
+    turn = await space.inject_turn(stakeholder.name, content, agent_id=stakeholder.id,
+                                   action_type=action_type, directed_at=directed_at)
     await _save_turn(simulation_id, turn.get("turn_index", 0), json.dumps(turn))
-    return {"status": "ok", "turn": turn}
+    return {"status": "ok", "live": False, "turn": turn}
 
 
 @app.get("/analytics/dashboard")
