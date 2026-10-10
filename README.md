@@ -68,11 +68,11 @@ Emotions **causally shape behavior** — not just dialogue tone:
 
 ### Hybrid Urgency
 
-Bidding is **60% deterministic formula** (personality + state + emotions) **+ 40% LLM strategy score** (inferred strategic importance from recent context). 2-second timeout with graceful fallback.
+Bidding is **60% deterministic formula** (personality + state + emotions) **+ 40% LLM strategy score** (how much speaking now matters, judged from the last few turns plus facts such as "you were just addressed", turns left and a pending vote). The score has a short timeout (`STRATEGY_SCORE_TIMEOUT`, default 2.5s); on timeout, or for the agent who just spoke, the bid is the deterministic formula alone. `STRATEGY_MODEL` lets this call use a faster model than the dialogue.
 
 ### Strategic Horizon
 
-Agents maintain **multi-turn plans** with subgoals. Triggers (e.g., `trust_collapse`, `credibility_crisis`) auto-create plans ("rebuild trust", "defend position"). Plans are injected into the LLM's system prompt each turn.
+Agents maintain **multi-turn plans** with subgoals. Each agent keeps a standing plan from its stance. Pressure (e.g., `trust_collapse`, `credibility_crisis`) adds a *tactical adjustment* ("rebuild trust", "defend position") on top of it, never replacing it. Repair tactics ("deescalate", "rebuild trust") come only from pressure other people put on the agent, not from the heat its own attacks create. A tactic expires a few turns after its pressure passes. Plans are injected into the LLM's system prompt each turn.
 
 ### Simulation Settings
 
@@ -86,7 +86,19 @@ Agents maintain **multi-turn plans** with subgoals. Triggers (e.g., `trust_colla
 | `env_flags.external_leaks` | bool | One external shock (leak, deadline, news, defection) hits mid-run |
 | `env_flags.deadlock_risk` | bool | Agents are warned when the room nears deadlock |
 
-Every turn names who it is `directed_at`, so challenges, compromises and coalition signals move the target's emotions and the pairwise relationship matrix. A `walkaway` removes the agent from the room; the run ends when fewer than two remain.
+Every turn names who it is `directed_at`, so challenges, compromises and coalition signals move the target's emotions and the pairwise relationship matrix. The prompt defines every action, because the engine updates state from the label: `compromise` puts terms on the table and `agreement` accepts the proposal on the table.
+
+### How a Meeting Ends
+
+Outcomes come only from what the agents do, never from mood alone:
+
+| Ending | When |
+| ------ | ---- |
+| **Vote** (`end_condition: vote`) | Once about 40% of the turns remain, the chair calls the vote and asks each voter in turn (a holdout is asked once more). The motion carries when the yes share of the remaining voters reaches `threshold` (a fraction; a percentage like `60` is accepted). It fails once every voter has voted, or once a yes majority is out of reach. Voters default to every non-moderator. `vote` is only offered as an action when the meeting has a vote. |
+| **Explicit agreement** | Every remaining non-moderator has answered the latest `compromise` with `agreement`, and its author has not attacked it since. |
+| **Walkaway** | A `walkaway` removes the agent. The run ends when fewer than two non-moderators remain, or when everyone on one side (all champions or all detractors) has left. |
+| **Consensus** (`end_condition: consensus`) | High trust and low tension held for 3 turns **and** every party has recently offered or accepted something. Sustained deadlock ends as an impasse, or as a walkaway if someone actually left. |
+| **Timeout** | Turn limit reached without any of the above: no decision. Agents always see roughly how many turns are left. |
 
 ### Event Response Flow
 
@@ -239,7 +251,9 @@ python -m app.eval calibrate --labels labels.jsonl data/recordings   # judge vs 
 
 API: `GET /simulations/{id}/recording` (download), `POST /simulations/{id}/evaluate` (`{"judge": true, "judge_sample": 0.3}`).
 
-Set `EVAL_JUDGE_MODEL` to a different model than `OPENROUTER_MODEL`. Before trusting judge scores, hand-label about 50 turns (`{"simulation_id", "_index", "scores": {dim: 1-5}, "agenda_leak": bool}` per line) and run `calibrate`. It reports MAE, agreement and Spearman per dimension, and exits 0 only when the judge is trustworthy (within-1 agreement ≥ 0.8, MAE ≤ 1).
+**Tracing.** With `LANGSMITH_TRACING=true`, each simulation is one LangSmith trace: `boardroom_simulation` → `Turn N` → `bid · <agent>` / `speak · <agent>` LLM calls. Each judged recording is one `eval_judge · <simulation>` trace. If OpenRouter's own Broadcast to LangSmith is also enabled on the account, it adds a separate standalone "OpenRouter Request" trace for every call; turn it off, or point it at another project, to keep one tree per simulation.
+
+Set `EVAL_JUDGE_MODEL` (default `openai/gpt-4.1`) to a different model than `OPENROUTER_MODEL`. Before trusting judge scores, hand-label about 50 turns (`{"simulation_id", "_index", "scores": {dim: 1-5}, "agenda_leak": bool}` per line) and run `calibrate`. It reports MAE, agreement and Spearman per dimension, and exits 0 only when the judge is trustworthy (within-1 agreement ≥ 0.8, MAE ≤ 1).
 
 ## Verification
 

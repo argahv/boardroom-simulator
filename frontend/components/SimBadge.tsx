@@ -96,6 +96,7 @@ export function dispositionTone(actionType: string): BadgeTone {
     question:        "calibrating",
     challenge:       "skeptical",
     compromise:      "agreeable",
+    agreement:       "agreeable",
     coalition_signal:"teal",
     interrupt:       "locked",
     escalate:        "locked",

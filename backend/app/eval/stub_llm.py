@@ -64,8 +64,11 @@ class StubLLM:
             weights["compromise"] = weights.get("compromise", 0) + 0.3
         if "seek ALLIANCES" in system:
             weights["coalition_signal"] = weights.get("coalition_signal", 0) + 0.3
-        vote_now = "cast your vote now" in system
-        if vote_now:
+        # The vote cue now sits at the end of the last message. Like a real model, the stub
+        # sometimes ignores it, so the eval can see a vote that never completes.
+        cue = last.lower()
+        asked = "asking for your vote now" in cue
+        if (asked and self.rng.random() < 0.85) or ("cast your vote now" in cue and self.rng.random() < 0.6):
             weights = {"vote": 1.0}
         weights = {a: w for a, w in weights.items() if a in allowed_set and w > 0}
         if not weights:

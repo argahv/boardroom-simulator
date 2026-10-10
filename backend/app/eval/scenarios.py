@@ -8,6 +8,7 @@ produce enough data to decide (e.g. no high-anger turns occurred).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from statistics import mean
 from typing import Callable
 
 from app.eval import metrics as M
@@ -55,9 +56,9 @@ def _agent(id, name, role, stance, archetype=None, personality=None, agenda="", 
 
 
 def _cfg(subject, desc, stakeholders, *, mode="weighed_random", end=None, flags=None, scenario="debate",
-         voltage=60) -> SimulationConfig:
+         voltage=60, facts=None) -> SimulationConfig:
     return SimulationConfig(
-        subject=Subject(name=subject, description=desc),
+        subject=Subject(name=subject, description=desc, attributes=facts or {}),
         stakeholders=stakeholders,
         action_space=ActionSpace(),
         speaker_rules=SpeakerRules(mode=mode),
@@ -104,6 +105,15 @@ def low_repetition(max_self: float = 0.5) -> Expectation:
     return Expectation("low_repetition", "agents do not repeat themselves", check)
 
 
+def outcome_matches_acts() -> Expectation:
+    def check(rec, m):
+        o = m["outcome"]
+        ok = not o["unregistered_walkaway"] and not o["unregistered_vote"]
+        return ok, (f"outcome={o['outcome_type']} unregistered_walkaway={o['unregistered_walkaway']} "
+                    f"unregistered_vote={o['unregistered_vote']}")
+    return Expectation("outcome_matches_acts", "the ending records the walkouts and votes that happened", check)
+
+
 def no_artificial_consensus() -> Expectation:
     def check(rec, m):
         o = m["outcome"]
@@ -130,14 +140,17 @@ def _trust_collapse() -> SimulationConfig:
 
 
 def _forced_walkaway() -> SimulationConfig:
-    return _cfg("Acquisition Price", "Final round on the acquisition price", [
-        _agent("buyer", "Grant Hale", "Acquirer CEO", "champion", "agitator", _p(95, 10, 95),
-               agenda="Walk away unless the price drops below 400M"),
-        _agent("seller", "Iris Moon", "Founder", "detractor", "idealist", _p(70, 40, 95),
-               agenda="Will not sell below 550M"),
+    # Anchored numbers and an empty zone of agreement: $450M max vs $550M min.
+    return _cfg("Sale of Moon Labs", "Sell Moon Labs to Hale Corp at Hale's offer of $420M cash", [
+        _agent("buyer", "Grant Hale", "Hale Corp CEO (buyer)", "champion", "agitator", _p(95, 10, 95),
+               agenda="Your board caps the price at $450M. Paying more is worse for you than walking away."),
+        _agent("seller", "Iris Moon", "Moon Labs founder (seller)", "detractor", "idealist", _p(70, 40, 95),
+               agenda="You will not sell below $550M. Below that, walking away is better for you."),
         _agent("banker", "Paul Ng", "Banker", "moderator", "diplomat"),
     ], scenario="legal", voltage=95, end=TimeoutCondition(max_normal_turns=16),
-       flags={"hidden_motives": True, "deadlock_risk": True})
+       flags={"hidden_motives": True, "deadlock_risk": True},
+       facts={"Hale's current offer": "$420M cash", "Moon Labs' asking price": "$600M",
+              "Deadline": "exclusivity expires at the end of this meeting"})
 
 
 def _hidden_agenda() -> SimulationConfig:
@@ -227,9 +240,16 @@ def _pressure_check(rec, m):
 
 
 def _walkaway_or_brink(rec, m):
+    """A walkout, or a room still deadlocked at the end with nobody offering anything."""
     o = m["outcome"]
-    return (o["outcome_type"] == "walkaway" or o["max_deadlock_risk"] >= 0.6), \
-        f"outcome={o['outcome_type']} max_deadlock_risk={o['max_deadlock_risk']}"
+    if o["outcome_type"] == "walkaway":
+        return True, "walkaway"
+    snaps = rec.snapshots[-max(1, len(rec.snapshots) // 3):]
+    late_risk = mean(s["data"].get("deadlock_risk", 0) for s in snaps) if snaps else 0
+    late = rec.turns[-max(1, len(rec.turns) // 3):]
+    offers = sum(1 for t in late if t.get("action_type") in ("compromise", "agreement"))
+    return (late_risk >= 0.6 and offers == 0), \
+        f"outcome={o['outcome_type']} late_deadlock_risk={late_risk:.2f} late_offers={offers}"
 
 
 def _no_abrupt_walkaway(rec, m):
@@ -248,7 +268,16 @@ def _vote_resolved(rec, m):
 
 
 def _no_premature_votes(rec, m):
+    if not any(t.get("action_type") == "vote" for t in rec.turns):
+        return None, "no votes cast"
     return m["outcome"]["premature_votes"] == 0, f"premature={m['outcome']['premature_votes']}"
+
+
+def _votes_cast(rec, m):
+    r = m["outcome"]["votes_cast_after_call_rate"]
+    if r is None:
+        return None, "the vote was never called"
+    return r >= 0.75, f"{r:.0%} of voters voted after the call"
 
 
 def _shock_raises_tension(rec, m):
@@ -307,6 +336,7 @@ SCENARIOS: dict[str, Scenario] = {s.key: s for s in [
         no_invariant_violations()]),
     Scenario("vote_decision", "A vote settles the decision", _vote_decision, [
         Expectation("vote_resolved", "the run ends by a vote", _vote_resolved),
+        Expectation("votes_cast", "voters vote once the vote is called", _votes_cast),
         Expectation("no_premature_votes", "no votes in the first 20% of turns", _no_premature_votes),
         no_invariant_violations()]),
     Scenario("consensus_building", "Cooperative parties may agree — but only if earned", _consensus_building, [
@@ -332,3 +362,7 @@ SCENARIOS: dict[str, Scenario] = {s.key: s for s in [
         Expectation("fair_room", "no silent agents, gini <= 0.35", _fair_room),
         low_repetition(), no_invariant_violations()]),
 ]}
+
+# Every scenario: the recorded ending must agree with what people did in the room.
+for _sc in SCENARIOS.values():
+    _sc.expectations.append(outcome_matches_acts())

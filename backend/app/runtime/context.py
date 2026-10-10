@@ -27,7 +27,7 @@ from app.runtime.time_pressure import TimePressure
 from app.runtime.external_events import ExternalEventInjector
 
 DEFAULT_ACTIONS: list[str] = [
-    "statement", "question", "challenge", "compromise", "coalition_signal",
+    "statement", "question", "challenge", "compromise", "agreement", "coalition_signal",
     "interrupt", "escalate", "vote", "walkaway",
 ]
 
@@ -56,7 +56,7 @@ EXTERNAL_EVENT_TEMPLATES: list[dict[str, Any]] = [
     },
     {
         "kind": "news",
-        "content": "Breaking news has raised the stakes on '{subject}' — new information changes the picture.",
+        "content": "Breaking news: a major customer has publicly paused all orders until '{subject}' is resolved.",
         "social": {"tension": 0.08, "credibility": -0.05},
         "emotion": {"surprise": 0.3},
     },
@@ -80,24 +80,40 @@ def max_turns_for(config: SimulationConfig) -> int:
     return 20
 
 
-def uses_vote(config: SimulationConfig) -> bool:
+def vote_condition(config: SimulationConfig) -> VoteCondition | None:
     ec = config.end_condition
     if isinstance(ec, VoteCondition):
-        return True
+        return ec
     if isinstance(ec, HybridCondition):
-        return any(isinstance(c, VoteCondition) for c in ec.conditions)
-    return False
+        return next((c for c in ec.conditions if isinstance(c, VoteCondition)), None)
+    return None
+
+
+def uses_vote(config: SimulationConfig) -> bool:
+    return vote_condition(config) is not None
+
+
+def voters_of(config: SimulationConfig) -> list[str]:
+    """Who votes: the configured voters, or every non-moderator if none are listed."""
+    vc = vote_condition(config)
+    if vc is None:
+        return []
+    ids = {s.id for s in config.stakeholders}
+    voters = [v for v in vc.voters if v in ids]
+    return voters or [s.id for s in config.stakeholders if s.stance != "moderator"]
 
 
 def vote_phase(ctx: "SimulationContext") -> bool:
-    """The vote is called once 40% (at least 3) of the turns remain."""
+    """The vote is called once 40% of the turns remain, leaving room to poll every voter."""
     remaining = ctx.max_turns - ctx.turn_count
-    return remaining <= max(3, int(ctx.max_turns * 0.4))
+    return remaining <= max(3, len(voters_of(ctx.config)) + 2, int(ctx.max_turns * 0.4))
 
 
 def allowed_actions(config: SimulationConfig) -> list[str]:
+    # Offering "vote" where nothing tallies votes would let agents decide things the engine ignores.
+    base = [a for a in DEFAULT_ACTIONS if a != "vote" or uses_vote(config)]
     custom = [a.name for a in config.action_space.actions if a.name]
-    return DEFAULT_ACTIONS + [c for c in custom if c not in DEFAULT_ACTIONS]
+    return base + [c for c in custom if c not in base]
 
 
 def custom_action_deltas(config: SimulationConfig) -> dict[str, dict[str, float]]:
@@ -196,7 +212,7 @@ def build_context(
         goals.add_goal(s.id, goal_text, priority=3.0, source="initial")
         if s.hidden_agenda and ctx.flag("hidden_motives"):
             goals.add_goal(s.id, f"quietly advance: {s.hidden_agenda}", priority=2.5, source="hidden")
-        plans.create_plan(s.id, goal_text, created_turn=0)
+        plans.create_plan(s.id, goal_text, created_turn=0, source="initial")
         if hasattr(behavior_engine, "shift_focus"):
             behavior_engine.shift_focus(s.id, goal_text, 3)
         goals.has_goal_shifted(s.id)  # prime "last top goal" so the first real shift is detected

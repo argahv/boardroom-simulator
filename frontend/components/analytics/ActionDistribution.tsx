@@ -20,6 +20,7 @@ const ACTION_TYPES = [
   "question",
   "challenge",
   "compromise",
+  "agreement",
   "coalition_signal",
   "interrupt",
   "escalate",
@@ -32,6 +33,7 @@ const ACTION_LABELS: Record<string, string> = {
   question: "Question",
   challenge: "Challenge",
   compromise: "Compromise",
+  agreement: "Agreement",
   coalition_signal: "Coalition Signal",
   interrupt: "Interrupt",
   escalate: "Escalate",
@@ -49,6 +51,7 @@ const ACTION_COLORS = [
   "var(--color-chart-2)",
   "var(--color-chart-3)",
   "var(--color-chart-4)",
+  "var(--color-chart-5)",
 ];
 
 const STANCE_LABELS: Record<string, string> = {

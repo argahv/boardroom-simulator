@@ -136,6 +136,15 @@ def tendency_hint(archetype: str | None) -> str:
     arch = get_archetype(archetype)
     if arch is None or not arch.tendencies:
         return ""
-    ranked = sorted(arch.tendencies.items(), key=lambda kv: kv[1], reverse=True)
-    parts = ", ".join(f"{action} ({int(p * 100)}%)" for action, p in ranked)
-    return f"You are a {arch.name} ({arch.description}). Your natural tendencies: {parts}."
+    ranked = [a for a, _ in sorted(arch.tendencies.items(), key=lambda kv: kv[1], reverse=True)]
+    verbs = [_TENDENCY_VERBS.get(a, a.replace("_", " ")) for a in ranked[:3]]
+    article = "an" if arch.name[:1].lower() in "aeiou" else "a"
+    habits = verbs[0] if len(verbs) == 1 else ", ".join(verbs[:-1]) + " and " + verbs[-1]
+    return f"You are {article} {arch.name} ({arch.description}). By habit you {habits}."
+
+
+_TENDENCY_VERBS = {
+    "statement": "make your case", "question": "ask probing questions", "challenge": "challenge others' claims",
+    "compromise": "look for trade-offs", "agreement": "endorse good proposals",
+    "coalition_signal": "build alliances", "interrupt": "cut in on others", "escalate": "raise the stakes",
+}

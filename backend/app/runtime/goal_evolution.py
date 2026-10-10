@@ -17,7 +17,15 @@ class GoalState(BaseModel):
     decay_rate: float = Field(default=0.05, ge=0.0, le=1.0)
     ttl_turns: int = 50
     is_active: bool = True
+    trigger: str = ""  # the pressure that created this goal, if any
 
+
+# Pressure goals last this many turns after their trigger was last felt.
+PRESSURE_TTL = 3
+
+# Goals about repairing the room only make sense for someone under pressure from others,
+# not for the agent whose own attack raised the heat.
+REPAIR_GOALS = {"deescalate", "rebuild_trust"}
 
 TRIGGER_GOAL_MAP: dict[str, tuple[str, float]] = {
     "escalation_risk": ("deescalate", 4.0),
@@ -42,17 +50,31 @@ class GoalEvolution:
         return self._goals[agent_id]
 
     def add_goal(self, agent_id: str, goal_text: str, priority: float = 1.0,
-                 source: str = "initial", turn: int = 0) -> Self:
+                 source: str = "initial", turn: int = 0, trigger: str = "",
+                 ttl_turns: int = 50) -> Self:
         import uuid
         goal = GoalState(
             goal_id=uuid.uuid4().hex[:12], agent_id=agent_id,
             goal_text=goal_text, priority=priority, confidence=1.0,
             source=source, created_turn=turn, last_reinforced_turn=turn,
+            trigger=trigger, ttl_turns=ttl_turns,
         )
         self._agent_goals(agent_id).append(goal)
         return self
 
-    def update_priorities(self, agent_id: str, triggers: list[str]) -> Self:
+    def update_priorities(self, agent_id: str, triggers: list[str],
+                          received_pressure: bool | None = None) -> Self:
+        """Turn the agent's current pressures into goals.
+
+        ``received_pressure`` says whether others have recently been hostile to
+        this agent. When it is False, repair goals are not created: an agent's
+        own attack raising the heat is not a reason for that agent to back off.
+        None keeps the unconditional behaviour.
+        """
+        # A pressure goal stays alive while its trigger is still felt.
+        for goal in self._goals.get(agent_id, []):
+            if goal.is_active and goal.trigger and goal.trigger in triggers:
+                goal.last_reinforced_turn = self._turn
         # Highest-priority pressure first; at most one new plan per update so
         # simultaneous triggers do not create plans that the plan cap then
         # immediately abandons in arbitrary order.
@@ -61,10 +83,14 @@ class GoalEvolution:
         for trigger in ordered:
             if trigger in TRIGGER_GOAL_MAP:
                 text, prio = TRIGGER_GOAL_MAP[trigger]
+                if text in REPAIR_GOALS and received_pressure is False:
+                    continue
                 if not self._has_active_goal_text(agent_id, text):
-                    self.add_goal(agent_id, text, prio, source="pressure", turn=self._turn)
+                    self.add_goal(agent_id, text, prio, source="pressure", turn=self._turn,
+                                  trigger=trigger, ttl_turns=PRESSURE_TTL)
                     if self._plan_manager is not None and not planned:
-                        self._plan_manager.create_plan(agent_id, text, created_turn=self._turn)
+                        self._plan_manager.create_plan(agent_id, text, created_turn=self._turn,
+                                                       source="pressure")
                         planned = True
             elif trigger == "gaining_traction":
                 active = self.get_active_goals(agent_id, 10)
@@ -89,6 +115,9 @@ class GoalEvolution:
                 age = current_turn - goal.last_reinforced_turn
                 if age > goal.ttl_turns:
                     goal.is_active = False
+                    # The pressure has passed: drop the tactic it prompted.
+                    if goal.source == "pressure" and self._plan_manager is not None:
+                        self._plan_manager.abandon_plans_for(goal.agent_id, goal.goal_text)
                 else:
                     goal.priority = max(0.1, goal.priority - goal.decay_rate)
                     goal.confidence = max(0.1, goal.confidence - goal.decay_rate / 2)

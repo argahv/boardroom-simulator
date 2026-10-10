@@ -13,10 +13,11 @@ from app.models import (
     TerminationResult,
 )
 from app.runtime.space import SharedSpace
+from app.llm import traced_span
 from app.graph.driver import get_driver, neo4j_enabled
 from app.graph.writer import GraphWriter
 from app.runtime.postmortem_generator import PostmortemGenerator
-from app.runtime.context import uses_vote, vote_phase
+from app.runtime.context import uses_vote, vote_phase, voters_of, vote_condition
 
 logger = logging.getLogger(__name__)
 
@@ -55,57 +56,65 @@ class TimeoutChecker(BaseChecker):
 
 
 class VoteChecker(BaseChecker):
-    """Tally agent votes from action_type='vote'. Triggers when threshold met."""
-    def __init__(self, condition: VoteCondition) -> None:
+    """Tally agent votes from action_type='vote'.
+
+    The motion carries as soon as the yes share of the remaining voters reaches
+    the threshold. Once every remaining voter has a position (or a yes majority
+    is out of reach), the vote is closed and a motion short of the threshold
+    fails. If time runs out first, the outcome is no decision.
+    """
+    def __init__(self, condition: VoteCondition, max_turns: int | None = None) -> None:
         self.condition = condition
+        self.max_turns = max_turns if max_turns is not None else condition.max_turns
 
     async def check(self, ctx: TerminationContext) -> TerminationResult | None:
         if ctx.turn_count < 3:
             return None
+        from app.runtime.context import voters_of
+        departed = getattr(ctx.space, "departed", set())
+        voters = [v for v in voters_of(ctx.config) if v not in departed]
 
         # Latest vote per voter counts (people can change their mind).
         latest: dict[str, str] = {}
         for event in ctx.space.events:
             if event.get("type") == "turn" and event.get("action_type") == "vote":
                 agent = event.get("agent_id", "")
-                if agent not in self.condition.voters:
+                if agent not in voters:
                     continue
                 position = event.get("vote") or self._extract_vote_position(event.get("content", ""))
                 if position:
                     latest[agent] = position
 
-        vote_tally: dict[str, int] = {}
-        for position in latest.values():
-            vote_tally[position] = vote_tally.get(position, 0) + 1
+        n = len(voters)
+        yes = sum(1 for v in latest.values() if v == "yes")
+        no = sum(1 for v in latest.values() if v == "no")
+        abstain = sum(1 for v in latest.values() if v == "abstain")
+        breakdown = {"for": yes, "against": no, "abstain": abstain}
+        needed = self.condition.threshold
+        tally = f"{yes} for, {no} against, {abstain} abstaining"
 
-        total_voters = len(self.condition.voters)
-        breakdown = {
-            "for": vote_tally.get("yes", 0),
-            "against": vote_tally.get("no", 0),
-            "abstain": vote_tally.get("abstain", 0),
-        }
-        for position in ("yes", "no"):
-            count = vote_tally.get(position, 0)
-            if total_voters > 0 and count / total_voters >= self.condition.threshold:
-                carried = position == "yes"
-                return TerminationResult(
-                    reason="vote_majority",
-                    outcome_type="agreement" if carried else "rejected",
-                    summary=(f"Motion carried {count}-{total_voters - count}."
-                             if carried else f"Motion rejected {count}-{total_voters - count}."),
-                    confidence=count / total_voters,
-                    total_turns=ctx.turn_count,
-                    vote_breakdown=breakdown,
-                    agreed_issues=[{"position": position}],
-                )
-
-        # Hard cap fallback: check AFTER vote tally
-        if ctx.turn_count >= self.condition.max_turns:
+        if n and yes / n >= needed:
             return TerminationResult(
-                reason="vote_majority",
-                outcome_type="no_decision",
-                summary=f"Vote period ended after {self.condition.max_turns} turns without majority.",
-                total_turns=ctx.turn_count,
+                reason="vote_majority", outcome_type="agreement",
+                summary=f"Motion carried ({tally}).", confidence=yes / n,
+                total_turns=ctx.turn_count, vote_breakdown=breakdown,
+                agreed_issues=[{"position": "yes"}],
+            )
+        undecided = n - len(latest)
+        if n and latest and (undecided == 0 or (yes + undecided) / n < needed):
+            return TerminationResult(
+                reason="vote_majority", outcome_type="rejected",
+                summary=f"Motion failed ({tally}; needed {needed:.0%} of {n}).",
+                confidence=1 - yes / n, total_turns=ctx.turn_count, vote_breakdown=breakdown,
+                agreed_issues=[{"position": "no"}],
+            )
+
+        # Hard cap: time ran out before the vote was complete.
+        if ctx.turn_count >= self.max_turns:
+            return TerminationResult(
+                reason="vote_incomplete", outcome_type="no_decision",
+                summary=f"Time ran out with {len(latest)} of {n} votes cast ({tally}).",
+                total_turns=ctx.turn_count, vote_breakdown=breakdown,
             )
 
         return None
@@ -128,14 +137,20 @@ class SocialPhysicsChecker(BaseChecker):
         self.condition = condition
         self._consecutive_deadlock = 0
         self._consecutive_agreement = 0
+        self._last_turn: int | None = None
 
     async def check(self, ctx: TerminationContext) -> TerminationResult | None:
         if ctx.behavior_engine is None or ctx.turn_count < 3:
             return None
+        # The scheduler checks before and after each turn; count each turn once.
+        if ctx.turn_count == self._last_turn:
+            return None
+        self._last_turn = ctx.turn_count
 
         sens = self.SENSITIVITY_MAP.get(self.condition.sensitivity, self.SENSITIVITY_MAP["balanced"])
         state = ctx.behavior_engine.get_public_state()
-        sp_entries = state.get("social_physics", {})
+        departed = getattr(ctx.space, "departed", set())
+        sp_entries = {a: v for a, v in state.get("social_physics", {}).items() if a not in departed}
 
         if not sp_entries:
             return None
@@ -147,7 +162,8 @@ class SocialPhysicsChecker(BaseChecker):
         if mode in ("both", "agreement_only"):
             if avg_trust >= sens["trust_threshold"] and avg_tension <= sens["tension_low"]:
                 self._consecutive_agreement += 1
-                if self._consecutive_agreement >= 3:
+                # A warm room is not a deal: every party must also have said yes to something.
+                if self._consecutive_agreement >= 3 and _all_principals_conceded(ctx):
                     return TerminationResult(
                         reason="consensus",
                         outcome_type="agreement",
@@ -162,11 +178,11 @@ class SocialPhysicsChecker(BaseChecker):
             if avg_tension >= sens["tension_high"] or avg_trust <= sens["trust_low"]:
                 self._consecutive_deadlock += 1
                 if self._consecutive_deadlock >= 5:
-                    # Find walkaway party if any
+                    # Only an actual walkout is a walkaway; otherwise the room is at an impasse.
                     walkaway = self._find_walkaway(ctx)
                     return TerminationResult(
-                        reason="deadlock_walkaway",
-                        outcome_type="walkaway",
+                        reason="deadlock_walkaway" if walkaway else "deadlock",
+                        outcome_type="walkaway" if walkaway else "impasse",
                         summary=f"Deadlock detected: tension={avg_tension:.2f}, trust={avg_trust:.2f}.",
                         total_turns=ctx.turn_count,
                         walkaway_party=walkaway,
@@ -184,15 +200,47 @@ class SocialPhysicsChecker(BaseChecker):
         return None
 
 
+def _principals(ctx: TerminationContext) -> list:
+    """Stakeholders still in the room who negotiate for themselves (moderators excluded)."""
+    departed = getattr(ctx.space, "departed", set())
+    return [s for s in ctx.config.stakeholders if s.id not in departed and s.stance != "moderator"]
+
+
+HOSTILE_ACTIONS = {"challenge", "escalate", "interrupt", "walkaway"}
+
+
+def _all_principals_conceded(ctx: TerminationContext, window: int | None = None) -> bool:
+    """Every remaining principal made a conciliatory move recently and nobody just objected."""
+    principals = {s.id for s in _principals(ctx)}
+    turns = [e for e in ctx.space.events if e.get("type") == "turn" and e.get("agent_id") in principals]
+    recent = turns[-(window or 2 * max(1, len(principals))):]
+    if not recent or recent[-1].get("action_type") in HOSTILE_ACTIONS:
+        return False
+    conceded = {t["agent_id"] for t in recent
+                if t.get("action_type") in ("agreement", "compromise")
+                or (t.get("action_type") == "vote" and t.get("vote") == "yes")}
+    return principals <= conceded
+
+
 class WalkawayChecker(BaseChecker):
-    """Always active: the negotiation ends once fewer than two parties remain."""
+    """Always active: the negotiation ends when a side has left.
+
+    That is when fewer than two principals remain (a moderator alone cannot keep
+    a deal alive), or when everyone who argued for, or everyone who argued
+    against, the proposal has walked out.
+    """
 
     async def check(self, ctx: TerminationContext) -> TerminationResult | None:
         departed = getattr(ctx.space, "departed", set())
         if not departed:
             return None
-        remaining = [s for s in ctx.config.stakeholders if s.id not in departed]
-        if len(remaining) >= 2:
+        principals = _principals(ctx)
+        side_gone = False
+        for stance in ("champion", "detractor"):
+            side = [s for s in ctx.config.stakeholders if s.stance == stance]
+            if side and all(s.id in departed for s in side):
+                side_gone = True
+        if len(principals) >= 2 and not side_gone:
             return None
         names = [s.name for s in ctx.config.stakeholders if s.id in departed]
         last = None
@@ -206,6 +254,47 @@ class WalkawayChecker(BaseChecker):
             summary=f"Negotiation collapsed: {', '.join(names)} walked out.",
             total_turns=ctx.turn_count,
             walkaway_party=last,
+        )
+
+
+class ExplicitAgreementChecker(BaseChecker):
+    """Ends the meeting when every remaining principal has accepted the proposal on the table.
+
+    The proposal is the latest compromise. Its author must not have attacked it
+    since, and every other principal's latest word on it must be an agreement.
+    Mood alone never ends a negotiation here; only what people said yes to.
+    """
+
+    async def check(self, ctx: TerminationContext) -> TerminationResult | None:
+        principals = _principals(ctx)
+        if len(principals) < 2:
+            return None
+        ids = {s.id for s in principals}
+        turns = [e for e in ctx.space.events if e.get("type") == "turn"]
+        last_offer = next((i for i in range(len(turns) - 1, -1, -1)
+                           if turns[i].get("action_type") == "compromise"), None)
+        if last_offer is None:
+            return None
+        offer = turns[last_offer]
+        proposer = offer.get("agent_id")
+        after = [t for t in turns[last_offer + 1:] if t.get("agent_id") in ids]
+        for pid in ids:
+            own = [t for t in after if t.get("agent_id") == pid]
+            if pid == proposer:
+                if any(t.get("action_type") in HOSTILE_ACTIONS for t in own):
+                    return None
+                continue
+            if not own or own[-1].get("action_type") != "agreement":
+                return None
+        name = next((s.name for s in ctx.config.stakeholders if s.id == proposer), proposer)
+        text = str(offer.get("content", ""))
+        return TerminationResult(
+            reason="explicit_agreement",
+            outcome_type="agreement",
+            summary=f"Every party accepted {name}'s proposal: \"{text[:200]}\"",
+            confidence=1.0,
+            total_turns=ctx.turn_count,
+            agreed_issues=[{"proposal": text, "proposed_by": proposer}],
         )
 
 
@@ -291,6 +380,9 @@ class EndConditionRegistry:
     def build_checkers(config: SimulationConfig, llm: Any = None) -> list[BaseChecker]:
         checkers: list[BaseChecker] = [WalkawayChecker()]
         ec = config.end_condition
+        # Outside a formal vote, a room can still settle by everyone explicitly accepting a proposal.
+        if not uses_vote(config):
+            checkers.append(ExplicitAgreementChecker())
 
         if isinstance(ec, TimeoutCondition):
             checkers.append(TimeoutChecker(ec))
@@ -306,7 +398,7 @@ class EndConditionRegistry:
         elif isinstance(ec, HybridCondition):
             for sub in ec.conditions:
                 if isinstance(sub, VoteCondition):
-                    checkers.append(VoteChecker(sub))
+                    checkers.append(VoteChecker(sub, max_turns=ec.max_turns))  # the hybrid's cap rules
                 elif isinstance(sub, ConsensusCondition):
                     checkers.append(SocialPhysicsChecker(sub))
                 elif isinstance(sub, JudgeCondition):
@@ -351,6 +443,7 @@ class Scheduler:
         self._last_speaker: str | None = None
         self._pending_reply: str | None = None
         self._vote_called = False
+        self._polled: dict[str, int] = {}
         self._last_spoke_turn: dict[str, int] = {}
         self._processed_index = 0
         import random as _random
@@ -384,50 +477,12 @@ class Scheduler:
 
             await self._apply_environment()
 
-            winner = await self._resolve_next_speaker()
-            if winner is None:
-                break
-
-            await self.space.publish({
-                "type": "system",
-                "content": f"{self._name(winner)} has the floor.",
-                "agent_id": "__scheduler__",
-                "granted_to": winner,
-                "bids": {self._name(a): u for a, u in getattr(self, "_last_bids", {}).items()},
-                "bid_details": getattr(self, "_last_bid_details", {}),
-                "turn_number": self.turn_count,
-            })
-
-            start_index = len(self.space.events)
-            await self.space.grant_floor(winner)
-            logger.info("Turn %d — %s has the floor", self.turn_count + 1, self._name(winner), extra={"turn": self.turn_count + 1, "speaker": winner, "event": "turn_granted"})
-
-            turn = await self._wait_for_turn(winner, timeout=app_config.TURN_TIMEOUT_SECONDS, start_index=start_index)
-            if turn is None:
-                logger.warning("Agent %s timed out, skipping", winner, extra={"agent": winner, "turn": self.turn_count, "event": "agent_timeout"})
-                self.space.release_floor()
-                await self.space.publish({
-                    "type": "system", "subtype": "turn_timeout", "agent_id": "__scheduler__",
-                    "content": f"{self._name(winner)} did not respond in time.", "timed_out": winner,
-                })
-                self.turn_count += 1
-                self._sync_context()
-                continue
-            self._processed_index = max(self._processed_index, turn["_index"] + 1)
-
-            await self._update_dynamics(turn)
-            self._last_speaker = winner
-            self._last_spoke_turn[winner] = self.turn_count
-
-            await self._publish_snapshot()
-
-            self.turn_count += 1
-            self._sync_context()
-
-            # Check termination AFTER turn
-            result = await self._check_all()
-            if result is not None:
-                self._termination_result = result
+            # One trace span per turn: the bids and the speech of this turn nest under it.
+            with traced_span(f"Turn {self.turn_count + 1}", inputs={"turn": self.turn_count + 1}) as span:
+                self.space.trace_parent = span
+                keep_going = await self._play_turn(span)
+            self.space.trace_parent = None
+            if not keep_going:
                 break
 
         # ── handle termination ─────────────────────────────────────
@@ -468,6 +523,61 @@ class Scheduler:
         })
         self.space.shutdown()
 
+    async def _play_turn(self, span: Any = None) -> bool:
+        """Give the floor to one speaker and process their turn. False when the meeting is over."""
+        winner = await self._resolve_next_speaker()
+        if winner is None:
+            return False
+
+        await self.space.publish({
+            "type": "system",
+            "content": f"{self._name(winner)} has the floor.",
+            "agent_id": "__scheduler__",
+            "granted_to": winner,
+            "bids": {self._name(a): u for a, u in getattr(self, "_last_bids", {}).items()},
+            "bid_details": getattr(self, "_last_bid_details", {}),
+            "turn_number": self.turn_count,
+        })
+
+        start_index = len(self.space.events)
+        await self.space.grant_floor(winner)
+        logger.info("Turn %d — %s has the floor", self.turn_count + 1, self._name(winner), extra={"turn": self.turn_count + 1, "speaker": winner, "event": "turn_granted"})
+
+        turn = await self._wait_for_turn(winner, timeout=app_config.TURN_TIMEOUT_SECONDS, start_index=start_index)
+        if turn is None:
+            logger.warning("Agent %s timed out, skipping", winner, extra={"agent": winner, "turn": self.turn_count, "event": "agent_timeout"})
+            self.space.release_floor()
+            await self.space.publish({
+                "type": "system", "subtype": "turn_timeout", "agent_id": "__scheduler__",
+                "content": f"{self._name(winner)} did not respond in time.", "timed_out": winner,
+            })
+            if span is not None:
+                span.add_outputs({"speaker": self._name(winner), "timed_out": True})
+            self.turn_count += 1
+            self._sync_context()
+            return True
+        self._processed_index = max(self._processed_index, turn["_index"] + 1)
+        if span is not None:
+            span.add_outputs({"speaker": self._name(winner), "action_type": turn.get("action_type"),
+                              "directed_at": self._name(turn["directed_at"]) if turn.get("directed_at") else None,
+                              "content": turn.get("content"), "bids": getattr(self, "_last_bids", {})})
+
+        await self._update_dynamics(turn)
+        self._last_speaker = winner
+        self._last_spoke_turn[winner] = self.turn_count
+
+        await self._publish_snapshot()
+
+        self.turn_count += 1
+        self._sync_context()
+
+        # Check termination AFTER turn
+        result = await self._check_all()
+        if result is not None:
+            self._termination_result = result
+            return False
+        return True
+
     def _sync_context(self) -> None:
         if self.context is not None:
             self.context.turn_count = self.turn_count
@@ -495,9 +605,13 @@ class Scheduler:
                             emotion={"fear": 0.05 if label == "half" else 0.1})
         if not self._vote_called and uses_vote(self.config) and vote_phase(ctx):
             self._vote_called = True
+            subject = self.config.subject
+            motion = subject.description or subject.name
+            vc = vote_condition(self.config)
             await self.space.publish({
                 "type": "system", "subtype": "vote_called", "agent_id": "__scheduler__",
-                "content": "The chair calls the vote: each voter should now cast yes, no or abstain.",
+                "content": (f"The chair calls the vote on the motion: \"{motion}\". Each voter will be asked "
+                            f"for yes, no or abstain; it passes with {vc.threshold:.0%} yes."),
             })
         if ctx.external_events is not None:
             event = ctx.external_events.check(self.turn_count)
@@ -508,6 +622,16 @@ class Scheduler:
                 })
                 if self.behavior_engine is not None and hasattr(self.behavior_engine, "apply_shock"):
                     self.behavior_engine.apply_shock(social=event.get("social"), emotion=event.get("emotion"))
+
+    def _received_pressure(self, speaker: str, action_type: str) -> dict[str, bool]:
+        """Who has been on the receiving end of hostility in the last two turns."""
+        recent = [e for e in self.space.events if e.get("type") == "turn"][-2:]
+        out = {s.id: any(t.get("directed_at") == s.id and t.get("action_type") in HOSTILE_ACTIONS
+                         for t in recent)
+               for s in self.config.stakeholders}
+        if action_type in HOSTILE_ACTIONS:
+            out[speaker] = False  # on the attack, not under it
+        return out
 
     async def _process_external_turns(self) -> None:
         """Run human-injected turns through the dynamics so agents react to them."""
@@ -581,6 +705,14 @@ class Scheduler:
         self._last_bid_details = {}
         if not self._active_ids():
             return None
+        voter = self._next_roll_call()
+        if voter is not None:
+            await self.space.publish({
+                "type": "system", "subtype": "roll_call", "agent_id": "__scheduler__",
+                "content": f"The chair asks {self._name(voter)} for their vote.",
+                "target_agent": voter,
+            })
+            return voter
         mode = self.config.speaker_rules.mode
         if mode == "moderator_led":
             await self._announce_turn()
@@ -592,6 +724,24 @@ class Scheduler:
             return await self._freeform()
         else:
             return await self._highest_bid()
+
+    ROLL_CALL_ASKS = 2  # a voter who answers without voting is asked once more
+
+    def _next_roll_call(self) -> str | None:
+        """Once the vote is called, the chair asks each voter who has not voted, in order."""
+        if not self._vote_called:
+            return None
+        voted = {e.get("agent_id") for e in self.space.events
+                 if e.get("type") == "turn" and e.get("action_type") == "vote"}
+        active = set(self._active_ids())
+        pending = [v for v in voters_of(self.config)
+                   if v in active and v not in voted and self._polled.get(v, 0) < self.ROLL_CALL_ASKS]
+        # Everyone is asked once before anyone is asked twice; never the same person twice in a row.
+        pending.sort(key=lambda v: self._polled.get(v, 0))
+        voter = next((v for v in pending if v != self._last_speaker), None)
+        if voter is not None:
+            self._polled[voter] = self._polled.get(voter, 0) + 1
+        return voter
 
     async def _announce_turn(self) -> None:
         await self.space.publish({
@@ -740,8 +890,10 @@ class Scheduler:
                 turn=self.turn_count,
             )
             ctx.goals.decay_all(self.turn_count)
+            received = self._received_pressure(speaker, action_type)
             for s in self.config.stakeholders:
-                ctx.goals.update_priorities(s.id, triggers_by_agent.get(s.id, []))
+                ctx.goals.update_priorities(s.id, triggers_by_agent.get(s.id, []),
+                                            received_pressure=received.get(s.id, False))
                 if ctx.goals.has_goal_shifted(s.id):
                     top = ctx.goals.get_active_goals(s.id, 1)
                     if top and self.behavior_engine is not None and hasattr(self.behavior_engine, "shift_focus"):

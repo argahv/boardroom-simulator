@@ -522,7 +522,7 @@ class TestActionTypeExpansion:
         assert action == "walkaway"
 
     def test_all_action_types(self):
-        expected = {"statement", "question", "challenge", "compromise",
+        expected = {"statement", "question", "challenge", "compromise", "agreement",
                      "coalition_signal", "interrupt", "escalate", "vote", "walkaway"}
         from typing import get_args
         actual = set(get_args(ActionType))

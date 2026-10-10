@@ -153,14 +153,20 @@ export default function NewSimulationPage() {
     setPersonas((prev) => prev.filter((p) => p.id !== id));
   };
 
+  // Moderators run the vote rather than cast one; the backend wants the threshold as a fraction.
+  const voterIds = () => {
+    const principals = personas.filter((p) => p.stance !== "moderator").map((p) => p.id);
+    return principals.length ? principals : personas.map((p) => p.id);
+  };
+
   const buildEndCondition = (): EndCondition => {
     if (endConditionType === "timeout") return { type: "timeout", max_normal_turns: maxTurns };
-    if (endConditionType === "vote") return { type: "vote", voters: personas.map((p) => p.id), threshold: thresholdPct, max_turns: maxTurns };
+    if (endConditionType === "vote") return { type: "vote", voters: voterIds(), threshold: thresholdPct / 100, max_turns: maxTurns };
     if (endConditionType === "judge") return { type: "judge", judge_id: judgePersonaId || personas[0]?.id || "", criteria: judgeCriteria };
     if (endConditionType === "consensus") return { type: "consensus", sensitivity: consensusSensitivity, detection_mode: consensusDetectionMode, max_turns: maxTurns };
     // hybrid: enable selected sub-conditions
     const subs: (VoteCondition | ConsensusCondition | JudgeCondition)[] = [];
-    if (hybridVote) subs.push({ type: "vote", voters: personas.map((p) => p.id), threshold: 0.5, max_turns: maxTurns });
+    if (hybridVote) subs.push({ type: "vote", voters: voterIds(), threshold: thresholdPct / 100, max_turns: maxTurns });
     if (hybridConsensus) subs.push({ type: "consensus", sensitivity: "balanced", detection_mode: "both", max_turns: maxTurns });
     if (hybridJudge) subs.push({ type: "judge", judge_id: personas[0]?.id ?? "", criteria: [] });
     return { type: "hybrid", conditions: subs, max_turns: maxTurns };
@@ -857,7 +863,7 @@ export default function NewSimulationPage() {
                   <div className="rounded-xl bg-canvas/40 border border-hairline p-5 space-y-4">
                     <p className="text-xs text-muted/70">Enable multiple conditions. First to trigger wins.</p>
                     {([
-                      { key: hybridVote as boolean, set: setHybridVote, label: "Vote", desc: "Tally votes with 60% threshold" },
+                      { key: hybridVote as boolean, set: setHybridVote, label: "Vote", desc: `Tally votes with ${thresholdPct}% threshold` },
                       { key: hybridConsensus as boolean, set: setHybridConsensus, label: "Consensus", desc: "Social physics detection (balanced)" },
                       { key: hybridJudge as boolean, set: setHybridJudge, label: "Judge", desc: "LLM judge evaluation" },
                     ] as const).map((opt) => (

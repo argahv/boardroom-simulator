@@ -8,10 +8,11 @@ from typing import Any, Callable
 
 from app import config as app_config
 from app.knowledge import get_knowledge_store
+from app.llm import trace_kwargs, under_run
 from app.models import AgentStance, SimulationConfig, AgentConfig
 from app.runtime.space import SharedSpace
 from app.runtime.archetypes import tendency_hint
-from app.runtime.context import allowed_actions, uses_vote, vote_phase
+from app.runtime.context import allowed_actions, uses_vote, vote_phase, vote_condition, voters_of
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,26 @@ LLMFunc = Callable[
     [list[dict[str, Any]], float, str | None, int | None, str | None],
     tuple[str, bool, dict[str, Any]],
 ]
+
+# How many recent turns the agent sees verbatim.
+TRANSCRIPT_TURNS = 12
+
+# Room events the agent sees in its transcript.
+ROOM_EVENT_SUBTYPES = ("external_event", "departure", "vote_called", "roll_call", "time_pressure")
+
+# What each action means; the engine updates state from these labels, so the model must know them.
+ACTION_GLOSSARY = {
+    "statement": "make or develop your own case",
+    "question": "ask someone a genuine question",
+    "challenge": "dispute someone's claim or proposal",
+    "compromise": "put concrete terms on the table that meet others partway (an offer or counter-offer)",
+    "agreement": "accept the proposal currently on the table (say which one)",
+    "coalition_signal": "openly side with someone or propose working together",
+    "interrupt": "cut in to stop or redirect the last speaker",
+    "escalate": "raise the stakes: an ultimatum, a threat, going over someone's head",
+    "vote": "cast your vote on the motion once the vote is called",
+    "walkaway": "leave the negotiation for good; only when staying is worse for you than having no deal",
+}
 
 # Actions that are normally aimed at a specific person.
 TARGETED_ACTIONS = {"challenge", "question", "interrupt", "compromise", "coalition_signal", "escalate", "agreement"}
@@ -201,40 +222,61 @@ class AgentRuntime:
         if not hasattr(self, 'llm') or self.llm is None:
             self._last_strategy_source = "none"
             return None
+        turns = [e for e in self.memory if e.get("type") == "turn"]
+        if turns and turns[-1].get("agent_id") == self.agent_id:
+            # The scheduler never gives the floor twice in a row; nothing to judge.
+            self._last_strategy_source = "skipped_last_speaker"
+            return None
         recent_context = ""
-        for e in self.memory[-8:]:
-            if e.get("type") == "turn":
-                to = f" → {self._resolve_name(e['directed_at'])}" if e.get("directed_at") else ""
-                recent_context += (f"[{e.get('agent_name', e.get('speaker', ''))}{to}]: "
-                                   f"{e.get('content', '')[:120]}\n")
+        for e in turns[-6:]:
+            to = f" → {self._resolve_name(e['directed_at'])}" if e.get("directed_at") else ""
+            recent_context += (f"[{e.get('agent_name', e.get('speaker', ''))}{to}] ({e.get('action_type')}): "
+                               f"{_clip(e.get('content', ''), 240)}\n")
+        facts = []
+        last = turns[-1] if turns else None
+        if last is not None and last.get("directed_at") == self.agent_id:
+            facts.append(f"{self._resolve_name(last.get('agent_id', ''))} just addressed you "
+                         f"({last.get('action_type')}).")
+        facts.append(f"You last spoke {self._turns_since_spoke()} turns ago." if any(
+            t.get("agent_id") == self.agent_id for t in turns) else "You have not spoken yet.")
         goal_line = ""
         if self.context is not None:
+            facts.append(f"About {max(0, self.context.max_turns - self.context.turn_count)} turns are left.")
+            if (uses_vote(self.space.config) and vote_phase(self.context) and not self._has_voted()
+                    and self.agent_id in voters_of(self.space.config)):
+                facts.append("The vote has been called and you have not voted.")
             top = self.context.goals.get_active_goals(self.agent_id, 1)
             if top:
                 goal_line = f"Your current priority: {top[0].goal_text.replace('_', ' ')}. "
+        hidden = self._hidden_agenda()
         strategy_prompt = [
             {"role": "system", "content": (
                 f"You are {self.config.name}, {self.config.role}. "
                 f"Your stance: {self.config.stance}. "
                 f"Subject: {self.space.config.subject.name}. {goal_line}"
-                f"Your hidden agenda: {self._hidden_agenda()}."
+                + (f"Your hidden agenda: {hidden}." if hidden != "(none)" else "")
             )},
             {"role": "user", "content": (
                 f"Recent discussion:\n{recent_context or '(nothing yet)'}\n"
-                f"On a scale of 0-100, how strategically important is it for you ({self.config.name}) "
-                f"to speak RIGHT NOW? Consider your goals, your alliances, the current speaker, "
-                f"and the topic. Return ONLY a number between 0 and 100."
+                + " ".join(facts) + "\n"
+                f"How much does it matter for you ({self.config.name}) to speak RIGHT NOW rather than let "
+                "others go first? Use the whole scale: 0-20 = others are making your case or you have "
+                "nothing to add; 40-60 = you have a useful point; 80-100 = you were directly attacked or "
+                "asked, or this is a decisive moment for your goal. Return ONLY a number between 0 and 100."
             )},
         ]
         try:
             extra = {"model": app_config.STRATEGY_MODEL} if app_config.STRATEGY_MODEL else {}
-            raw_text, mocked, metadata = await asyncio.wait_for(
-                self.llm(strategy_prompt, temperature=0.1,
-                         simulation_id=self.simulation_id,
-                         turn_index=self._turn_count,
-                         agent_id=self.agent_id, **extra),
-                timeout=app_config.STRATEGY_SCORE_TIMEOUT,
-            )
+            extra.update(trace_kwargs(self.llm, f"bid · {self.config.name}",
+                                      {"agent_id": self.agent_id, "kind": "strategy_score"}))
+            with under_run(self.space.trace_parent):
+                raw_text, mocked, metadata = await asyncio.wait_for(
+                    self.llm(strategy_prompt, temperature=0.1,
+                             simulation_id=self.simulation_id,
+                             turn_index=self._turn_count,
+                             agent_id=self.agent_id, **extra),
+                    timeout=app_config.STRATEGY_SCORE_TIMEOUT,
+                )
             match = re.search(r"\d{1,3}", raw_text or "")
             self._last_strategy_source = "llm" if match else "unparsed"
             if self.context is not None:
@@ -261,8 +303,9 @@ class AgentRuntime:
         """Advance active plans based on the action just taken."""
         if self.plan_manager is None:
             return
-        completed = self.plan_manager.evaluate_turn(
-            self.agent_id, turn.get("action_type", ""), turn=self._turn_count)
+        # Plans are created on the room's turn clock, so staleness is measured on it too.
+        now = self.context.turn_count if self.context is not None else self._turn_count
+        completed = self.plan_manager.evaluate_turn(self.agent_id, turn.get("action_type", ""), turn=now)
         if completed:
             logger.info("Agent %s completed subgoals: %s", self.agent_id, completed,
                         extra={"agent": self.agent_id, "event": "subgoal_completed"})
@@ -276,55 +319,57 @@ class AgentRuntime:
 
     async def _build_system_prompt(self) -> str:
         stance_descriptions = {
-            "champion": "You are a STRONG supporter of this position. You MUST defend it enthusiastically against any criticism. You believe in it completely.",
-            "detractor": "You are a STRONG opponent of this position. You MUST challenge and criticize it at every opportunity. You believe it is fundamentally wrong.",
-            "neutral": "You maintain a balanced, objective viewpoint. You weigh pros and cons without committing to either side.",
-            "moderator": "You moderate the discussion. You keep time, ask clarifying questions, and ensure everyone gets a turn. You do NOT take sides.",
-            "wildcard": "You are unpredictable. Your stance shifts based on the conversation.",
+            "champion": ("You start as a strong supporter of the proposal. Push for it and defend it, but you are "
+                         "a professional: you can accept amendments that protect its core."),
+            "detractor": ("You start firmly opposed to the proposal. Press your objections hard; you only move if "
+                          "your specific concerns are concretely addressed or you win real concessions."),
+            "neutral": ("You have not made up your mind. Weigh the arguments on their merits; when one side "
+                        "convinces you, or when a decision is called, commit to a position (abstain only if "
+                        "you are genuinely torn)."),
+            "moderator": ("You chair the discussion. You keep time, ask clarifying questions, test possible middle "
+                          "ground and make sure everyone is heard. You do NOT take sides."),
+            "wildcard": "You are unpredictable. Your position shifts with the conversation and with what serves you.",
         }
-        stance_text = stance_descriptions.get(self.config.stance, "neutral")
+        stance_text = stance_descriptions.get(self.config.stance, stance_descriptions["neutral"])
 
-        # Format attributes as structured key facts
-        attrs = self.space.config.subject.attributes
-        if attrs:
-            attributes_formatted = "\n".join(f"- {k}: {v}" for k, v in attrs.items())
+        subject = self.space.config.subject
+        attributes_formatted = "\n".join(f"- {k}: {v}" for k, v in (subject.attributes or {}).items())
+        evidence_formatted = "\n".join(f"- {e}" for e in (subject.evidence_items or []))
+        hidden = self._hidden_agenda()
+        temperament = _temperament(self.config.personality)
+
+        if self.system_prompt_template:
+            template = self.system_prompt_template
         else:
-            attributes_formatted = "None"
-
-        # Format evidence items as bullet list
-        ev = self.space.config.subject.evidence_items
-        if ev:
-            evidence_formatted = "\n".join(f"- {e}" for e in ev)
-        else:
-            evidence_formatted = "None"
-
-        template = (
-            self.system_prompt_template
-            or (
-                "You are {name}, {role}. {backstory}\n"
-                "Your stance: {stance}.\n{stance_description}\n"
-                "Current subject: {subject_name} — {subject_description}\n"
-                "Key facts:\n{attributes_formatted}\n"
-                "Evidence:\n{evidence_formatted}\n"
-                "What's at stake: {stakes_description}\n"
-                "Hidden agenda: {hidden_agenda}\n"
-                "Personality: aggressiveness={aggressiveness}, empathy={empathy}, "
-                "stubbornness={stubbornness}, verbosity={verbosity}\n"
-                "You are in a high-stakes group negotiation. Speak in character."
-            )
-        )
+            # Only sections with content, so the model never reads "Key facts: None".
+            lines = ["You are {name}, {role}." + (" {backstory}" if self.config.backstory else ""),
+                     "Your stance: {stance}. {stance_description}",
+                     "The proposal under discussion: {subject_name} — {subject_description}"]
+            if attributes_formatted:
+                lines.append("Key facts:\n{attributes_formatted}")
+            if evidence_formatted:
+                lines.append("Evidence:\n{evidence_formatted}")
+            if subject.stakes_description:
+                lines.append("What's at stake: {stakes_description}")
+            if hidden != "(none)":
+                lines.append("Hidden agenda: {hidden_agenda}")
+            if temperament:
+                lines.append("Temperament: {temperament}")
+            lines.append("You are in a high-stakes group negotiation. Speak in character.")
+            template = "\n".join(lines)
         fields = dict(
             name=self.config.name,
             role=self.config.role,
-            backstory=self.config.backstory or "(no specific backstory)",
+            backstory=self.config.backstory or "",
             stance=self.config.stance,
             stance_description=stance_text,
-            subject_name=self.space.config.subject.name,
-            subject_description=self.space.config.subject.description,
+            subject_name=subject.name,
+            subject_description=subject.description,
             attributes_formatted=attributes_formatted,
             evidence_formatted=evidence_formatted,
-            stakes_description=self.space.config.subject.stakes_description or "None",
-            hidden_agenda=self._hidden_agenda(),
+            stakes_description=subject.stakes_description or "",
+            hidden_agenda=hidden if hidden != "(none)" else "",
+            temperament=temperament,
             aggressiveness=self.config.personality.aggressiveness,
             empathy=self.config.personality.empathy,
             stubbornness=self.config.personality.stubbornness,
@@ -339,10 +384,10 @@ class AgentRuntime:
             for k, v in fields.items():
                 system_content = system_content.replace("{" + k + "}", str(v))
 
-        if self._hidden_agenda() != "(none)":
+        if hidden != "(none)":
             system_content += (
-                "\nPursue your hidden agenda subtly. Never state it outright; let it shape "
-                "what you push for and what you resist."
+                "\nKeep your hidden agenda private: never state it outright, but let it shape what you push "
+                "for and resist, and never agree to terms that violate it."
             )
 
         hint = tendency_hint(getattr(self.config, "archetype", None))
@@ -351,6 +396,10 @@ class AgentRuntime:
 
         if self.context is not None:
             goals = self.context.goals.get_active_goals(self.agent_id, 3)
+            # A hidden agenda does not stop mattering because louder pressures arrived.
+            hidden_goals = [g for g in self.context.goals.get_all_goals(self.agent_id)
+                            if g.source == "hidden" and g.is_active and g not in goals]
+            goals = goals + hidden_goals
             if goals:
                 system_content += "\n\nYour current priorities (most important first):\n" + "\n".join(
                     f"- {g.goal_text.replace('_', ' ')}" for g in goals)
@@ -365,7 +414,7 @@ class AgentRuntime:
         if self.private_thought is not None:
             private = self.private_thought.get_private(self.agent_id)
             if private:
-                system_content += f"\n\nYour private read of the room after your last turn: {private[:300]}"
+                system_content += f"\n\nYour private reasoning on your last turn: {_clip(private, 400)}"
 
         # ── Knowledge Base injection (Chroma RAG) ──
         # Check per-agent override first, then global config
@@ -436,25 +485,31 @@ class AgentRuntime:
             return ""
         parts: list[str] = []
         summary = self.memory_system.get_summary(self.agent_id)
-        red_lines = summary.get("red_lines", [])[-2:]
-        concessions = summary.get("concessions", [])[-2:]
+        red_lines = [_clip(r, 160) for r in summary.get("red_lines", [])[-2:]]
+        offers = [_clip(c, 160) for c in summary.get("concessions", [])[-2:]]
         if red_lines:
-            parts.append("Red lines you have drawn (stay consistent or explain a change): "
-                         + " | ".join(r[:140] for r in red_lines))
-        if concessions:
-            parts.append("Concessions you have already made: " + " | ".join(c[:140] for c in concessions))
+            parts.append("Red lines you have drawn (stay consistent or explain a change): " + " | ".join(red_lines))
+        if offers:
+            parts.append("Offers you have made: " + " | ".join(offers))
+        # Only moments that have scrolled out of the visible transcript, or that were aimed at you.
+        visible = {e.get("content") for e in [m for m in self.memory if m.get("type") == "turn"][-TRANSCRIPT_TURNS:]}
         key_moments = []
         for s in self.space.config.stakeholders:
             if s.id == self.agent_id:
                 continue
-            for e in self.memory_system.get_important(s.id, threshold=0.75)[-2:]:
-                key_moments.append((e.timestamp, f"{s.name} ({e.type}): {e.content[:120]}"))
+            for e in self.memory_system.get_important(s.id, threshold=0.65)[-3:]:
+                if e.content in visible:
+                    continue
+                aimed = (e.metadata or {}).get("target") == self.agent_id
+                if e.type == "compromise" and not aimed:
+                    continue
+                key_moments.append((e.timestamp, f"{s.name} ({e.type}): {_clip(e.content, 160)}"))
         if key_moments:
             key_moments.sort()
-            parts.append("Key moments you remember:\n" + "\n".join(f"- {m}" for _, m in key_moments[-4:]))
+            parts.append("Earlier moments you remember:\n" + "\n".join(f"- {m}" for _, m in key_moments[-4:]))
         self._last_memory_shown = {
-            "red_lines": [r[:140] for r in red_lines],
-            "concessions": [c[:140] for c in concessions],
+            "red_lines": red_lines,
+            "concessions": offers,
             "key_moments": [m for _, m in key_moments[-4:]],
         }
         if not parts:
@@ -462,81 +517,115 @@ class AgentRuntime:
         return "\n\n## Your Memory\n" + "\n".join(parts)
 
     def _situation_section(self) -> str:
-        """Room-level pressures: time, deadlock, votes, departures."""
+        """Turn-specific directives, placed at the end of the prompt where the model acts on them."""
         lines: list[str] = []
+        last = self._last_turn()
+        if last is not None and last.get("directed_at") == self.agent_id and last.get("agent_id") != self.agent_id:
+            lines.append(f"{self._resolve_name(last.get('agent_id', ''))} just addressed you "
+                         f"({last.get('action_type', 'statement')}).")
         ctx = self.context
+        cfg = self.space.config
         if ctx is not None:
             remaining = max(0, ctx.max_turns - ctx.turn_count)
+            principals = [s for s in cfg.stakeholders if s.stance != "moderator" and s.id not in self.space.departed]
+            lines.append(f"About {remaining} turns are left in this meeting.")
             if ctx.time_pressure is not None and ctx.pressure() >= 0.5:
                 lines.append(f"TIME PRESSURE: only about {remaining} turns remain. Push for resolution.")
-            if ctx.flag("deadlock_risk") and self.behavior_engine is not None:
-                risk = self.behavior_engine.deadlock_risk()
-                if risk >= 0.6:
-                    lines.append(f"The room is close to deadlock (risk {risk:.2f}). Break it, or decide whether to walk away.")
-            if uses_vote(self.space.config):
-                lines.append("This will be settled by a vote. When you are ready to commit, use action_type "
-                             "\"vote\" and set \"vote\" to yes, no or abstain.")
-                if vote_phase(ctx) and not self._has_voted():
-                    lines.append("The vote is being called — cast your vote now if you have not.")
+            if 0 < remaining <= len(principals):
+                lines.append("Closing round: if a proposal is on the table, say whether you accept it, reject it, "
+                             "or what single change you still need. Holding out is also a choice.")
+            if (ctx.flag("deadlock_risk") and self.behavior_engine is not None
+                    and self.behavior_engine.deadlock_risk() >= 0.6):
+                lines.append("The room is close to deadlock. Break it with a concrete offer, hold your ground, or, "
+                             "if staying is worse for you than having no deal, walk away.")
+            lines.extend(self._vote_lines(ctx))
         departed = [self._resolve_name(a) for a in self.space.departed if a != self.agent_id]
         if departed:
             lines.append(f"Walked out of the room: {', '.join(departed)}.")
-        return ("\n\n" + "\n".join(lines)) if lines else ""
+        return "\n".join(f"- {line}" for line in lines)
+
+    def _vote_lines(self, ctx: Any) -> list[str]:
+        cfg = self.space.config
+        vc = vote_condition(cfg)
+        if vc is None:
+            return []
+        motion = cfg.subject.description or cfg.subject.name
+        voters = [v for v in voters_of(cfg) if v not in self.space.departed]
+        lines = [f"This is settled by a vote on: \"{motion}\". It passes with at least {vc.threshold:.0%} of "
+                 f"the {len(voters)} voters saying yes; if the vote is not finished when time runs out, "
+                 "nothing is decided."]
+        if not vote_phase(ctx):
+            return lines
+        voted = {e.get("agent_id") for e in self.memory
+                 if e.get("type") == "turn" and e.get("action_type") == "vote"}
+        lines.append(f"The vote has been called: {len(voted & set(voters))} of {len(voters)} have voted.")
+        if self.agent_id not in voters:
+            lines.append("You do not vote. Help the room close: invite the remaining voters to cast their votes.")
+        elif not self._has_voted():
+            if self._asked_for_vote():
+                lines.append("THE CHAIR IS ASKING FOR YOUR VOTE NOW. Use action_type \"vote\" with \"vote\": "
+                             "\"yes\", \"no\" or \"abstain\", and give your reason in 1-2 sentences. "
+                             "The no-repetition rule does not apply to your vote.")
+            else:
+                lines.append("Cast your vote now (action_type \"vote\") unless you have something decisive to say first.")
+        return lines
+
+    def _asked_for_vote(self) -> bool:
+        for e in reversed(self.memory):
+            if e.get("type") == "turn":
+                return False
+            if e.get("subtype") == "roll_call":
+                return e.get("target_agent") == self.agent_id
+        return False
 
     async def _build_turn_prompt(self) -> list[dict[str, Any]]:
         system_content = await self._build_system_prompt()
+        cfg = self.space.config
         if self.behavior_engine is not None:
             state = self.behavior_engine.get_state_for_llm(self.agent_id)
-            if state.get("social_physics"):
-                sp = state["social_physics"]
+            sp = state.get("social_physics") or {}
+            if isinstance(sp.get("trust"), (int, float)):
                 system_content += (
-                    f"\n\nCurrent state — trust: {sp.get('trust', 'N/A'):.2f}, "
-                    f"tension: {sp.get('tension', 'N/A'):.2f}, "
-                    f"dominance: {sp.get('dominance', 'N/A'):.2f}, "
-                    f"credibility: {sp.get('credibility', 'N/A'):.2f}, "
-                    f"leverage: {sp.get('leverage', 'N/A'):.2f}"
-                ) if isinstance(sp.get("trust"), (int, float)) else (
-                    f"\n\nCurrent state — trust: {sp.get('trust', 'N/A')}, tension: {sp.get('tension', 'N/A')}"
+                    f"\n\nHow the room sees you: credibility {_band(sp.get('credibility', 0.5))}, "
+                    f"leverage {_band(sp.get('leverage', 0.5))}. "
+                    f"How tense it feels to you: {_band(sp.get('tension', 0.3), ('calm', 'tense', 'very tense'))}."
                 )
                 triggers = sp.get("triggers", [])
                 if triggers:
                     system_content += f"\nPressures you feel: {', '.join(t.replace('_', ' ') for t in triggers)}"
-            if state.get("cognitive_state"):
-                cs = state["cognitive_state"]
-                de = cs.get("emotion", {})
-                dom_emotion = max(de, key=de.get) if de else "neutral"
-                system_content += (
-                    f"\nYour emotional state — dominant: {dom_emotion}, "
-                    f"confidence: {cs.get('confidence', 'N/A')}, "
-                    f"certainty: {cs.get('certainty', 'N/A')}"
-                )
-            if state.get("allies"):
-                system_content += f"\nYour allies: {', '.join(self._resolve_name(a) for a in state['allies'])}"
-            if state.get("rivals"):
-                system_content += f"\nYour rivals: {', '.join(self._resolve_name(a) for a in state['rivals'])}"
-            cs = state.get("cognitive_state", {})
+            relations = self._relationship_lines(state)
+            if relations:
+                system_content += "\nYour relationships: " + "; ".join(relations)
+            cs = state.get("cognitive_state") or {}
+            if cs:
+                system_content += f"\nYour emotional state: {_describe_emotions(cs.get('emotion', {}))}."
             mod = cs.get("modulation", {})
             if mod:
                 bias_hints = []
-                if mod.get("interrupt_bias", 0) > 0.3: bias_hints.append("you feel an urge to INTERRUPT")
+                if mod.get("interrupt_bias", 0) > 0.3: bias_hints.append("you feel an urge to INTERRUPT the last speaker")
                 if mod.get("challenge_bias", 0) > 0.2: bias_hints.append("you feel inclined to CHALLENGE")
                 if mod.get("challenge_bias", 0) < -0.15: bias_hints.append("you feel AVOIDANT of direct confrontation")
                 if mod.get("compromise_bias", 0) > 0.15: bias_hints.append("you feel inclined to COMPROMISE")
                 if mod.get("compromise_bias", 0) < -0.15: bias_hints.append("you are in NO mood to compromise")
-                if mod.get("coalition_bias", 0) > 0.15: bias_hints.append("you feel inclined to seek ALLIANCES")
+                if mod.get("coalition_bias", 0) > 0.15: bias_hints.append("you feel inclined to seek ALLIANCES with a likely ally")
                 if mod.get("escalate_bias", 0) > 0.15: bias_hints.append("you feel inclined to ESCALATE")
                 if mod.get("question_bias", 0) > 0.15: bias_hints.append("you feel inclined to ASK QUESTIONS")
                 if mod.get("statement_bias", 0) < -0.1: bias_hints.append("you feel like WITHDRAWING and saying less")
                 if bias_hints:
-                    system_content += "\n\nEmotional state is influencing your approach: " + "; ".join(bias_hints) + "."
-        system_content += self._situation_section()
+                    system_content += "\nYour feelings pull you this way: " + "; ".join(bias_hints) + "."
+                hostile = (mod.get("interrupt_bias", 0) > 0.3 or mod.get("challenge_bias", 0) > 0.2
+                           or mod.get("escalate_bias", 0) > 0.15 or mod.get("compromise_bias", 0) < -0.15)
+                if hostile and self._repair_plan_active():
+                    system_content += (
+                        "\nStrategy and feeling conflict: your plan says cooling the room would serve you, but "
+                        "your feelings pull toward a fight. Decide which wins this turn, and make it a choice.")
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_content},
         ]
 
         transcript = [e for e in self.memory
-                      if e.get("type") == "turn" or e.get("subtype") in ("external_event", "departure")]
-        for event in transcript[-12:]:
+                      if e.get("type") == "turn" or e.get("subtype") in ROOM_EVENT_SUBTYPES]
+        for event in transcript[-(TRANSCRIPT_TURNS + 2):]:
             if event.get("type") != "turn":
                 messages.append({"role": "user", "content": f"[ROOM EVENT] {event.get('content', '')}"})
                 continue
@@ -549,32 +638,59 @@ class AgentRuntime:
                 "content": f"[{name}{to}] ({event.get('action_type', 'statement')}) {event.get('content', '')}",
             })
 
-        allowed = allowed_actions(self.space.config)
-        custom = [a for a in self.space.config.action_space.actions if a.name and a.description]
-        custom_text = ""
+        allowed = allowed_actions(cfg)
+        glossary = "\n".join(f"- {a}: {ACTION_GLOSSARY[a]}" for a in allowed if a in ACTION_GLOSSARY)
+        custom = [a for a in cfg.action_space.actions if a.name and a.description and a.name not in ACTION_GLOSSARY]
         if custom:
-            custom_text = "Custom actions available: " + "; ".join(f"{a.name} = {a.description}" for a in custom) + "\n"
-        others = [s.name for s in self.space.config.stakeholders
+            glossary += "\n" + "\n".join(f"- {a.name}: {a.description}" for a in custom)
+        others = [f"{s.name} ({s.role})" if s.role else s.name for s in cfg.stakeholders
                   if s.id != self.agent_id and s.id not in self.space.departed]
+        vote_field = ', "vote": "yes|no|abstain (only with action_type vote)"' if uses_vote(cfg) else ""
+        this_turn = self._situation_section()
         messages.append({
             "role": "user",
             "content": (
-                "Generate your next turn as a JSON object:\n"
-                '{"content": "what you say", '
-                '"action_type": "' + ("|".join(allowed)) + '", '
-                '"directed_at": "name of the person you are addressing, or null", '
-                '"vote": "yes|no|abstain (only when action_type is vote)", '
-                '"internal_reasoning": "your private reasoning — what you really think and plan"}\n'
-                f"{custom_text}"
+                f"Your turn, {self.config.name}. Reply with ONLY a JSON object, fields in this order:\n"
+                '{"internal_reasoning": "what you really think and plan (private)", '
+                '"action_type": "' + "|".join(allowed) + '", '
+                '"directed_at": "the ONE person your action is aimed at, or null", '
+                '"content": "what you say out loud"' + vote_field + "}\n\n"
+                "action_type: pick the ONE that best describes your main move.\n"
+                f"{glossary}\n"
+                "directed_at: whom you challenge, question, make an offer to, agree with or ally with. Your "
+                "relationship with that person is what changes. Use null only for a statement to the whole room.\n\n"
                 f"People in the room: {', '.join(others) or '(no one)'}.\n"
-                f"Be concise (2-4 sentences). Your character: {self.config.name}, {self.config.role}.\n"
-                "Use walkaway only if you are genuinely leaving the negotiation for good.\n"
-                "CRITICAL: Do NOT repeat arguments you have already made in previous turns. "
-                "Each turn must introduce a NEW point, new evidence, or a new angle. "
-                "If you have nothing new to say, challenge or respond to what the other side said."
+                f"Rules: {_length_rule(self.config.personality)}. Respond to what was just said and do not "
+                "restate an argument you already made. If a concern of yours has been answered, you can say so: "
+                "accept, agree, make an offer, or name the one condition you still need. You do not have to raise "
+                "a new objection. Use only the facts above or what was said in the room; present estimates as "
+                "estimates and do not invent data to win a point."
+                + (f"\n\nTHIS TURN:\n{this_turn}" if this_turn else "")
             ),
         })
         return messages
+
+    def _relationship_lines(self, state: dict) -> list[str]:
+        allies, rivals = set(state.get("allies") or []), set(state.get("rivals") or [])
+        lines = []
+        for other, trust in (state.get("trust_scores") or {}).items():
+            if other in self.space.departed:
+                continue
+            tags = []
+            if other in allies:
+                tags.append("ally")
+            if other in rivals:
+                tags.append("rival")
+            if trust <= 0.3 or trust >= 0.7 or tags:
+                tags.insert(0, f"{_band(trust, ('low', 'some', 'high'))} trust")
+                lines.append(f"{self._resolve_name(other)}: {', '.join(tags)}")
+        return lines
+
+    def _repair_plan_active(self) -> bool:
+        if self.plan_manager is None:
+            return False
+        _, tactic = self.plan_manager.core_and_tactic(self.agent_id)
+        return tactic is not None and any(k in tactic.goal_text for k in ("deescalate", "rebuild", "repair"))
 
     # ── turn generation ──────────────────────────────────────────────
 
@@ -595,11 +711,12 @@ class AgentRuntime:
                 "rivals": list(s.get("rivals", [])),
             })
         if self.plan_manager is not None:
-            plans = self.plan_manager.get_active_plans(self.agent_id)
-            if plans:
-                plan = plans[-1]
+            core, tactic = self.plan_manager.core_and_tactic(self.agent_id)
+            for key, plan in (("plan", tactic or core), ("core_plan", core)):
+                if plan is None:
+                    continue
                 open_sgs = [sg for sg in plan.subgoals if sg.status in ("pending", "in_progress")]
-                state["plan"] = {
+                state[key] = {
                     "goal": plan.goal_text.replace("_", " "),
                     "subgoal": open_sgs[0].description if open_sgs else None,
                     "subgoal_actions": list(open_sgs[0].action_types) if open_sgs else [],
@@ -622,16 +739,21 @@ class AgentRuntime:
             temperature *= 0.7
 
         try:
-            raw_text, mocked, metadata = await asyncio.wait_for(
-                self.llm(
-                    messages,
-                    temperature=temperature,
-                    simulation_id=self.simulation_id,
-                    turn_index=self._turn_count,
-                    agent_id=self.agent_id,
-                ),
-                timeout=max(5.0, app_config.TURN_TIMEOUT_SECONDS - 5.0),
-            )
+            extra = trace_kwargs(self.llm, f"speak · {self.config.name}",
+                                 {"agent_id": self.agent_id, "kind": "turn", "stance": self.config.stance,
+                                  "archetype": getattr(self.config, "archetype", None)})
+            with under_run(self.space.trace_parent):
+                raw_text, mocked, metadata = await asyncio.wait_for(
+                    self.llm(
+                        messages,
+                        temperature=temperature,
+                        simulation_id=self.simulation_id,
+                        turn_index=self._turn_count,
+                        agent_id=self.agent_id,
+                        **extra,
+                    ),
+                    timeout=max(5.0, app_config.TURN_TIMEOUT_SECONDS - 5.0),
+                )
             parsed, parse_ok = _parse_llm_turn_checked(raw_text)
             llm_record.update(parse_ok=parse_ok, tokens=int((metadata or {}).get("token_count") or 0),
                               latency_ms=(metadata or {}).get("latency_ms"), model=(metadata or {}).get("model"))
@@ -661,17 +783,6 @@ class AgentRuntime:
         if directed_at is None and action_type in TARGETED_ACTIONS:
             directed_at = self._infer_target()
             llm_record["target_inferred"] = directed_at is not None
-
-        # The scheduler may have moved on (timeout) while we were thinking.
-        if self.space.current_speaker != self.agent_id or not self.space.is_running():
-            logger.info("Agent %s lost the floor before publishing; dropping turn", self.agent_id)
-            return None
-
-        action_type = _normalize_action(parsed.get("action_type"), allowed_actions(self.space.config))
-        content = str(parsed.get("content") or "").strip() or "(...)"
-        directed_at = self._resolve_target(parsed.get("directed_at"))
-        if directed_at is None and action_type in TARGETED_ACTIONS:
-            directed_at = self._infer_target()
 
         turn_event = {
             "type": "turn",
@@ -734,6 +845,69 @@ class AgentRuntime:
         return agent_id
 
 
+def _band(value: float, words: tuple[str, str, str] = ("low", "moderate", "high")) -> str:
+    return words[0] if value < 0.35 else words[2] if value > 0.65 else words[1]
+
+
+_EMOTION_WORDS = {"anger": "angry", "fear": "anxious", "joy": "upbeat", "shame": "embarrassed",
+                  "surprise": "caught off guard"}
+_EMOTION_BASE = {"anger": 0.2, "fear": 0.2, "joy": 0.5, "shame": 0.2, "surprise": 0.2}
+
+
+def _describe_emotions(emotion: dict[str, float]) -> str:
+    """Name only feelings that stand out from a person's resting state."""
+    parts = []
+    for name, value in sorted(emotion.items(), key=lambda kv: -kv[1]):
+        word = _EMOTION_WORDS.get(name)
+        if word is None:
+            continue
+        if value >= 0.75:
+            parts.append(f"strongly {word}")
+        elif value - _EMOTION_BASE.get(name, 0.2) >= 0.2:
+            parts.append(word)
+    if emotion.get("joy", 0.5) <= 0.2:
+        parts.append("deflated")
+    return ", ".join(parts) or "calm and steady"
+
+
+def _temperament(p: Any) -> str:
+    """Personality in words; empty for an all-default (50) profile."""
+    traits = []
+    if p.aggressiveness >= 70:
+        traits.append("blunt and combative")
+    elif p.aggressiveness <= 30:
+        traits.append("mild and non-confrontational")
+    if p.empathy >= 70:
+        traits.append("attentive to others' concerns")
+    elif p.empathy <= 30:
+        traits.append("little concerned with others' feelings")
+    if p.stubbornness >= 70:
+        traits.append("very hard to move once you have taken a position")
+    elif p.stubbornness <= 30:
+        traits.append("open to changing your mind on good evidence")
+    return "; ".join(traits)
+
+
+def _length_rule(p: Any) -> str:
+    if p.verbosity < 35:
+        return "Be brief (1-2 short sentences)"
+    if p.verbosity > 70:
+        return "Speak at some length (3-5 sentences)"
+    return "Be concise (2-4 sentences)"
+
+
+def _clip(text: str, limit: int) -> str:
+    """Shorten at a sentence (or word) boundary rather than mid-word."""
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    if end >= limit // 2:
+        return cut[:end + 1]
+    return cut.rsplit(" ", 1)[0] + "…"
+
+
 def _normalize_action(raw: Any, allowed: list[str]) -> str:
     if not isinstance(raw, str):
         return "statement"
@@ -741,8 +915,10 @@ def _normalize_action(raw: Any, allowed: list[str]) -> str:
     if a in allowed:
         return a
     aliases = {"coalition": "coalition_signal", "ally": "coalition_signal", "agree": "agreement",
-               "concede": "compromise", "concession": "compromise", "walk_away": "walkaway",
-               "walkout": "walkaway", "ask": "question", "object": "challenge", "objection": "challenge"}
+               "accept": "agreement", "acceptance": "agreement", "agreed": "agreement",
+               "concede": "compromise", "concession": "compromise", "proposal": "compromise",
+               "walk_away": "walkaway", "walkout": "walkaway", "ask": "question", "object": "challenge",
+               "objection": "challenge"}
     a = aliases.get(a, a)
     return a if a in allowed else "statement"
 

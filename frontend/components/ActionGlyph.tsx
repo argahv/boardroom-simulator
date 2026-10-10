@@ -5,6 +5,7 @@ export type ActionType =
   | "question"
   | "challenge"
   | "compromise"
+  | "agreement"
   | "coalition_signal"
   | "interrupt"
   | "escalate";
@@ -14,6 +15,7 @@ const ACTION_LABELS: Record<string, string> = {
   question:        "Question",
   challenge:       "Challenge",
   compromise:      "Compromise",
+  agreement:       "Agreement",
   coalition_signal:"Coalition",
   interrupt:       "Interrupt",
   escalate:        "Escalate",
@@ -52,6 +54,12 @@ export function ActionGlyph({ type, size = 12 }: ActionGlyphProps) {
       return (
         <svg width={size} height={size} viewBox={v} fill="none" aria-hidden>
           <path d="M3 8h10M9 4l4 4-4 4" stroke={s} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    case "agreement":
+      return (
+        <svg width={size} height={size} viewBox={v} fill="none" aria-hidden>
+          <path d="M3 8.5l3 3 7-7" stroke={s} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       );
     case "coalition_signal":

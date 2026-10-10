@@ -40,6 +40,7 @@ export type ActionType =
   | "question"
   | "challenge"
   | "compromise"
+  | "agreement"
   | "coalition_signal"
   | "interrupt"
   | "escalate"

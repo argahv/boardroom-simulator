@@ -91,7 +91,8 @@ BASELINE ?=
 EVAL_PY := cd $(BACKEND_DIR) && .venv/bin/python
 ENGINE_TESTS := tests/test_eval.py tests/test_behavioral_flow.py tests/test_behavior_engine.py \
 	tests/test_social_physics.py tests/test_internal_state.py tests/test_relationship_graph.py \
-	tests/test_archetypes.py tests/test_goal_evolution.py tests/test_runtime.py
+	tests/test_archetypes.py tests/test_goal_evolution.py tests/test_runtime.py tests/test_decisions.py \
+	tests/test_memory_system.py
 
 test-engine:
 	$(EVAL_PY) -m pytest --noconftest -q $(ENGINE_TESTS)
