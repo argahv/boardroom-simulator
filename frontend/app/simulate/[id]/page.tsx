@@ -208,6 +208,8 @@ export default function WarRoomPage({ params }: PageProps) {
             return updated;
           });
         } else if (evt.type === "system") {
+          // Procedural bidding/floor announcements are not part of the story.
+          if (evt.bid_round !== undefined || evt.granted_to !== undefined || /^Turn \d+\.?$/.test(String(evt.content ?? ""))) return;
           setTurns((prev) => {
             const systemTurn: Turn = {
               turn_index: prev.length,
@@ -566,15 +568,15 @@ export default function WarRoomPage({ params }: PageProps) {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
                   <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
                     <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Total turns</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.total_turns ?? 0)}</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.total_turns ?? (postmortem.termination as { total_turns?: number } | undefined)?.total_turns ?? 0)}</p>
                   </div>
                   <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
                     <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Participants</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.stakeholder_count ?? 0)}</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.stakeholder_count ?? (postmortem.stakeholder_reports as unknown[] | undefined)?.length ?? config?.stakeholders?.length ?? 0)}</p>
                   </div>
                   <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
                     <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Voltage</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.voltage || 0)}</p>
+                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.voltage || config?.voltage || 0)}</p>
                   </div>
                 </div>
 

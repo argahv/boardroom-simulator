@@ -76,6 +76,7 @@ export function useSimulationState(options: UseSimulationStateOptions): Simulati
     for (const snap of effectiveSnapshots) {
       const d = snap.data;
       const turn = snap.turn_index;
+      if (turn < 0) continue; // initial pre-turn state: not a point on the turn axis
 
       const relMat = d.relationship_matrix ?? {};
       for (const [from, targets] of Object.entries(relMat)) {

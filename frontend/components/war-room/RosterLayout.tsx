@@ -186,6 +186,7 @@ export function RosterLayout({
         <TrustLeveragePanel
           trustScores={avgTrustPerAgent}
           leverageScores={simState?.leverageScores}
+          nameMap={nameMap}
         />
         {speakerAgentId && (
           <CognitiveStatePanel

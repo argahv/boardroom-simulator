@@ -238,7 +238,7 @@ class BehaviorEngine:
             "deadlock_risk": self.deadlock_risk(),
             "agent_plans": {
                 aid: [{
-                    "goal_text": p.goal_text,
+                    "goal_text": p.goal_text.replace("_", " "),
                     "status": p.status,
                     "confidence": p.confidence,
                     "subgoal_count": len(p.subgoals),
