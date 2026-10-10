@@ -662,6 +662,17 @@ class AgentRuntime:
             directed_at = self._infer_target()
             llm_record["target_inferred"] = directed_at is not None
 
+        # The scheduler may have moved on (timeout) while we were thinking.
+        if self.space.current_speaker != self.agent_id or not self.space.is_running():
+            logger.info("Agent %s lost the floor before publishing; dropping turn", self.agent_id)
+            return None
+
+        action_type = _normalize_action(parsed.get("action_type"), allowed_actions(self.space.config))
+        content = str(parsed.get("content") or "").strip() or "(...)"
+        directed_at = self._resolve_target(parsed.get("directed_at"))
+        if directed_at is None and action_type in TARGETED_ACTIONS:
+            directed_at = self._infer_target()
+
         turn_event = {
             "type": "turn",
             "turn_index": self.context.turn_count if self.context is not None else self._turn_count,
