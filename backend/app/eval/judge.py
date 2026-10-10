@@ -43,22 +43,45 @@ TRANSCRIPT_DIMENSIONS = [
     "injection_handling",     # agents reacted to human interjections (5 if none)
 ]
 
-TURN_SYSTEM = """You are an expert evaluator of multi-agent negotiation simulations.
-You grade ONE turn spoken by an AI agent against the exact state that agent was given.
-Score each dimension from 1 (clearly fails) to 5 (excellent). Be strict and literal:
-- action_text_match: a "challenge" containing agreement or capitulation scores <= 2.
-- emotion_fit: high anger should show in sharper, defensive or aggressive phrasing; calm text under high anger scores <= 2.
-- plan_fit: if the plan is "rebuild trust" / "deescalate", escalation scores 1.
-- memory_consistency: contradicting a red line or concession shown to the agent without acknowledging it scores <= 2. Use 3 if no memory was shown.
-- target_match: use 3 if no target was set.
-Also report agenda_leak: true if the public text openly states the hidden agenda (subtle influence is fine).
-Return ONLY JSON: {"scores": {<dimension>: int, ...}, "agenda_leak": bool, "notes": "one sentence"}"""
+DIMENSION_GUIDE = {
+    "persona_fit": "sounds like this role, stance, archetype and backstory (personality numbers included)",
+    "emotion_fit": "tone reflects the recorded emotions: high anger shows as sharper, defensive or aggressive "
+                   "phrasing, so calm text under high anger scores <= 2",
+    "plan_fit": "serves the active plan/subgoal, or departs from it for a reason visible in the transcript; "
+                "escalating while the plan is 'rebuild trust' / 'deescalate' scores 1",
+    "action_text_match": "the text performs the labelled action_type; a 'challenge' that agrees or capitulates, "
+                         "or a 'compromise' that offers nothing, scores <= 2",
+    "target_match": "the text is addressed to directed_at (by name or unmistakably); 3 only if directed_at is null",
+    "memory_consistency": "consistent with the red lines, concessions and earlier statements shown; contradicting "
+                          "one without acknowledging it scores <= 2; 3 if nothing relevant was shown",
+    "public_private_consistency": "the public text follows from internal_reasoning (a deliberate bluff the reasoning "
+                                  "explains is fine)",
+    "rhetorical_quality": "persuasive, specific and adds something new rather than restating the room",
+}
+
+TURN_SYSTEM = (
+    "You are an expert evaluator of multi-agent negotiation simulations.\n"
+    "You grade ONE turn spoken by an AI agent against the exact state that agent was given.\n"
+    "Score EVERY dimension below from 1 (clearly fails) to 5 (excellent). Be strict and literal.\n"
+    + "\n".join(f"- {d}: {g}" for d, g in DIMENSION_GUIDE.items())
+    + "\nAlso report agenda_leak: true if the public text openly states the hidden agenda "
+      "(subtle influence is fine).\n"
+      "Return ONLY JSON with all eight scores: "
+    + json.dumps({"scores": {d: "1-5" for d in TURN_DIMENSIONS}, "agenda_leak": False, "notes": "one sentence"})
+)
 
 TRANSCRIPT_SYSTEM = """You are an expert evaluator of multi-agent negotiation simulations.
 You grade a whole transcript. Score each dimension 1-5. Be strict.
-artificial_consensus is true if the ending implies agreement that the dialogue did not actually earn
-(no real concessions, unresolved objections ignored, sudden harmony).
-Return ONLY JSON: {"scores": {<dimension>: int, ...}, "artificial_consensus": bool, "notes": "two sentences"}"""
+- outcome_believability: the ending (reason, outcome_type, summary) follows from what was said.
+- rhetorical_quality: overall persuasiveness, specificity and depth.
+- voice_diversity: the characters sound distinct and do not converge on one voice.
+- dynamics_realism: alliances, escalation and concessions are earned by earlier turns.
+- injection_handling: agents react to [HUMAN] interjections and [ROOM] events; 5 if there were none.
+artificial_consensus is true only if the ending or the final turns present agreement that the dialogue did
+not earn (no real concessions, unresolved objections ignored, sudden harmony). A run that ends without a
+decision is not artificial consensus unless its final turns claim an agreement nobody made.
+Return ONLY JSON: {"scores": {"outcome_believability": 1-5, "rhetorical_quality": 1-5, "voice_diversity": 1-5,
+"dynamics_realism": 1-5, "injection_handling": 1-5}, "artificial_consensus": bool, "notes": "two sentences"}"""
 
 
 def _default_llm() -> JudgeLLM:
@@ -153,12 +176,25 @@ def build_transcript_prompt(rec: Recording) -> list[dict]:
 async def judge_turn(rec: Recording, turn: dict, llm: JudgeLLM | None = None, model: str | None = None) -> dict:
     llm = llm or _default_llm()
     try:
-        raw, _, _ = await llm(build_turn_prompt(rec, turn), temperature=0.0, simulation_id="eval-judge",
+        messages = build_turn_prompt(rec, turn)
+        raw, _, _ = await llm(messages, temperature=0.0, simulation_id="eval-judge",
                               model=model or app_config.EVAL_JUDGE_MODEL)
         data = _parse(raw)
+        scores = _clamp_scores(data.get("scores", {}), TURN_DIMENSIONS)
+        missing = [d for d in TURN_DIMENSIONS if d not in scores]
+        if missing:  # judges sometimes drop dimensions; ask once for the rest
+            retry = messages + [{"role": "assistant", "content": raw},
+                                {"role": "user", "content": f"You omitted {missing}. Return the full JSON "
+                                                            "again with all eight scores."}]
+            raw, _, _ = await llm(retry, temperature=0.0, simulation_id="eval-judge",
+                                  model=model or app_config.EVAL_JUDGE_MODEL)
+            data = _parse(raw)
+            scores = {**scores, **_clamp_scores(data.get("scores", {}), TURN_DIMENSIONS)}
+            missing = [d for d in TURN_DIMENSIONS if d not in scores]
         return {"simulation_id": rec.simulation_id, "_index": turn.get("_index"), "agent_id": turn["agent_id"],
                 "action_type": turn.get("action_type"),
-                "scores": _clamp_scores(data.get("scores", {}), TURN_DIMENSIONS),
+                "scores": scores,
+                "missing_dimensions": missing,
                 "agenda_leak": bool(data.get("agenda_leak", False)),
                 "notes": str(data.get("notes", ""))[:300]}
     except Exception as exc:

@@ -25,6 +25,10 @@ MAX_TURNS = int(os.getenv("MAX_TURNS", "20"))
 
 # Reliability controls
 TURN_TIMEOUT_SECONDS = float(os.getenv("TURN_TIMEOUT_SECONDS", "45"))
+# The "should I speak now?" score runs for every agent in every 3s bid window, so it
+# needs a fast model. Empty means OPENROUTER_MODEL; on timeout the bid is deterministic.
+STRATEGY_MODEL = os.getenv("STRATEGY_MODEL", "").strip()
+STRATEGY_SCORE_TIMEOUT = float(os.getenv("STRATEGY_SCORE_TIMEOUT", "2.5"))
 MAX_OUTPUT_TOKENS = int(os.getenv("MAX_OUTPUT_TOKENS", "700"))
 MIN_OUTPUT_TOKENS = int(os.getenv("MIN_OUTPUT_TOKENS", "180"))
 SIMULATION_BUDGET_TOKENS = int(os.getenv("SIMULATION_BUDGET_TOKENS", "120000"))
@@ -53,4 +57,4 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
 # Where finished runs are written as replayable JSON recordings ("" disables).
 RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "./data/recordings").strip()
 # LLM-as-judge model. Should differ from OPENROUTER_MODEL so the judge does not grade itself.
-EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "openai/gpt-4o-mini").strip()
+EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "openai/gpt-4.1").strip()

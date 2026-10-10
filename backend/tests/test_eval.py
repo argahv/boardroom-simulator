@@ -300,6 +300,40 @@ async def test_judge_survives_garbage_output(stub_recordings):
     assert "error" in r
 
 
+@pytest.mark.asyncio
+async def test_judge_asks_again_for_dropped_dimensions(stub_recordings):
+    import json as _json
+    from app.eval import judge
+    calls = []
+
+    async def lazy(messages, **k):
+        calls.append(messages)
+        dims = judge.TURN_DIMENSIONS[:5] if len(calls) == 1 else judge.TURN_DIMENSIONS[5:]
+        return _json.dumps({"scores": {d: 4 for d in dims}}), False, {}
+    rec = stub_recordings["vote_decision"]
+    r = await judge.judge_turn(rec, rec.turns[0], llm=lazy)
+    assert len(calls) == 2 and "omitted" in calls[1][-1]["content"]
+    assert set(r["scores"]) == set(judge.TURN_DIMENSIONS) and r["missing_dimensions"] == []
+
+
+@pytest.mark.asyncio
+async def test_strategy_timeout_falls_back_to_deterministic_bid(monkeypatch):
+    import asyncio as _asyncio
+    from app import config as app_config
+    agent, ctx = _agent_with_context()
+
+    async def slow(*a, **k):
+        await _asyncio.sleep(1)
+        return "90", False, {}
+    agent.llm = slow
+    monkeypatch.setattr(app_config, "STRATEGY_SCORE_TIMEOUT", 0.05)
+    score = await agent._compute_strategy_score({})
+    assert score is None and agent._last_strategy_source == "timeout"
+    final = agent._compute_urgency({}, score)
+    assert final == max(0, min(100, agent._last_bid_details["deterministic"]))
+    assert ctx.usage["strategy_timeouts"] == 1
+
+
 def test_calibration_report():
     from app.eval.judge import calibrate
     judge_res = [{"simulation_id": "s", "_index": i, "scores": {"persona_fit": v}, "agenda_leak": False}

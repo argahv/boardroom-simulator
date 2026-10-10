@@ -134,7 +134,8 @@ async def test_full_behavioral_flow():
     completed = [sg for pid in plans._plans for sg in plans._plans[pid].subgoals if sg.status == "completed"]
     assert completed, "taking actions should complete plan subgoals"
     assert final["agent_goals"]["alice"], "agents carry goals"
-    assert any(g["source"] == "hidden" for g in final["agent_goals"]["alice"])
+    # The snapshot shows only the top goals, so the hidden one can rank below pressure goals.
+    assert any(g.source == "hidden" and g.is_active for g in ctx.goals.get_all_goals("alice"))
 
     # Memory + private thought
     assert final["memory"]["alice"]["red_lines"], "'never accept' is remembered as a red line"

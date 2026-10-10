@@ -23,7 +23,6 @@ LLMFunc = Callable[
 # Actions that are normally aimed at a specific person.
 TARGETED_ACTIONS = {"challenge", "question", "interrupt", "compromise", "coalition_signal", "escalate", "agreement"}
 
-STRATEGY_SCORE_TIMEOUT = 2.0
 
 
 class AgentRuntime:
@@ -197,14 +196,17 @@ class AgentRuntime:
             n += 1
         return n
 
-    async def _compute_strategy_score(self, event: dict) -> int:
+    async def _compute_strategy_score(self, event: dict) -> int | None:
+        """LLM judgement of how much speaking now serves this agent; None = deterministic bid only."""
         if not hasattr(self, 'llm') or self.llm is None:
             self._last_strategy_source = "none"
-            return 50
+            return None
         recent_context = ""
         for e in self.memory[-8:]:
             if e.get("type") == "turn":
-                recent_context += f"[{e.get('agent_name', e.get('speaker', ''))}]: {e.get('content', '')[:120]}\n"
+                to = f" → {self._resolve_name(e['directed_at'])}" if e.get("directed_at") else ""
+                recent_context += (f"[{e.get('agent_name', e.get('speaker', ''))}{to}]: "
+                                   f"{e.get('content', '')[:120]}\n")
         goal_line = ""
         if self.context is not None:
             top = self.context.goals.get_active_goals(self.agent_id, 1)
@@ -225,33 +227,33 @@ class AgentRuntime:
             )},
         ]
         try:
+            extra = {"model": app_config.STRATEGY_MODEL} if app_config.STRATEGY_MODEL else {}
             raw_text, mocked, metadata = await asyncio.wait_for(
                 self.llm(strategy_prompt, temperature=0.1,
                          simulation_id=self.simulation_id,
                          turn_index=self._turn_count,
-                         agent_id=self.agent_id),
-                timeout=STRATEGY_SCORE_TIMEOUT,
+                         agent_id=self.agent_id, **extra),
+                timeout=app_config.STRATEGY_SCORE_TIMEOUT,
             )
             match = re.search(r"\d{1,3}", raw_text or "")
-            score = int(match.group()) if match else 50
             self._last_strategy_source = "llm" if match else "unparsed"
             if self.context is not None:
                 self.context.record_llm("strategy", metadata, failed=not match)
-            return max(0, min(100, score))
+            return max(0, min(100, int(match.group()))) if match else None
         except asyncio.TimeoutError:
             logger.warning("strategy_score timeout for %s", self.agent_id,
                           extra={"agent": self.agent_id, "event": "strategy_score_timeout"})
             self._last_strategy_source = "timeout"
             if self.context is not None:
                 self.context.record_llm("strategy", None, timed_out=True)
-            return 50
+            return None
         except Exception as exc:
             logger.warning("strategy_score error for %s: %s", self.agent_id, exc,
                           extra={"agent": self.agent_id, "error": str(exc), "event": "strategy_score_error"})
             self._last_strategy_source = "error"
             if self.context is not None:
                 self.context.record_llm("strategy", None, failed=True)
-            return 50
+            return None
 
     # ── plan integration ────────────────────────────────────────────
 
