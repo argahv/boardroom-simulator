@@ -11,7 +11,7 @@ from app.knowledge import get_knowledge_store
 from app.models import AgentStance, SimulationConfig, AgentConfig
 from app.runtime.space import SharedSpace
 from app.runtime.archetypes import tendency_hint
-from app.runtime.context import allowed_actions, uses_vote
+from app.runtime.context import allowed_actions, uses_vote, vote_phase
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +70,10 @@ class AgentRuntime:
         self._consecutive_events_since_bid = 0
         self._last_bid_round = 0
         self._last_floor_token = 0
+        # Evaluation records: what the agent was shown / how it bid
+        self._last_bid_details: dict = {}
+        self._last_strategy_source = "none"
+        self._last_memory_shown: dict = {}
 
     # ── main loop ────────────────────────────────────────────────────
 
@@ -93,7 +97,8 @@ class AgentRuntime:
                 self._last_bid_round = bid_event.get("bid_round", self._last_bid_round)
                 strategy_score = await self._compute_strategy_score(bid_event)
                 urgency = self._compute_urgency(bid_event, strategy_score)
-                self.space.submit_bid(self.agent_id, urgency, bid_round=bid_event.get("bid_round"))
+                self.space.submit_bid(self.agent_id, urgency, bid_round=bid_event.get("bid_round"),
+                                      details=dict(self._last_bid_details))
                 logger.debug("Agent %s bid urgency=%d", self.agent_id, urgency, extra={"agent": self.agent_id, "urgency": urgency, "event": "bid_submitted"})
                 self._consecutive_events_since_bid = 0
 
@@ -116,41 +121,58 @@ class AgentRuntime:
         return False
 
     def _compute_urgency(self, event: dict, strategy_score: int | None = None) -> int:
-        base = 50
-        base += self.config.personality.aggressiveness // 2 - 25
+        components: dict[str, int] = {"base": 50,
+                                      "aggressiveness": self.config.personality.aggressiveness // 2 - 25}
         last_turn = self._last_turn()
         if last_turn is not None:
             spoke_last = last_turn.get("agent_id", "")
             if spoke_last == self.agent_id:
-                base -= 25  # avoid monologuing
+                components["spoke_last"] = -25  # avoid monologuing
             elif spoke_last in self._trusted_allies():
-                base -= 10
+                components["ally_spoke"] = -10
             if last_turn.get("directed_at") == self.agent_id:
-                base += 20  # you were just addressed
+                components["addressed"] = 20  # you were just addressed
         if self._turns_since_spoke() > 3:
-            base += 15
+            components["long_silence"] = 15
         if self.behavior_engine is not None:
             state = self.behavior_engine.get_state_for_llm(self.agent_id)
             sp = state.get("social_physics", {})
             if sp.get("tension", 0) > 0.7:
-                base += 15 if self.config.stance != "moderator" else 20
+                components["tension"] = 15 if self.config.stance != "moderator" else 20
             if sp.get("dominance", 0) > 0.7:
-                base += 10
+                components["dominance"] = 10
             cs = state.get("cognitive_state", {})
             modulation = cs.get("modulation", {})
             if modulation:
-                base += int(modulation.get("urgency_modifier", 0))
-                base += int(modulation.get("interrupt_bias", 0) * 20)
+                components["emotion"] = int(modulation.get("urgency_modifier", 0))
+                components["interrupt_bias"] = int(modulation.get("interrupt_bias", 0) * 20)
         if self.context is not None and self.context.pressure() > 0:
-            base += int(10 * self.context.pressure())
-        deterministic = base
+            components["time_pressure"] = int(10 * self.context.pressure())
+        if (self.context is not None and uses_vote(self.space.config) and vote_phase(self.context)
+                and self.agent_id in getattr(self.space.config.end_condition, "voters", [self.agent_id])
+                and not self._has_voted()):
+            components["vote_pending"] = 15
+        deterministic = sum(components.values())
+        base = deterministic
         if strategy_score is not None:
             base = int(base * 0.6 + strategy_score * 0.4)
+        final = max(0, min(100, base))
+        self._last_bid_details = {
+            "deterministic": deterministic,
+            "strategy": strategy_score,
+            "strategy_source": self._last_strategy_source,
+            "final": final,
+            "components": components,
+        }
         logger.debug("Bid %s urgency=%d (deterministic=%d, strategy=%s)",
-                     self.agent_id, base, deterministic, strategy_score,
-                     extra={"agent": self.agent_id, "urgency": base, "strategy_score": strategy_score,
+                     self.agent_id, final, deterministic, strategy_score,
+                     extra={"agent": self.agent_id, "urgency": final, "strategy_score": strategy_score,
                             "event": "bid_calculated"})
-        return max(0, min(100, base))
+        return final
+
+    def _has_voted(self) -> bool:
+        return any(e.get("type") == "turn" and e.get("agent_id") == self.agent_id
+                   and e.get("action_type") == "vote" for e in self.memory)
 
     def _trusted_allies(self) -> set[str]:
         allies = {s.id for s in self.space.config.stakeholders if s.stance == self.config.stance}
@@ -177,6 +199,7 @@ class AgentRuntime:
 
     async def _compute_strategy_score(self, event: dict) -> int:
         if not hasattr(self, 'llm') or self.llm is None:
+            self._last_strategy_source = "none"
             return 50
         recent_context = ""
         for e in self.memory[-8:]:
@@ -211,14 +234,23 @@ class AgentRuntime:
             )
             match = re.search(r"\d{1,3}", raw_text or "")
             score = int(match.group()) if match else 50
+            self._last_strategy_source = "llm" if match else "unparsed"
+            if self.context is not None:
+                self.context.record_llm("strategy", metadata, failed=not match)
             return max(0, min(100, score))
         except asyncio.TimeoutError:
             logger.warning("strategy_score timeout for %s", self.agent_id,
                           extra={"agent": self.agent_id, "event": "strategy_score_timeout"})
+            self._last_strategy_source = "timeout"
+            if self.context is not None:
+                self.context.record_llm("strategy", None, timed_out=True)
             return 50
         except Exception as exc:
             logger.warning("strategy_score error for %s: %s", self.agent_id, exc,
                           extra={"agent": self.agent_id, "error": str(exc), "event": "strategy_score_error"})
+            self._last_strategy_source = "error"
+            if self.context is not None:
+                self.context.record_llm("strategy", None, failed=True)
             return 50
 
     # ── plan integration ────────────────────────────────────────────
@@ -397,6 +429,7 @@ class AgentRuntime:
         return system_content
 
     def _memory_section(self) -> str:
+        self._last_memory_shown = {}
         if self.memory_system is None:
             return ""
         parts: list[str] = []
@@ -417,6 +450,11 @@ class AgentRuntime:
         if key_moments:
             key_moments.sort()
             parts.append("Key moments you remember:\n" + "\n".join(f"- {m}" for _, m in key_moments[-4:]))
+        self._last_memory_shown = {
+            "red_lines": [r[:140] for r in red_lines],
+            "concessions": [c[:140] for c in concessions],
+            "key_moments": [m for _, m in key_moments[-4:]],
+        }
         if not parts:
             return ""
         return "\n\n## Your Memory\n" + "\n".join(parts)
@@ -436,7 +474,7 @@ class AgentRuntime:
             if uses_vote(self.space.config):
                 lines.append("This will be settled by a vote. When you are ready to commit, use action_type "
                              "\"vote\" and set \"vote\" to yes, no or abstain.")
-                if remaining <= max(2, ctx.max_turns // 3):
+                if vote_phase(ctx) and not self._has_voted():
                     lines.append("The vote is being called — cast your vote now if you have not.")
         departed = [self._resolve_name(a) for a in self.space.departed if a != self.agent_id]
         if departed:
@@ -538,8 +576,45 @@ class AgentRuntime:
 
     # ── turn generation ──────────────────────────────────────────────
 
+    def _prompt_state(self) -> dict:
+        """The state this agent was conditioned on, recorded with its turn for evaluation."""
+        state: dict = {"archetype": getattr(self.config, "archetype", None), "stance": self.config.stance}
+        if self.behavior_engine is not None:
+            s = self.behavior_engine.get_state_for_llm(self.agent_id)
+            sp = dict(s.get("social_physics", {}))
+            cs = s.get("cognitive_state", {})
+            state.update({
+                "social_physics": {k: v for k, v in sp.items() if k != "triggers"},
+                "triggers": sp.get("triggers", []),
+                "emotion": dict(cs.get("emotion", {})),
+                "modulation": dict(cs.get("modulation", {})),
+                "confidence": cs.get("confidence"),
+                "allies": list(s.get("allies", [])),
+                "rivals": list(s.get("rivals", [])),
+            })
+        if self.plan_manager is not None:
+            plans = self.plan_manager.get_active_plans(self.agent_id)
+            if plans:
+                plan = plans[-1]
+                open_sgs = [sg for sg in plan.subgoals if sg.status in ("pending", "in_progress")]
+                state["plan"] = {
+                    "goal": plan.goal_text.replace("_", " "),
+                    "subgoal": open_sgs[0].description if open_sgs else None,
+                    "subgoal_actions": list(open_sgs[0].action_types) if open_sgs else [],
+                    "progress": round(plan.confidence, 3),
+                }
+        if self.context is not None:
+            state["goals"] = [g.goal_text.replace("_", " ") for g in self.context.goals.get_active_goals(self.agent_id, 3)]
+            state["turn"] = self.context.turn_count
+            state["time_pressure"] = round(self.context.pressure(), 3)
+        state["memory_shown"] = dict(self._last_memory_shown)
+        state["hidden_agenda_shown"] = self._hidden_agenda() != "(none)"
+        return state
+
     async def _generate_turn(self) -> dict | None:
         messages = await self._build_turn_prompt()
+        prompt_state = self._prompt_state()
+        llm_record: dict = {"parse_ok": False, "fallback": False}
         temperature = min(1.0, max(0.3, self.space.config.voltage / 100.0))
         if getattr(self.space.config, "model_temperature", "volatile") == "stable":
             temperature *= 0.7
@@ -555,21 +630,35 @@ class AgentRuntime:
                 ),
                 timeout=max(5.0, app_config.TURN_TIMEOUT_SECONDS - 5.0),
             )
-            parsed = _parse_llm_turn(raw_text)
+            parsed, parse_ok = _parse_llm_turn_checked(raw_text)
+            llm_record.update(parse_ok=parse_ok, tokens=int((metadata or {}).get("token_count") or 0),
+                              latency_ms=(metadata or {}).get("latency_ms"), model=(metadata or {}).get("model"))
+            if self.context is not None:
+                self.context.record_llm("turn", metadata, failed=not parse_ok)
         except Exception as exc:
             logger.warning("Agent %s turn gen failed: %s", self.agent_id, exc, extra={"agent": self.agent_id, "error": str(exc), "event": "generation_failed"})
             parsed = {"content": "(...)", "action_type": "statement", "internal_reasoning": "failed to generate"}
+            llm_record.update(fallback=True, error=str(exc)[:200],
+                              timed_out=isinstance(exc, asyncio.TimeoutError))
+            if self.context is not None:
+                self.context.record_llm("turn", None, failed=True)
 
         # The scheduler may have moved on (timeout) while we were thinking.
         if self.space.current_speaker != self.agent_id or not self.space.is_running():
             logger.info("Agent %s lost the floor before publishing; dropping turn", self.agent_id)
             return None
 
-        action_type = _normalize_action(parsed.get("action_type"), allowed_actions(self.space.config))
+        raw_action = parsed.get("action_type")
+        action_type = _normalize_action(raw_action, allowed_actions(self.space.config))
+        llm_record["raw_action_type"] = raw_action if isinstance(raw_action, str) else None
+        llm_record["action_normalized"] = (raw_action or "").strip().lower() != action_type if isinstance(raw_action, str) else True
+        raw_target = parsed.get("directed_at")
         content = str(parsed.get("content") or "").strip() or "(...)"
-        directed_at = self._resolve_target(parsed.get("directed_at"))
+        directed_at = self._resolve_target(raw_target)
+        llm_record["target_inferred"] = False
         if directed_at is None and action_type in TARGETED_ACTIONS:
             directed_at = self._infer_target()
+            llm_record["target_inferred"] = directed_at is not None
 
         turn_event = {
             "type": "turn",
@@ -585,6 +674,8 @@ class AgentRuntime:
             "directed_at_name": self._resolve_name(directed_at) if directed_at else None,
             "internal_reasoning": str(parsed.get("internal_reasoning") or ""),
             "reasoning": str(parsed.get("internal_reasoning") or ""),
+            "prompt_state": prompt_state,
+            "llm": llm_record,
         }
         if action_type == "vote":
             turn_event["vote"] = _vote_position(parsed.get("vote"), content)
@@ -666,6 +757,11 @@ def _vote_position(raw: Any, content: str) -> str | None:
 
 
 def _parse_llm_turn(raw: str) -> dict[str, Any]:
+    return _parse_llm_turn_checked(raw)[0]
+
+
+def _parse_llm_turn_checked(raw: str) -> tuple[dict[str, Any], bool]:
+    """Parse a turn; the flag is False when the model did not return usable JSON."""
     text = (raw or "").strip()
     if text.startswith("```"):
         lines = text.split("\n")
@@ -677,7 +773,7 @@ def _parse_llm_turn(raw: str) -> dict[str, Any]:
     try:
         parsed = json.loads(text)
         if isinstance(parsed, dict):
-            return parsed
+            return parsed, True
     except json.JSONDecodeError:
         # Models sometimes wrap JSON in prose — pull out the first object.
         match = re.search(r"\{.*\}", text, re.S)
@@ -685,7 +781,7 @@ def _parse_llm_turn(raw: str) -> dict[str, Any]:
             try:
                 parsed = json.loads(match.group())
                 if isinstance(parsed, dict):
-                    return parsed
+                    return parsed, True
             except json.JSONDecodeError:
                 pass
-    return {"content": text, "action_type": "statement", "internal_reasoning": ""}
+    return {"content": text, "action_type": "statement", "internal_reasoning": ""}, False

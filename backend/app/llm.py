@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from typing import Any, Optional
 
 import httpx
@@ -78,6 +79,7 @@ async def openrouter_completion(
     simulation_id: Optional[str] = None,
     turn_index: Optional[int] = None,
     agent_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> tuple[str, bool, dict[str, Any]]:
     """
     Returns (assistant_text, is_mocked, metadata).
@@ -93,7 +95,7 @@ async def openrouter_completion(
         "simulation_id": simulation_id,
         "turn_index": turn_index,
         "agent_id": agent_id,
-        "model": config.OPENROUTER_MODEL,
+        "model": model or config.OPENROUTER_MODEL,
         "temperature": temperature
     }
 
@@ -107,7 +109,7 @@ async def openrouter_completion(
         headers["X-Title"] = config.OPENROUTER_APP_TITLE
 
     payload = {
-        "model": config.OPENROUTER_MODEL,
+        "model": model or config.OPENROUTER_MODEL,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": config.MAX_OUTPUT_TOKENS,
@@ -116,6 +118,7 @@ async def openrouter_completion(
     guard = BudgetGuard.for_simulation(simulation_id or "global")
     guard.preflight(estimated_tokens=config.MIN_OUTPUT_TOKENS)
 
+    started = time.monotonic()
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{config.OPENROUTER_BASE_URL}/chat/completions",
@@ -150,7 +153,8 @@ async def openrouter_completion(
         "prompt_tokens": usage.get("prompt_tokens", 0),
         "completion_tokens": usage.get("completion_tokens", 0),
         "cost_usd": round(estimated_cost, 4),
-        "finish_reason": choices[0].get("finish_reason")
+        "finish_reason": choices[0].get("finish_reason"),
+        "latency_ms": int((time.monotonic() - started) * 1000),
     })
 
     guard.record(total_tokens)

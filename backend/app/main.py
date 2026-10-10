@@ -931,6 +931,60 @@ def _evolution_result(event: dict, stance: str) -> dict:
     return result
 
 
+def _save_recording(ctx) -> None:
+    """Persist the run as a replayable JSON recording for offline evaluation."""
+    if not app_config.RECORDINGS_DIR or ctx is None:
+        return
+    try:
+        from app.eval.recording import Recording
+        path = Recording.from_context(ctx, meta={"source": "api"}).save(app_config.RECORDINGS_DIR)
+        logger.info("Recording saved: %s", path)
+    except Exception as exc:
+        logger.warning("Recording save failed sim=%s: %s", ctx.simulation_id, exc)
+
+
+def _load_recording(simulation_id: str):
+    from app.eval.recording import Recording
+    entry = _active_simulations.get(simulation_id)
+    ctx = entry.get("context") if entry else None
+    if ctx is not None:
+        return Recording.from_context(ctx, meta={"source": "api", "live": entry.get("status") == "running"})
+    if app_config.RECORDINGS_DIR:
+        path = os.path.join(app_config.RECORDINGS_DIR, f"{os.path.basename(simulation_id)}.json")
+        if os.path.exists(path):
+            return Recording.load(path)
+    raise HTTPException(status_code=404, detail="No recording for this simulation (recordings exist for runs streamed after evaluation support was added)")
+
+
+@app.get("/simulations/{simulation_id}/recording")
+async def get_recording_handler(simulation_id: str) -> Response:
+    """Full replayable event log: turns with prompt-time state, bids, snapshots, usage."""
+    rec = _load_recording(simulation_id)
+    return Response(
+        content=json.dumps(rec.to_dict(), default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="recording-{simulation_id}.json"'},
+    )
+
+
+class EvaluateRequest(BaseModel):
+    judge: bool = False
+    judge_sample: float = Field(default=0.3, gt=0, le=1)
+    judge_max: int | None = Field(default=20, ge=1)
+
+
+@app.post("/simulations/{simulation_id}/evaluate")
+async def evaluate_simulation_handler(simulation_id: str, payload: EvaluateRequest | None = None) -> dict:
+    """Scorecard for one run: invariants, behavioral metrics and (optionally) LLM-judge scores."""
+    from app.eval import runner
+    payload = payload or EvaluateRequest()
+    rec = _load_recording(simulation_id)
+    if payload.judge and not app_config.OPENROUTER_API_KEY:
+        raise HTTPException(status_code=400, detail="OPENROUTER_API_KEY is required for the LLM judge")
+    return await runner.evaluate(rec, judge_kind="llm" if payload.judge else "none",
+                                 judge_sample=payload.judge_sample, judge_max=payload.judge_max)
+
+
 def _fire_and_forget(coro, label: str) -> None:
     """Run a background coroutine, logging (not raising) its failure."""
     async def _runner():
@@ -1038,6 +1092,7 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
                         logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
 
                     _schedule_post_simulation(config, simulation_id, event, ctx)
+                    _save_recording(ctx)
 
                     yield f"data: {json.dumps(event, default=str)}\n\n"
                     asyncio.create_task(_cleanup_simulation(simulation_id))

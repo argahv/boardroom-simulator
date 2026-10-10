@@ -135,13 +135,14 @@ class BehaviorEngine:
                 if aid not in (speaker_id, target_id):
                     ist.apply_event(emotion_event)
 
+        # Reciprocity is judged on the relationship BEFORE this turn's own effect.
+        reciprocated = False
+        if target_id:
+            back = self._graph.get(target_id, speaker_id)
+            reciprocated = back.alliance or back.trust >= 0.55
         graph_turn = {"action_type": physics_action, "speaker_id": speaker_id, "target_id": target_id}
         self._graph.apply_turn(graph_turn)
-        self._coalitions.detect(
-            {"action_type": physics_action, "agent_id": speaker_id, "directed_at": target_id,
-             "content": turn.get("content", "")},
-            turn_index=self._turn_count,
-        )
+        self._update_coalitions(physics_action, speaker_id, target_id, turn.get("content", ""), reciprocated)
         if physics_action in ("challenge", "escalate") and target_id:
             self._coalitions.dissolve(speaker_id, target_id, turn=self._turn_count)
 
@@ -151,6 +152,23 @@ class BehaviorEngine:
         return BehaviorResult(state_snapshot=sp_snap, triggers=sp_snap.get("triggers", []),
             internal_state=ist.snapshot() if ist else {}, relationship_matrix=self._graph.to_matrix(),
             suggested_action=self._suggest_action(speaker_id))
+
+    def _update_coalitions(self, action: str, speaker: str, target: str, content: str,
+                           reciprocated: bool) -> None:
+        """Coalitions are mutual: one side's overture only forms a coalition once
+        the other side has reciprocated (alliance or solid trust back)."""
+        if action not in ("coalition_signal", "compromise", "agreement") or not target:
+            return
+        for c in self._coalitions.get_active():
+            if {c.agent_a, c.agent_b} == {speaker, target}:
+                c.strength = min(1.0, c.strength + 0.1)  # reinforce, don't duplicate
+                return
+        if reciprocated:
+            self._coalitions.detect(
+                {"action_type": "coalition_signal" if action != "compromise" else "compromise",
+                 "agent_id": speaker, "directed_at": target, "content": content},
+                turn_index=self._turn_count,
+            )
 
     def apply_shock(self, social: dict[str, float] | None = None, emotion: dict[str, float] | None = None) -> Self:
         """Apply an external shock (e.g. a leak or deadline) to every agent."""

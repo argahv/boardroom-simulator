@@ -53,13 +53,19 @@ class GoalEvolution:
         return self
 
     def update_priorities(self, agent_id: str, triggers: list[str]) -> Self:
-        for trigger in triggers:
+        # Highest-priority pressure first; at most one new plan per update so
+        # simultaneous triggers do not create plans that the plan cap then
+        # immediately abandons in arbitrary order.
+        planned = False
+        ordered = sorted(triggers, key=lambda t: -TRIGGER_GOAL_MAP.get(t, ("", 0.0))[1])
+        for trigger in ordered:
             if trigger in TRIGGER_GOAL_MAP:
                 text, prio = TRIGGER_GOAL_MAP[trigger]
                 if not self._has_active_goal_text(agent_id, text):
                     self.add_goal(agent_id, text, prio, source="pressure", turn=self._turn)
-                    if self._plan_manager is not None:
+                    if self._plan_manager is not None and not planned:
                         self._plan_manager.create_plan(agent_id, text, created_turn=self._turn)
+                        planned = True
             elif trigger == "gaining_traction":
                 active = self.get_active_goals(agent_id, 10)
                 if active:

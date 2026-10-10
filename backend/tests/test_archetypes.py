@@ -84,3 +84,16 @@ def test_archetype_delta_unknown():
     result = sp.update("challenge", "a", None, {"archetype": "nonexistent_type", "personality": PersonalityProfile()})
     delta = result.tension - 0.3
     assert abs(delta - 0.12) < 1e-4, f"Expected default 0.12, got {delta}"
+
+
+def test_archetype_multiplier_never_flips_delta_direction():
+    """A 'trust: -1.2' multiplier amplifies the trust drop; it must not turn it into a gain."""
+    from app.runtime.social_physics import SocialPhysics
+    from app.models import PersonalityProfile
+
+    base = SocialPhysics().update("challenge", "a", None, {"personality": PersonalityProfile()})
+    for archetype in ("agitator", "diplomat", "opportunist", "guardian", "idealist"):
+        sp = SocialPhysics().update("challenge", "a", None, {"archetype": archetype, "personality": PersonalityProfile()})
+        assert sp.trust <= 0.5, f"{archetype} challenge raised trust to {sp.trust}"
+    agitator = SocialPhysics().update("challenge", "a", None, {"archetype": "agitator", "personality": PersonalityProfile()})
+    assert agitator.trust < base.trust, "agitator multiplier amplifies the trust drop"

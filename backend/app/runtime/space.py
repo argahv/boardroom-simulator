@@ -33,6 +33,7 @@ class SharedSpace:
         # Bidding rounds: the scheduler opens a round, agents bid once per round.
         self.bid_round = 0
         self._round_bids: dict[str, int] = {}
+        self.round_bid_details: dict[str, dict] = {}
         self._bid_signal = asyncio.Event()
         # Agents that walked out of the room no longer bid or speak.
         self.departed: set[str] = set()
@@ -93,13 +94,16 @@ class SharedSpace:
 
     # ── bidding ──────────────────────────────────────────────────────
 
-    def submit_bid(self, agent_id: str, urgency: int, bid_round: int | None = None) -> None:
+    def submit_bid(self, agent_id: str, urgency: int, bid_round: int | None = None,
+                   details: dict | None = None) -> None:
         if agent_id in self.departed:
             return
         if bid_round is not None and bid_round != self.bid_round:
             return  # stale bid from an earlier round
         self._bid_queue.put_nowait((-urgency, agent_id))
         self._round_bids[agent_id] = urgency
+        if details is not None:
+            self.round_bid_details[agent_id] = details
         self._bid_signal.set()
 
     async def open_bidding(self, content: str, **extra) -> int:
@@ -136,6 +140,7 @@ class SharedSpace:
 
     def clear_bids(self) -> None:
         self._round_bids = {}
+        self.round_bid_details = {}
         while not self._bid_queue.empty():
             try:
                 self._bid_queue.get_nowait()

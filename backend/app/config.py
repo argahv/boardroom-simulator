@@ -48,3 +48,9 @@ ALLOWED_CONTENT_TYPES: list[str] = [
 TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "").strip()
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "1536"))
+
+# ── Evaluation ────────────────────────────────
+# Where finished runs are written as replayable JSON recordings ("" disables).
+RECORDINGS_DIR = os.getenv("RECORDINGS_DIR", "./data/recordings").strip()
+# LLM-as-judge model. Should differ from OPENROUTER_MODEL so the judge does not grade itself.
+EVAL_JUDGE_MODEL = os.getenv("EVAL_JUDGE_MODEL", "openai/gpt-4o-mini").strip()

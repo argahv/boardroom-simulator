@@ -16,6 +16,7 @@ from app.runtime.space import SharedSpace
 from app.graph.driver import get_driver, neo4j_enabled
 from app.graph.writer import GraphWriter
 from app.runtime.postmortem_generator import PostmortemGenerator
+from app.runtime.context import uses_vote, vote_phase
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +349,8 @@ class Scheduler:
         self._termination_result: TerminationResult | None = None
         self._checkers = EndConditionRegistry.build_checkers(config, llm=llm)
         self._last_speaker: str | None = None
+        self._pending_reply: str | None = None
+        self._vote_called = False
         self._last_spoke_turn: dict[str, int] = {}
         self._processed_index = 0
         import random as _random
@@ -362,6 +365,10 @@ class Scheduler:
             "subject_name": self.config.subject.name,
             "stakeholder_count": len(self.config.stakeholders),
         })
+        # Initial state, so the first turn's effects can be measured against it.
+        if self.behavior_engine is not None:
+            await self.space.publish({"type": "state_snapshot", "turn_index": -1, "initial": True,
+                                      "data": self.public_state()})
 
         while self.space.is_running():
             self.space.clear_bids()
@@ -387,6 +394,8 @@ class Scheduler:
                 "agent_id": "__scheduler__",
                 "granted_to": winner,
                 "bids": {self._name(a): u for a, u in getattr(self, "_last_bids", {}).items()},
+                "bid_details": getattr(self, "_last_bid_details", {}),
+                "turn_number": self.turn_count,
             })
 
             start_index = len(self.space.events)
@@ -397,6 +406,10 @@ class Scheduler:
             if turn is None:
                 logger.warning("Agent %s timed out, skipping", winner, extra={"agent": winner, "turn": self.turn_count, "event": "agent_timeout"})
                 self.space.release_floor()
+                await self.space.publish({
+                    "type": "system", "subtype": "turn_timeout", "agent_id": "__scheduler__",
+                    "content": f"{self._name(winner)} did not respond in time.", "timed_out": winner,
+                })
                 self.turn_count += 1
                 self._sync_context()
                 continue
@@ -480,6 +493,12 @@ class Scheduler:
                         self.behavior_engine.apply_shock(
                             social={"tension": 0.05 if label == "half" else 0.1},
                             emotion={"fear": 0.05 if label == "half" else 0.1})
+        if not self._vote_called and uses_vote(self.config) and vote_phase(ctx):
+            self._vote_called = True
+            await self.space.publish({
+                "type": "system", "subtype": "vote_called", "agent_id": "__scheduler__",
+                "content": "The chair calls the vote: each voter should now cast yes, no or abstain.",
+            })
         if ctx.external_events is not None:
             event = ctx.external_events.check(self.turn_count)
             if event is not None:
@@ -496,6 +515,11 @@ class Scheduler:
         for event in events[self._processed_index:]:
             if event.get("type") == "turn" and event.get("is_human") and event.get("agent_id"):
                 await self._update_dynamics(event)
+                # The human spoke for this stakeholder; whoever they addressed gets the right of reply.
+                self._last_speaker = event["agent_id"]
+                target = event.get("directed_at")
+                if target and target in self._active_ids() and target != event["agent_id"]:
+                    self._pending_reply = target
         self._processed_index = len(events)
 
     async def _publish_snapshot(self) -> None:
@@ -554,6 +578,7 @@ class Scheduler:
 
     async def _resolve_next_speaker(self) -> str | None:
         self._last_bids = {}
+        self._last_bid_details = {}
         if not self._active_ids():
             return None
         mode = self.config.speaker_rules.mode
@@ -618,7 +643,12 @@ class Scheduler:
         bids = await self.space.collect_bids(set(active), timeout=self.BID_WINDOW_SECONDS)
         bids = {a: u for a, u in bids.items() if a in active}
         self._last_bids = bids
+        self._last_bid_details = {a: d for a, d in self.space.round_bid_details.items() if a in bids}
         return bids
+
+    def _take_pending_reply(self, bids: dict[str, int]) -> str | None:
+        target, self._pending_reply = self._pending_reply, None
+        return target if target and target in bids else None
 
     def _eligible(self, bids: dict[str, int]) -> dict[str, int]:
         # Nobody holds the floor twice in a row while others want it.
@@ -634,6 +664,9 @@ class Scheduler:
     async def _freeform(self) -> str:
         """Pure competition: the most urgent bidder wins."""
         bids = self._eligible(await self._gather_bids())
+        reply = self._take_pending_reply(bids)
+        if reply:
+            return reply
         if not bids:
             return self._fallback_speaker()
         top = max(bids.values())
@@ -643,6 +676,9 @@ class Scheduler:
     async def _highest_bid(self) -> str:
         """Weighted-random by urgency: urgent agents usually, but not always, win."""
         bids = self._eligible(await self._gather_bids())
+        reply = self._take_pending_reply(bids)
+        if reply:
+            return reply
         if not bids:
             return self._fallback_speaker()
         agents = list(bids)

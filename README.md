@@ -212,6 +212,35 @@ Full API reference at `http://127.0.0.1:8000/docs`.
 | [`docs/tech-stack.md`](docs/tech-stack.md)                         | Technology decisions and rationale                                                                  |
 | [`docs/snapshot-schema.md`](docs/snapshot-schema.md)               | State snapshot field reference                                                                      |
 
+## Evaluation
+
+The state engine and the language layer are evaluated separately, over replayable recordings.
+
+**Recordings.** Every streamed run is saved to `RECORDINGS_DIR` (default `backend/data/recordings/`). Each turn carries the `prompt_state` the agent was conditioned on (emotions, modulation, social physics, plan/subgoal, goals, memory shown) and `llm` info (parse success, invented actions, inferred targets, tokens, latency). Floor events carry each agent's bid breakdown (deterministic components, LLM strategy score, final 60/40 blend). There is an initial state snapshot plus one after every turn.
+
+| Layer | What is checked | Where |
+| ----- | --------------- | ----- |
+| Invariants (hard) | bounds, trigger activation, emotional modulation, challenge→anger/rivalry and compromise→trust cascades, 60/40 urgency blend, no repeat speakers, walked-out agents stay silent, alliance origins | `app/eval/invariants.py` |
+| Metrics (no LLM) | archetype/action fidelity, emotion→action lift, subgoal alignment, repetition & voice collapse, turn-share Gini, parse/fallback/invented-action rates, target mention rate, agenda-leak heuristic, urgency calibration, coalition organicism, artificial-consensus/premature-vote/abrupt-walkaway flags, human-injection response, cost per turn | `app/eval/metrics.py` |
+| LLM judge | per turn: persona, emotion, plan, action↔text, target, memory, public↔private consistency, rhetoric, agenda leak; per transcript: outcome believability, voice diversity, dynamics realism, artificial consensus | `app/eval/judge.py` |
+| Scenarios | 12 fixed configs that each provoke one behavior, with expectations | `app/eval/scenarios.py` |
+
+```bash
+make test-engine                 # golden traces + property tests + eval tooling (no DB, no key)
+make eval-offline                # all scenarios with the stub LLM (tests the harness, not quality)
+make eval-baseline               # real LLM + judge, saves data/eval/baseline.json
+make eval BASELINE=data/eval/baseline.json   # exits 1 on regressions or invariant violations
+
+cd backend
+python -m app.eval list                                  # scenarios + expectations
+python -m app.eval score data/recordings --judge llm     # score real app runs
+python -m app.eval calibrate --labels labels.jsonl data/recordings   # judge vs human labels
+```
+
+API: `GET /simulations/{id}/recording` (download), `POST /simulations/{id}/evaluate` (`{"judge": true, "judge_sample": 0.3}`).
+
+Set `EVAL_JUDGE_MODEL` to a different model than `OPENROUTER_MODEL`. Before trusting judge scores, hand-label about 50 turns (`{"simulation_id", "_index", "scores": {dim: 1-5}, "agenda_leak": bool}` per line) and run `calibrate`. It reports MAE, agreement and Spearman per dimension, and exits 0 only when the judge is trustworthy (within-1 agreement ≥ 0.8, MAE ≤ 1).
+
 ## Verification
 
 ```bash

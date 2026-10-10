@@ -89,6 +89,12 @@ def uses_vote(config: SimulationConfig) -> bool:
     return False
 
 
+def vote_phase(ctx: "SimulationContext") -> bool:
+    """The vote is called once 40% (at least 3) of the turns remain."""
+    remaining = ctx.max_turns - ctx.turn_count
+    return remaining <= max(3, int(ctx.max_turns * 0.4))
+
+
 def allowed_actions(config: SimulationConfig) -> list[str]:
     custom = [a.name for a in config.action_space.actions if a.name]
     return DEFAULT_ACTIONS + [c for c in custom if c not in DEFAULT_ACTIONS]
@@ -119,6 +125,24 @@ class SimulationContext:
     external_event_turn: int | None = None
     turn_count: int = 0
     announced_pressure: set[str] = field(default_factory=set)
+    # LLM usage, for cost/latency/robustness evaluation
+    usage: dict[str, Any] = field(default_factory=lambda: {
+        "turn_calls": 0, "turn_tokens": 0, "turn_latency_ms": 0, "turn_failures": 0,
+        "strategy_calls": 0, "strategy_tokens": 0, "strategy_timeouts": 0, "strategy_failures": 0,
+    })
+
+    def record_llm(self, kind: str, metadata: dict | None = None, failed: bool = False,
+                   timed_out: bool = False) -> None:
+        u = self.usage
+        u[f"{kind}_calls"] = u.get(f"{kind}_calls", 0) + 1
+        md = metadata or {}
+        u[f"{kind}_tokens"] = u.get(f"{kind}_tokens", 0) + int(md.get("token_count") or 0)
+        if md.get("latency_ms"):
+            u[f"{kind}_latency_ms"] = u.get(f"{kind}_latency_ms", 0) + int(md["latency_ms"])
+        if failed:
+            u[f"{kind}_failures"] = u.get(f"{kind}_failures", 0) + 1
+        if timed_out:
+            u[f"{kind}_timeouts"] = u.get(f"{kind}_timeouts", 0) + 1
 
     def flag(self, name: str) -> bool:
         return bool((self.config.env_flags or {}).get(name, False))

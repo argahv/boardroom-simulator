@@ -121,7 +121,9 @@ class SocialPhysics(BaseModel):
             arch_deltas = _archetype_multipliers().get(archetype, {}).get(action_type, {})
             for field, mult in arch_deltas.items():
                 if field in delta:
-                    delta[field] *= mult
+                    # Multipliers scale magnitude; the sign in the table only
+                    # documents the delta's direction and must not flip it.
+                    delta[field] *= abs(mult)
 
         return SocialPhysics(
             trust=_clamp01(self.trust + delta["trust"]),

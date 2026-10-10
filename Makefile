@@ -1,4 +1,4 @@
-.PHONY: help setup install backend frontend worker-sim worker-postmortem workers dev db-generate test
+.PHONY: help setup install backend frontend worker-sim worker-postmortem workers dev db-generate test test-engine eval eval-offline eval-baseline
 
 BACKEND_DIR := backend
 FRONTEND_DIR := frontend
@@ -20,6 +20,10 @@ help:
 	@echo "  make workers          Run both workers in parallel"
 	@echo "  make db-generate      Regenerate Prisma client and apply patches"
 	@echo "  make dev              Run backend + frontend + both workers"
+	@echo "  make test-engine      Engine + eval unit tests (no DB, no API key)"
+	@echo "  make eval-offline     Run all benchmark scenarios with the stub LLM"
+	@echo "  make eval             Run scenarios with the real LLM + LLM judge (SEEDS=3 BASELINE=path)"
+	@echo "  make eval-baseline    Run scenarios with the real LLM and save the baseline report"
 	@echo ""
 
 setup:
@@ -79,3 +83,24 @@ test:
 	cd backend && DATABASE_URL=postgresql://boardroom:boardroom@localhost:5432/boardroom npx prisma db push --skip-generate
 	@echo "→ Running tests..."
 	cd backend && DATABASE_URL=postgresql://boardroom:boardroom@localhost:5432/boardroom $(VENV)/bin/python -m pytest tests/
+
+# ── Evaluation ──────────────────────────────────────────────────────────
+SEEDS ?= 3
+JUDGE_SAMPLE ?= 0.3
+BASELINE ?=
+EVAL_PY := cd $(BACKEND_DIR) && .venv/bin/python
+ENGINE_TESTS := tests/test_eval.py tests/test_behavioral_flow.py tests/test_behavior_engine.py \
+	tests/test_social_physics.py tests/test_internal_state.py tests/test_relationship_graph.py \
+	tests/test_archetypes.py tests/test_goal_evolution.py tests/test_runtime.py
+
+test-engine:
+	$(EVAL_PY) -m pytest --noconftest -q $(ENGINE_TESTS)
+
+eval-offline:
+	$(EVAL_PY) -m app.eval run --llm stub --seeds 2 --judge stub
+
+eval:
+	$(EVAL_PY) -m app.eval run --llm openrouter --seeds $(SEEDS) --judge llm --judge-sample $(JUDGE_SAMPLE) $(if $(BASELINE),--baseline $(BASELINE))
+
+eval-baseline:
+	$(EVAL_PY) -m app.eval run --llm openrouter --seeds $(SEEDS) --judge llm --judge-sample $(JUDGE_SAMPLE) --save-baseline data/eval/baseline.json

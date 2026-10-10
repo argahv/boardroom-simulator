@@ -113,8 +113,9 @@ async def test_full_behavioral_flow():
             assert t["directed_at"] in {"alice", "bob", "carol", "dave"}
             assert t["directed_at"] != t["agent_id"]
 
-    snapshots = [e for e in events if e.get("type") == "state_snapshot"]
+    snapshots = [e for e in events if e.get("type") == "state_snapshot" and not e.get("initial")]
     assert len(snapshots) == 12
+    assert [e for e in events if e.get("initial")], "an initial snapshot precedes the first turn"
     final = snapshots[-1]["data"]
 
     # Relationship layer: challenges breed rivalry, compromise/coalition build trust
