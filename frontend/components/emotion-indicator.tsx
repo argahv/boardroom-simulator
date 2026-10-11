@@ -8,14 +8,6 @@ interface EmotionIndicatorProps {
   size?: "sm" | "md" | "lg";
 }
 
-const EMOTION_ICONS: Record<string, string> = {
-  anger: "😠",
-  fear: "😨",
-  joy: "😊",
-  shame: "😳",
-  surprise: "😮",
-};
-
 const EMOTION_COLORS: Record<string, string> = {
   anger: "#ef4444",
   fear: "#a855f7",
@@ -25,7 +17,7 @@ const EMOTION_COLORS: Record<string, string> = {
 };
 
 export default function EmotionIndicator({ emotions, size = "md" }: EmotionIndicatorProps) {
-  const entries = Object.entries(emotions).filter(([_, v]) => v > 0.3);
+  const entries = Object.entries(emotions ?? {}).filter((e) => typeof e[1] === "number" && e[1] > 0.3);
   const dominant = entries.length > 0
     ? entries.reduce((a, b) => (a[1] > b[1] ? a : b))
     : null;
@@ -33,16 +25,17 @@ export default function EmotionIndicator({ emotions, size = "md" }: EmotionIndic
   const dotSize = size === "sm" ? 8 : size === "lg" ? 16 : 12;
 
   const dotRef = useRef<HTMLSpanElement>(null);
+  const dominantName = dominant?.[0];
 
   // Pulse animation when dominant emotion changes
   useEffect(() => {
-    if (!dotRef.current || !dominant) return;
+    if (!dotRef.current || !dominantName) return;
     gsap.fromTo(
       dotRef.current,
       { scale: 1.4, opacity: 0.7 },
       { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(2)" },
     );
-  }, [dominant?.[0]]);
+  }, [dominantName]);
 
   if (dominant) {
     return (

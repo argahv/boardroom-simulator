@@ -16,7 +16,10 @@ interface AgentDiff {
   agentName: string;
   diffs: DiffEntry[];
   relationshipChanges: string[];
+  /** Triggers that fired this turn. */
   triggerActivations: string[];
+  /** Triggers already active in the previous snapshot. */
+  triggersOngoing: string[];
 }
 
 interface StateDiffPanelProps {
@@ -41,36 +44,22 @@ function formatDelta(delta: number): string {
 export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPanelProps) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
-  const diffs = useMemo(() => {
-    if (!snapshots || snapshots.length === 0) return [];
+  const { diffs, prevTurn, hasSnapshot } = useMemo(() => {
+    const empty = { diffs: [] as AgentDiff[], prevTurn: null as number | null, hasSnapshot: false };
+    if (!snapshots || snapshots.length === 0) return empty;
 
     const currSnap = snapshots.find((s) => s.turn_index === currentTurn);
-    if (!currSnap) return [];
+    if (!currSnap) return empty;
 
-    // Turn 0: show starting state
-    if (currentTurn === 0) {
-      const d = currSnap.data;
-      const agentIds = Object.keys(d.social_physics ?? {});
-      return agentIds.map((id) => {
-        const sp = d.social_physics[id];
-        return {
-          agentId: id,
-          agentName: nameMap?.[id] ?? id,
-          diffs: SOCIAL_FIELDS.map((f) => ({
-            field: f.label,
-            from: sp[f.key],
-            to: sp[f.key],
-            delta: 0,
-            positive: true,
-          })),
-          relationshipChanges: [],
-          triggerActivations: sp.triggers ?? [],
-        } satisfies AgentDiff;
-      });
-    }
-
-    const prevSnap = snapshots.find((s) => s.turn_index === currentTurn - 1);
-    if (!prevSnap) return [];
+    // Diff against the latest earlier snapshot: the initial (turn_index -1) state for the first
+    // turn, and the last recorded state when intervening turns produced none.
+    const prevSnap = snapshots
+      .filter((s) => s.turn_index < currentTurn)
+      .reduce<(typeof snapshots)[number] | null>(
+        (best, s) => (best === null || s.turn_index > best.turn_index ? s : best),
+        null
+      );
+    if (!prevSnap) return { ...empty, hasSnapshot: true };
 
     const curr = currSnap.data;
     const prev = prevSnap.data;
@@ -79,7 +68,7 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
 
     for (const id of agentIds) {
       const currSp = curr.social_physics[id];
-      const prevSp = prev.social_physics[id];
+      const prevSp = prev.social_physics?.[id];
       if (!currSp || !prevSp) continue;
 
       const agentDiffs: DiffEntry[] = [];
@@ -108,12 +97,16 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
           if (!prevEntry.alliance && currEntry.alliance) {
             relChanges.push(`Alliance formed with ${targetName}`);
           }
+          if (prevEntry.alliance && !currEntry.alliance) {
+            relChanges.push(`Alliance with ${targetName} ended`);
+          }
           if (currEntry.rivalry - prevEntry.rivalry > 0.1) {
             relChanges.push(`Rivalry spikes with ${targetName}`);
           }
         }
       }
 
+      const prevTriggers = new Set(prevSp.triggers ?? []);
       const triggers = currSp.triggers ?? [];
 
       result.push({
@@ -121,11 +114,12 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
         agentName: nameMap?.[id] ?? id,
         diffs: agentDiffs,
         relationshipChanges: relChanges,
-        triggerActivations: triggers,
+        triggerActivations: triggers.filter((t) => !prevTriggers.has(t)),
+        triggersOngoing: triggers.filter((t) => prevTriggers.has(t)),
       });
     }
 
-    return result;
+    return { diffs: result, prevTurn: prevSnap.turn_index, hasSnapshot: true };
   }, [snapshots, currentTurn, nameMap]);
 
   const toggleAgent = (id: string) => {
@@ -137,24 +131,20 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
     });
   };
 
-  const showStarting = currentTurn === 0;
+  const label = (t: number) => (t < 0 ? "start" : `turn ${t + 1}`);
 
   return (
     <div className="rounded-xl border border-hairline bg-surface-card p-[18px]">
       <div className="mb-[14px] flex items-baseline justify-between">
-        <span className="text-[13px] font-semibold text-ink">
-          {showStarting ? "Initial State" : `Turn ${currentTurn} Changes`}
-        </span>
-        {!showStarting && (
-          <span className="text-[11px] text-muted">
-            vs turn {currentTurn - 1}
-          </span>
+        <span className="text-[13px] font-semibold text-ink">Turn {currentTurn + 1} changes</span>
+        {prevTurn !== null && (
+          <span className="text-[11px] text-muted">vs {label(prevTurn)}</span>
         )}
       </div>
       <div className="flex flex-col gap-[10px]">
         {diffs.length === 0 && (
           <span className="text-[12px] italic text-muted">
-            {showStarting ? "No agents loaded." : "No changes this turn."}
+            {hasSnapshot ? "No earlier state to compare with." : "No state recorded for this turn."}
           </span>
         )}
         {diffs.map((agent) => {
@@ -163,6 +153,8 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
             agent.diffs.length > 0 ||
             agent.relationshipChanges.length > 0 ||
             agent.triggerActivations.length > 0;
+          const changeCount =
+            agent.diffs.length + agent.relationshipChanges.length + agent.triggerActivations.length;
 
           return (
             <div
@@ -175,9 +167,9 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
               >
                 <span>{agent.agentName}</span>
                 <span className="flex items-center gap-2">
-                  {meaningful && !showStarting && (
+                  {meaningful && (
                     <span className="rounded-full bg-primary/10 px-2 py-[1px] text-[10px] text-primary">
-                      {agent.diffs.length}
+                      {changeCount}
                     </span>
                   )}
                   <span
@@ -189,7 +181,7 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
               </button>
               {isExpanded && (
                 <div className="border-t border-hairline px-3 py-2 text-[12px]">
-                  {!meaningful && (
+                  {!meaningful && agent.triggersOngoing.length === 0 && (
                     <span className="italic text-muted">No significant changes</span>
                   )}
 
@@ -219,14 +211,19 @@ export function StateDiffPanel({ snapshots, currentTurn, nameMap }: StateDiffPan
                     </div>
                   )}
 
-                  {agent.triggerActivations.length > 0 && (
+                  {(agent.triggerActivations.length > 0 || agent.triggersOngoing.length > 0) && (
                     <div>
                       <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-muted">
                         Triggers
                       </div>
-                      {agent.triggerActivations.map((t, i) => (
-                        <div key={i} className="text-[11px] text-amber-600">
-                          {t}
+                      {agent.triggerActivations.map((t) => (
+                        <div key={t} className="text-[11px] text-amber-600">
+                          {t.replace(/_/g, " ")} <span className="text-muted">(new)</span>
+                        </div>
+                      ))}
+                      {agent.triggersOngoing.map((t) => (
+                        <div key={t} className="text-[11px] text-muted">
+                          {t.replace(/_/g, " ")}
                         </div>
                       ))}
                     </div>

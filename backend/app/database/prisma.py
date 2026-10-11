@@ -411,6 +411,37 @@ class PrismaBackend(DatabaseBackend):
         except Exception:
             pass
 
+    async def save_simulation_outcome(self, simulation_id: str, outcome: dict) -> None:
+        """Keep how the run ended in simulations.metadata so replays can show the verdict."""
+        client = self._client_or_raise()
+        if not self._is_valid_uuid(simulation_id):
+            return
+        row = await client.simulations.find_first(where={"id": simulation_id})
+        if row is None:
+            return
+        meta = row.metadata
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        meta["outcome"] = outcome
+        await client.simulations.update(
+            where={"id": simulation_id},
+            data={"metadata": PrismaJson(meta), "updated_at": self._now()},
+        )
+
+    async def get_simulation_outcome(self, simulation_id: str) -> Optional[dict]:
+        client = self._client_or_raise()
+        if not self._is_valid_uuid(simulation_id):
+            return None
+        row = await client.simulations.find_first(where={"id": simulation_id})
+        if row is None:
+            return None
+        meta = row.metadata
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        outcome = meta.get("outcome") if isinstance(meta, dict) else None
+        return outcome if isinstance(outcome, dict) and outcome else None
+
     async def update_participant_stats(self, simulation_id: str) -> None:
         client = self._client_or_raise()
         try:
@@ -490,7 +521,7 @@ class PrismaBackend(DatabaseBackend):
             es = r.emotional_state
             if isinstance(es, str):
                 es = json.loads(es)
-            result.append({
+            row = {
                 "turn_index": r.turn_index,
                 "content": r.content,
                 "action_type": r.action_type,
@@ -500,7 +531,20 @@ class PrismaBackend(DatabaseBackend):
                 "created_at": str(r.created_at) if r.created_at else None,
                 "speaker": speaker.name if speaker else "",
                 "speaker_role": speaker.role if speaker else "",
-            })
+            }
+            # The stored event carries what the columns don't: the room's turn clock,
+            # who was addressed, votes and human interjections.
+            td = r.turn_data
+            if isinstance(td, str):
+                try:
+                    td = json.loads(td)
+                except ValueError:
+                    td = None
+            if isinstance(td, dict):
+                for key in ("turn_number", "agent_id", "directed_at", "directed_at_name", "vote", "is_human"):
+                    if td.get(key) is not None:
+                        row[key] = td[key]
+            result.append(row)
         return result
 
     async def list_simulations_v2(self) -> list[dict]:

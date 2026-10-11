@@ -9,37 +9,138 @@ import { RosterLayout } from "@/components/war-room/RosterLayout";
 import { TableLayout } from "@/components/war-room/TableLayout";
 import dynamic from "next/dynamic";
 const GraphLayout = dynamic(() => import("@/components/war-room/GraphLayout").then((m) => ({ default: m.GraphLayout })), { ssr: false });
-import { fetchSimulation, fetchSimulationTurns, streamSimulation, fetchPostmortem, injectTurn, exportSimulation, stopSimulation } from "@/lib/api";
-import { useSimulationState, type SimulationStateData } from "@/lib/use-simulation-state";
-import type { SimulationConfig } from "@/lib/types";
+import {
+  fetchSimulation, fetchSimulationTurns, fetchSimulationRecording, streamSimulation, fetchPostmortem,
+  injectTurn, exportSimulation, stopSimulation, type SimulationOutcome,
+} from "@/lib/api";
+import { useSimulationState } from "@/lib/use-simulation-state";
+import type { Postmortem, SimulationConfig } from "@/lib/types";
+import type { Turn } from "@/components/war-room/TranscriptStream";
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import { Button } from "@/components/Button";
 
 type PageProps = { params: Promise<{ id: string }> };
 
-type Turn = {
-  turn_index: number;
-  speaker: string;
-  speaker_role?: string;
-  content: string;
-  stance?: string;
-  reasoning?: string;
-  action_type?: string;
-  _index?: number;
-  agent_name?: string;
-  agent_role?: string;
-  internal_reasoning?: string;
-  // The room's turn clock (matches state snapshots); system rows inherit the last agent turn's.
-  turn_number: number;
-  agent_id?: string;
-  directed_at?: string | null;
-  vote?: string | null;
-  is_human?: boolean;
-  subtype?: string;
-};
+type RawEvent = Record<string, unknown>;
+
+const optStr = (v: unknown): string | undefined =>
+  v === undefined || v === null || v === "" ? undefined : String(v);
 
 // Turn number for a row appended after `prev`: agent turns carry their own.
 const lastTurnNumber = (prev: Turn[]) => (prev.length ? prev[prev.length - 1].turn_number : 0);
+
+// Floor grants, bid rounds and "Turn N." announcements are procedure, not story.
+const isProcedural = (evt: RawEvent) =>
+  evt.bid_round !== undefined || evt.granted_to !== undefined || /^Turn \d+\.?$/.test(String(evt.content ?? ""));
+
+/** A transcript row for a stream/recording/DB event, or null when it is not part of the transcript. */
+function toRow(evt: RawEvent, prev: Turn[]): Turn | null {
+  const _index = typeof evt._index === "number" ? evt._index : undefined;
+  if (evt.type === "turn") {
+    return {
+      turn_index: prev.length,
+      // Stored turns keep the room clock in turn_number (their turn_index is the event position).
+      turn_number: Number(evt.turn_number ?? evt.turn_index ?? 0),
+      speaker: String(evt.speaker ?? evt.agent_name ?? ""),
+      content: String(evt.content ?? ""),
+      kind: "agent",
+      speaker_role: optStr(evt.speaker_role) ?? optStr(evt.role) ?? optStr(evt.agent_role),
+      stance: optStr(evt.stance),
+      reasoning: optStr(evt.reasoning) ?? optStr(evt.internal_reasoning),
+      action_type: optStr(evt.action_type),
+      agent_id: optStr(evt.agent_id),
+      directed_at: optStr(evt.directed_at) ?? null,
+      directed_at_name: optStr(evt.directed_at_name) ?? null,
+      vote: optStr(evt.vote) ?? null,
+      is_human: Boolean(evt.is_human),
+      _index,
+    };
+  }
+  if (evt.type === "system" && !isProcedural(evt)) {
+    return {
+      turn_index: prev.length,
+      turn_number: lastTurnNumber(prev),
+      speaker: "⚙ System",
+      content: String(evt.content ?? ""),
+      kind: "system",
+      subtype: optStr(evt.subtype),
+      target_agent: optStr(evt.target_agent) ?? optStr(evt.departed) ?? optStr(evt.timed_out),
+      _index,
+    };
+  }
+  return null;
+}
+
+function outcomeOf(evt: RawEvent): SimulationOutcome | null {
+  // A bare done (e.g. the stored-turns fallback stream) says nothing about how the run ended.
+  if (!evt.reason && !evt.outcome_type) return null;
+  return {
+    reason: optStr(evt.reason),
+    outcome_type: optStr(evt.outcome_type),
+    summary: optStr(evt.summary),
+    confidence: typeof evt.confidence === "number" ? evt.confidence : undefined,
+    vote_breakdown: (evt.vote_breakdown as Record<string, number> | undefined) ?? undefined,
+    agreed_issues: Array.isArray(evt.agreed_issues) ? (evt.agreed_issues as SimulationOutcome["agreed_issues"]) : undefined,
+    walkaway_party: optStr(evt.walkaway_party) ?? null,
+    judge_notes: optStr(evt.judge_notes),
+    total_turns: typeof evt.total_turns === "number" ? evt.total_turns : undefined,
+  };
+}
+
+// One snapshot per turn: a later snapshot for the same turn replaces the earlier one.
+function upsertSnapshot(list: RawEvent[], evt: RawEvent): RawEvent[] {
+  const idx = list.findIndex((s) => s.turn_index === evt.turn_index);
+  if (idx < 0) return [...list, evt];
+  const next = [...list];
+  next[idx] = evt;
+  return next;
+}
+
+type Tone = "positive" | "negative" | "walkaway" | "neutral";
+
+function verdictOf(o: SimulationOutcome): { label: string; tone: Tone; icon: string } {
+  switch (o.outcome_type) {
+    case "agreement":
+      if (o.reason === "vote_majority") return { label: "Motion carried", tone: "positive", icon: "gavel" };
+      if (o.reason === "explicit_agreement") return { label: "Deal reached", tone: "positive", icon: "handshake" };
+      if (o.reason === "consensus") return { label: "Consensus reached", tone: "positive", icon: "handshake" };
+      return { label: "Agreement", tone: "positive", icon: "handshake" };
+    case "rejected":
+      return { label: "Motion rejected", tone: "negative", icon: "gavel" };
+    case "walkaway":
+      return { label: "Walkaway", tone: "walkaway", icon: "logout" };
+    case "impasse":
+      return { label: "Impasse", tone: "negative", icon: "block" };
+    case "judge_ruling":
+      return { label: "Judge ruling", tone: "positive", icon: "balance" };
+    default:
+      if (o.reason === "vote_incomplete") return { label: "Vote incomplete", tone: "neutral", icon: "how_to_vote" };
+      if (o.reason === "stopped") return { label: "Stopped", tone: "neutral", icon: "stop_circle" };
+      return { label: "No decision", tone: "neutral", icon: "remove" };
+  }
+}
+
+const TONE_STYLES: Record<Tone, { bg: string; border: string; text: string }> = {
+  positive: { bg: "rgba(110,116,72,0.10)", border: "rgba(110,116,72,0.20)", text: "var(--color-secondary)" },
+  negative: { bg: "rgba(186,26,26,0.08)", border: "rgba(186,26,26,0.15)", text: "var(--color-error)" },
+  walkaway: { bg: "rgba(233,185,74,0.10)", border: "rgba(233,185,74,0.20)", text: "var(--color-accent-amber)" },
+  neutral: { bg: "var(--color-surface-container-low)", border: "var(--color-hairline)", text: "var(--color-muted)" },
+};
+
+// Only vote shares and judge confidence are real measures; other checkers report a fixed or derived number.
+function outcomeMeasure(o: SimulationOutcome): { label: string; value: number } | null {
+  if (o.confidence === undefined) return null;
+  if (o.reason === "vote_majority") {
+    // Carried reports the yes share; rejected reports its complement.
+    return { label: "Support", value: o.outcome_type === "rejected" ? 1 - o.confidence : o.confidence };
+  }
+  if (o.reason === "judge_verdict" && o.confidence > 0) return { label: "Confidence", value: o.confidence };
+  return null;
+}
+
+const VOTE_KEYS: Array<[string, string]> = [["for", "For"], ["against", "Against"], ["abstain", "Abstain"]];
+
+const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
 export default function WarRoomPage({ params }: PageProps) {
   const { id } = use(params);
@@ -52,21 +153,15 @@ export default function WarRoomPage({ params }: PageProps) {
   const [speedMul, setSpeedMul] = useState<SpeedMultiplier>(1);
   const [playTurn, setPlayTurn] = useState(0);
   const [playing, setPlaying] = useState(true);
-  const [postmortem, setPostmortem] = useState<Record<string, unknown> | null>(null);
+  const [postmortem, setPostmortem] = useState<Postmortem | null>(null);
   const [loadingPostmortem, setLoadingPostmortem] = useState(false);
-  const [stateSnapshots, setStateSnapshots] = useState<Record<string, unknown>[]>([]);
+  const [stateSnapshots, setStateSnapshots] = useState<RawEvent[]>([]);
   const [isReplay, setIsReplay] = useState(false);
+  // Where a replay's turns and snapshots come from: the saved recording (full fidelity) or the DB.
+  const [replaySource, setReplaySource] = useState<"recording" | "db" | null>(null);
   const [failed, setFailed] = useState(false);
   const failedRef = useRef(false);
-  const [outcome, setOutcome] = useState<{
-    reason?: string;
-    outcome_type?: string;
-    summary?: string;
-    confidence?: number;
-    vote_breakdown?: Record<string, number>;
-    judge_notes?: string;
-    walkaway_party?: string;
-  } | null>(null);
+  const [outcome, setOutcome] = useState<SimulationOutcome | null>(null);
 
   const [humanContent, setHumanContent] = useState("");
   const [selectedStakeholder, setSelectedStakeholder] = useState("");
@@ -113,8 +208,9 @@ export default function WarRoomPage({ params }: PageProps) {
 
   const simState = useSimulationState({
     mode: isReplay ? "replay" : "live",
-    events: stateSnapshots,
-    simulationId: isReplay ? id : undefined,
+    // A replay from the recording brings its own snapshots; the DB fallback fetches /replay.
+    events: isReplay && replaySource !== "recording" ? undefined : stateSnapshots,
+    simulationId: isReplay && replaySource === "db" ? id : undefined,
     turnIndex: turns.length ? turns[Math.min(playTurn, turns.length - 1)]?.turn_number : undefined,
   });
 
@@ -139,27 +235,60 @@ export default function WarRoomPage({ params }: PageProps) {
     try { sessionStorage.setItem(persistKey, JSON.stringify({ speedMul, layout })); } catch {}
   }, [speedMul, layout, persistKey]);
 
+  // Replays prefer the saved recording (system events, snapshots, verdict); runs without one
+  // fall back to the stored turns, /replay snapshots and the outcome kept with the simulation.
+  const loadReplay = async (storedOutcome: SimulationOutcome | null, isCancelled: () => boolean) => {
+    try {
+      const rec = await fetchSimulationRecording(id);
+      const rows: Turn[] = [];
+      let snaps: RawEvent[] = [];
+      let recorded: SimulationOutcome | null = null;
+      for (const evt of rec.events ?? []) {
+        if (evt.type === "state_snapshot") snaps = upsertSnapshot(snaps, evt);
+        else if (evt.type === "done") recorded = outcomeOf(evt);
+        else {
+          const row = toRow(evt, rows);
+          if (row) rows.push(row);
+        }
+      }
+      if (rows.some((r) => r.kind === "agent")) {
+        if (isCancelled()) return;
+        setTurns(rows);
+        setStateSnapshots(snaps);
+        setOutcome(recorded ?? storedOutcome);
+        setReplaySource("recording");
+        setStatus("complete");
+        return;
+      }
+    } catch {
+      // No recording for this run.
+    }
+    try {
+      const stored = await fetchSimulationTurns(id);
+      if (isCancelled()) return;
+      const rows: Turn[] = [];
+      for (const t of stored) {
+        const row = toRow({ ...t, type: "turn" }, rows);
+        if (row) rows.push(row);
+      }
+      setTurns(rows);
+      setOutcome(storedOutcome);
+      setReplaySource("db");
+      setStatus("complete");
+    } catch (err) {
+      if (!isCancelled()) setError(err instanceof Error ? err.message : "Could not load the transcript");
+    }
+  };
+
   useEffect(() => {
+    let cancelled = false;
     fetchSimulation(id)
       .then((data) => {
         setConfig(data.config ?? null);
         if (data.status === "complete") {
           setIsReplay(true);
           setPlaying(false);
-          fetchSimulationTurns(id).then((turns) => {
-            const mapped = (turns as Array<Record<string, unknown>>).map((t) => ({
-              turn_index: Number(t.turn_index ?? 0),
-              turn_number: Number(t.turn_number ?? t.turn_index ?? 0),
-              speaker: String(t.speaker ?? ""),
-              speaker_role: t.speaker_role ? String(t.speaker_role) : t.role ? String(t.role) : undefined,
-              content: String(t.content ?? ""),
-              stance: t.stance ? String(t.stance) : undefined,
-              reasoning: t.internal_reasoning ? String(t.internal_reasoning) : undefined,
-              action_type: t.action_type ? String(t.action_type) : undefined,
-            }));
-            setTurns(mapped);
-            setStatus("complete");
-          }).catch((err) => setError(err instanceof Error ? err.message : "Could not load the transcript"));
+          loadReplay(data.outcome ?? null, () => cancelled);
         } else if (data.status === "running" || data.status === "idle") {
           // Starts the run if it has not started; otherwise attaches to it and catches up.
           startStream();
@@ -172,6 +301,7 @@ export default function WarRoomPage({ params }: PageProps) {
         setIsReplay(false);
       });
     return () => {
+      cancelled = true;
       // Disconnecting only detaches this viewer; the run carries on server-side.
       streamCtrl.current?.abort();
       streamStartedRef.current = false;
@@ -204,65 +334,21 @@ export default function WarRoomPage({ params }: PageProps) {
       id,
       (event) => {
         const evt = event as Record<string, unknown>;
-        if (evt.type === "turn") {
-          const turn: Turn = {
-            turn_index: Number(evt.turn_index ?? evt._index ?? turns.length),
-            turn_number: Number(evt.turn_index ?? 0),
-            agent_id: evt.agent_id ? String(evt.agent_id) : undefined,
-            directed_at: evt.directed_at ? String(evt.directed_at) : null,
-            vote: evt.vote ? String(evt.vote) : null,
-            is_human: Boolean(evt.is_human),
-            speaker: String(evt.speaker ?? evt.agent_name ?? ""),
-            speaker_role: evt.speaker_role ? String(evt.speaker_role) : evt.role ? String(evt.role) : evt.agent_role ? String(evt.agent_role) : undefined,
-            content: String(evt.content ?? ""),
-            stance: evt.stance ? String(evt.stance) : undefined,
-            reasoning: evt.reasoning ? String(evt.reasoning) : evt.internal_reasoning ? String(evt.internal_reasoning) : undefined,
-            action_type: evt.action_type ? String(evt.action_type) : undefined,
-          };
+        if (evt.type === "turn" || evt.type === "system") {
           setTurns((prev) => {
-            const updated = [...prev, turn];
+            const row = toRow(evt, prev);
+            if (!row) return prev;
+            const updated = [...prev, row];
             // Follow the live edge only while playing; paused, the view stays put.
             if (followRef.current) setPlayTurn(updated.length - 1);
             return updated;
           });
-        } else if (evt.type === "system") {
-          // Procedural bidding/floor announcements are not part of the story.
-          if (evt.bid_round !== undefined || evt.granted_to !== undefined || /^Turn \d+\.?$/.test(String(evt.content ?? ""))) return;
-          setTurns((prev) => {
-            const systemTurn: Turn = {
-              turn_index: prev.length,
-              turn_number: lastTurnNumber(prev),
-              speaker: "⚙ System",
-              content: String(evt.content ?? ""),
-              subtype: evt.subtype ? String(evt.subtype) : undefined,
-            };
-            const updated = [...prev, systemTurn];
-            return updated;
-          });
         } else if (evt.type === "done") {
           setStatus("complete");
-          // Capture structured outcome data
-          setOutcome({
-            reason: evt.reason as string | undefined,
-            outcome_type: evt.outcome_type as string | undefined,
-            summary: evt.summary as string | undefined,
-            confidence: evt.confidence as number | undefined,
-            vote_breakdown: evt.vote_breakdown as Record<string, number> | undefined,
-            judge_notes: evt.judge_notes as string | undefined,
-            walkaway_party: evt.walkaway_party as string | undefined,
-          });
+          const o = outcomeOf(evt);
+          if (o) setOutcome(o);
         } else if (evt.type === "state_snapshot") {
-          setStateSnapshots((prev) => {
-            // Deduplicate: if we already have a snapshot for this turn, replace it
-            const idx = evt.turn_index as number;
-            const existing = prev.findIndex((s) => (s as any).turn_index === idx);
-            if (existing >= 0) {
-              const next = [...prev];
-              next[existing] = evt;
-              return next;
-            }
-            return [...prev, evt];
-          });
+          setStateSnapshots((prev) => upsertSnapshot(prev, evt));
         } else if (evt.type === "error") {
           failedRef.current = true;
           setFailed(true);
@@ -320,25 +406,6 @@ export default function WarRoomPage({ params }: PageProps) {
     }
   }, [status, playTurn, turns.length, postmortem, loadingPostmortem, isReplay, failed, outcome]);
 
-  const current = turns[playTurn];
-  // Panels and timelines use the room's turn clock, not the row position.
-  const stateTurn = current?.turn_number ?? 0;
-  const ec = config?.end_condition as Record<string, unknown> | undefined;
-  const totalTurns = Math.max(1, simState.maxTurns ?? Number(ec?.max_normal_turns ?? ec?.max_turns ?? turns.length));
-  const done = !isReplay && status === "complete" && playTurn >= turns.length - 1;
-  const live = !isReplay && status === "running";
-  const speakerId = current?.speaker ?? null;
-  const subjectName = config?.subject?.name ?? "Debate";
-
-  const stakeholders = (config?.stakeholders ?? []).map((s) => ({
-    id: s.id, name: s.name, role: s.role, stance: s.stance,
-    lastContent: [...turns.slice(0, playTurn + 1)].reverse().find((t) => t.speaker === s.name)?.content ?? null,
-  }));
-
-  const eventLog = turns.slice(0, playTurn + 1).map((t) => ({
-    t: t.turn_index, text: `[agent] ${t.speaker} — ${t.content.slice(0, 120)}${t.content.length > 120 ? "…" : ""}`, full: t.content, type: "agent" as const,
-  }));
-
   const nameMap: Record<string, string> = useMemo(() => {
     const map: Record<string, string> = {};
     for (const s of config?.stakeholders ?? []) {
@@ -346,6 +413,72 @@ export default function WarRoomPage({ params }: PageProps) {
     }
     return map;
   }, [config]);
+
+  // Rows up to the playhead. Older stored turns lack target names, and human interjections
+  // carry no stance; both come from the config.
+  const shownTurns = useMemo(() => {
+    const stanceOf = new Map((config?.stakeholders ?? []).map((s) => [s.id, s.stance as string | undefined]));
+    return turns.slice(0, playTurn + 1).map((t) => {
+      if (t.kind !== "agent") return t;
+      const needsName = !!t.directed_at && !t.directed_at_name;
+      const needsStance = !t.stance && !!t.agent_id && !!stanceOf.get(t.agent_id);
+      if (!needsName && !needsStance) return t;
+      return {
+        ...t,
+        directed_at_name: needsName ? nameMap[t.directed_at as string] ?? null : t.directed_at_name,
+        stance: needsStance ? stanceOf.get(t.agent_id as string) : t.stance,
+      };
+    });
+  }, [turns, playTurn, nameMap, config]);
+  // The latest speech at the playhead; room events between turns do not take the floor.
+  const current = useMemo(
+    () => [...shownTurns].reverse().find((t) => t.kind === "agent") ?? shownTurns[shownTurns.length - 1],
+    [shownTurns],
+  );
+  // Panels and timelines use the room's turn clock, not the row position.
+  const stateTurn = turns[playTurn]?.turn_number ?? 0;
+  const ec = config?.end_condition as Record<string, unknown> | undefined;
+  const totalTurns = Math.max(1, simState.maxTurns ?? Number(ec?.max_normal_turns ?? ec?.max_turns ?? turns.length));
+  const atEnd = turns.length > 0 && playTurn >= turns.length - 1;
+  const done = status === "complete" && atEnd;
+  const live = !isReplay && status === "running";
+  const speakerId = current?.kind === "agent" ? current.speaker : null;
+  const subjectName = config?.subject?.name ?? "Debate";
+  const replayLoading = isReplay && !error && (replaySource === null || simState.loading);
+  // The verdict lands when playback reaches the end, live or replay.
+  const showVerdict = !!outcome && (atEnd || turns.length === 0);
+
+  const stakeholders = (config?.stakeholders ?? []).map((s) => ({
+    id: s.id, name: s.name, role: s.role, stance: s.stance,
+    lastContent: [...shownTurns].reverse().find((t) => t.kind === "agent" && (t.agent_id ? t.agent_id === s.id : t.speaker === s.name))?.content ?? null,
+  }));
+
+  const eventLog = useMemo(() => {
+    const entries = shownTurns.map((t) => {
+      if (t.kind === "system") {
+        const text = t.subtype === "external_event" ? t.content.replace(/^⚡\s*/, "") : t.content;
+        return { t: t.turn_number + 1, text: clip(text, 160), type: t.subtype ?? "system", full: t.content };
+      }
+      const target = t.directed_at_name ? ` → ${t.directed_at_name}` : "";
+      const vote = t.action_type === "vote" && t.vote ? ` votes ${t.vote.toUpperCase()}` : "";
+      return {
+        t: t.turn_number + 1,
+        text: `${t.speaker}${target}${vote}: ${clip(t.content, 120)}`,
+        type: t.is_human ? "human" : t.action_type ?? "statement",
+        full: t.content,
+      };
+    });
+    if (showVerdict && outcome) {
+      const v = verdictOf(outcome);
+      entries.push({
+        t: (shownTurns.length ? shownTurns[shownTurns.length - 1].turn_number : 0) + 1,
+        text: outcome.summary ? `${v.label} — ${clip(outcome.summary, 140)}` : v.label,
+        type: "outcome",
+        full: outcome.summary ?? v.label,
+      });
+    }
+    return entries;
+  }, [shownTurns, showVerdict, outcome]);
 
   return (
     <AppShell activeTab="War Room">
@@ -405,14 +538,14 @@ export default function WarRoomPage({ params }: PageProps) {
         />
 
         <div style={{ flex: 1, overflowY: "auto", background: "var(--color-canvas)" }}>
-          {isReplay && simState.loading && (
+          {replayLoading && (
             <div style={{ display: "flex", justifyContent: "center", alignItems: "center", padding: 64, flexDirection: "column", gap: 16 }}>
               <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-ink/30 border-t-ink" />
-              <span style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading replay snapshots…</span>
+              <span style={{ fontSize: 13, color: "var(--color-muted)" }}>Loading replay…</span>
             </div>
           )}
 
-          {(!isReplay || !simState.loading) && (
+          {!replayLoading && (
           <div ref={layoutRef}>
             {displayedLayout === "roster" && (
               <RosterLayout
@@ -422,7 +555,7 @@ export default function WarRoomPage({ params }: PageProps) {
                 stakeholders={stakeholders}
                 speakerId={speakerId}
                 eventLog={eventLog}
-                turns={turns.slice(0, playTurn + 1)}
+                turns={shownTurns}
                 scrollRef={scrollRef}
                 totalTurns={totalTurns}
                 simState={simState}
@@ -437,7 +570,7 @@ export default function WarRoomPage({ params }: PageProps) {
                 stakeholders={stakeholders}
                 speakerId={speakerId}
                 eventLog={eventLog}
-                turns={turns.slice(0, playTurn + 1)}
+                turns={shownTurns}
                 totalTurns={totalTurns}
                 simState={simState}
                 nameMap={nameMap}
@@ -450,7 +583,7 @@ export default function WarRoomPage({ params }: PageProps) {
                 playing={playing && live}
                 stakeholders={stakeholders}
                 speakerId={speakerId}
-                turns={turns.slice(0, playTurn + 1)}
+                turns={shownTurns}
                 totalTurns={totalTurns}
                 eventLog={eventLog}
                 simState={simState}
@@ -485,47 +618,61 @@ export default function WarRoomPage({ params }: PageProps) {
           )}
 
           {/* ── Verdict — outcome banner ── */}
-          {outcome && (() => {
-            const type = outcome.outcome_type;
-            const isAgree = type === "agreement";
-            const isWalkaway = type === "walkaway";
-            const tintBg = isAgree ? "rgba(110,116,72,0.10)" : isWalkaway ? "rgba(233,185,74,0.10)" : "rgba(186,26,26,0.08)";
-            const tintBorder = isAgree ? "rgba(110,116,72,0.20)" : isWalkaway ? "rgba(233,185,74,0.20)" : "rgba(186,26,26,0.15)";
-            const tintText = isAgree ? "var(--color-secondary)" : isWalkaway ? "var(--color-accent-amber)" : "var(--color-error)";
+          {showVerdict && outcome && (() => {
+            const v = verdictOf(outcome);
+            const tone = TONE_STYLES[v.tone];
+            const measure = outcomeMeasure(outcome);
+            const deal = outcome.reason === "explicit_agreement" ? outcome.agreed_issues?.[0] : undefined;
+            const proposer = deal?.proposed_by ? nameMap[deal.proposed_by] ?? deal.proposed_by : null;
+            const walker = outcome.walkaway_party ? nameMap[outcome.walkaway_party] ?? outcome.walkaway_party : null;
+            const breakdown = outcome.vote_breakdown ?? {};
+            const hasVotes = VOTE_KEYS.some(([k]) => breakdown[k] !== undefined);
             return (
             <div style={{
               padding: "18px 24px", margin: "0 16px 16px", borderRadius: 12,
-              background: tintBg, border: `1px solid ${tintBorder}`,
+              background: tone.bg, border: `1px solid ${tone.border}`,
               position: "relative", overflow: "hidden",
             }}>
               <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
                 <div style={{
                   width: 32, height: 32, borderRadius: 9999, display: "flex", alignItems: "center", justifyContent: "center",
-                  background: tintText, color: "#fff", fontSize: 11, fontWeight: 700,
+                  background: tone.text, color: "#fff",
                   flexShrink: 0, marginTop: 2,
                 }}>
-                  {isAgree ? "A" : isWalkaway ? "W" : "X"}
+                  <span className="material-symbols-outlined" style={{ fontSize: 18 }} aria-hidden>{v.icon}</span>
                 </div>
-                <div style={{ flex: 1 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ marginBottom: 4 }}>
                     <span style={{
                       fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.12em",
-                      textTransform: "uppercase", color: tintText,
+                      textTransform: "uppercase", color: tone.text,
                     }}>
-                      {isAgree ? "Deal Reached" : isWalkaway ? "Walkaway" : type === "judge_ruling" ? "Judge Ruling" : "No Consensus"}
+                      {v.label}
                     </span>
                   </div>
                   <p style={{ fontSize: 14, fontWeight: 600, color: "var(--color-ink)", margin: 0, lineHeight: 1.4 }}>
-                    {outcome.summary || `Simulation ended via ${outcome.reason || "unknown"}.`}
+                    {deal && proposer
+                      ? `Every party accepted ${proposer}'s proposal.`
+                      : outcome.summary || `The meeting ended (${(outcome.reason ?? "unknown").replace(/_/g, " ")}).`}
                   </p>
 
-                  {/* Vote breakdown */}
-                  {outcome.vote_breakdown && Object.keys(outcome.vote_breakdown).length > 0 && (
+                  {deal?.proposal && (
+                    <blockquote style={{ margin: "10px 0 0", paddingLeft: 12, borderLeft: `2px solid ${tone.text}`, fontSize: 13, lineHeight: 1.55, color: "var(--color-ink)", maxWidth: 620 }}>
+                      &ldquo;{clip(deal.proposal, 600)}&rdquo;
+                      {proposer && (
+                        <span style={{ display: "block", marginTop: 4, fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--color-muted)" }}>
+                          Proposed by {proposer}
+                        </span>
+                      )}
+                    </blockquote>
+                  )}
+
+                  {hasVotes && (
                     <div style={{ display: "flex", gap: 20, marginTop: 12 }}>
-                      {Object.entries(outcome.vote_breakdown).map(([key, val]) => (
+                      {VOTE_KEYS.map(([key, label]) => (
                         <div key={key} style={{ textAlign: "center" }}>
-                          <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", color: "var(--color-ink)" }}>{String(val)}</div>
-                          <div style={{ fontSize: 9, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 600, marginTop: 1 }}>{key}</div>
+                          <div style={{ fontSize: 18, fontWeight: 700, fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", color: "var(--color-ink)" }}>{breakdown[key] ?? 0}</div>
+                          <div style={{ fontSize: 9, color: "var(--color-muted)", textTransform: "uppercase", letterSpacing: "0.12em", fontWeight: 600, marginTop: 1 }}>{label}</div>
                         </div>
                       ))}
                     </div>
@@ -536,18 +683,18 @@ export default function WarRoomPage({ params }: PageProps) {
                       &ldquo;{outcome.judge_notes}&rdquo;
                     </p>
                   )}
-                  {outcome.walkaway_party && (
+                  {walker && (
                     <p style={{ fontSize: 11, color: "var(--color-accent-amber)", marginTop: 6, fontFamily: "var(--font-mono)" }}>
-                      Walked: {outcome.walkaway_party}
+                      {walker} walked out
                     </p>
                   )}
                 </div>
 
-                {outcome.confidence !== undefined && (
+                {measure && (
                   <div style={{ textAlign: "right", flexShrink: 0 }}>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-muted)" }}>Confidence</span>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: "var(--color-muted)" }}>{measure.label}</span>
                     <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", color: "var(--color-ink)" }}>
-                      {Math.round(outcome.confidence * 100)}<span style={{ fontSize: 14, color: "var(--color-muted)" }}>%</span>
+                      {Math.round(measure.value * 100)}<span style={{ fontSize: 14, color: "var(--color-muted)" }}>%</span>
                     </div>
                   </div>
                 )}
@@ -556,7 +703,17 @@ export default function WarRoomPage({ params }: PageProps) {
             );
           })()}
 
-          {postmortem && (
+          {postmortem && (() => {
+            const reports = [...(postmortem.stakeholder_reports ?? [])].sort((a, b) => (b.total_turns ?? 0) - (a.total_turns ?? 0));
+            const totalTurnsPm = postmortem.termination?.total_turns ?? outcome?.total_turns ?? turns.filter((t) => t.kind === "agent").length;
+            const participants = reports.length || config?.stakeholders?.length || 0;
+            const tile = (label: string, value: string | number) => (
+              <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
+                <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>{label}</p>
+                <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{value}</p>
+              </div>
+            );
+            return (
             <>
               <div style={{ padding: 16, maxWidth: 700, margin: "0 auto 0" }}>
                 <div className="mb-4 text-center" style={{ display: "flex", justifyContent: "center", gap: 12 }}>
@@ -579,56 +736,54 @@ export default function WarRoomPage({ params }: PageProps) {
               <div style={{ padding: "0 16px 32px", maxWidth: 700, margin: "0 auto" }}>
               <div style={{ background: "var(--color-surface-dark)", borderRadius: 12, padding: 24, color: "var(--color-on-dark)" }}>
                 <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.28em", textTransform: "uppercase", color: "var(--color-primary)", marginBottom: 4 }}>Post-Mortem</p>
-                <h3 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 16 }}>{String(postmortem.subject || "Debate")}</h3>
+                {config?.subject?.name && (
+                  <h3 style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 32, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 16 }}>{config.subject.name}</h3>
+                )}
 
-                {/* Show verdict if available */}
                 {!!postmortem.verdict && (
                   <div style={{ marginBottom: 16, padding: "10px 14px", borderRadius: 8, background: "var(--color-surface-dark-elevated)" }}>
                     <p style={{ fontSize: 13, color: "var(--color-on-dark-soft)", margin: 0 }}>
-                      <strong style={{ color: "var(--color-on-dark)" }}>Verdict:</strong> {String(postmortem.verdict)}
+                      <strong style={{ color: "var(--color-on-dark)" }}>Verdict:</strong> {postmortem.verdict}
                     </p>
                     {!!postmortem.end_reason && (
                       <p style={{ fontSize: 12, color: "var(--color-on-dark-soft)", margin: "4px 0 0" }}>
-                        Ended via: {String(postmortem.end_reason)}
+                        Ended via: {postmortem.end_reason.replace(/_/g, " ")}
                       </p>
                     )}
                   </div>
                 )}
 
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 16 }}>
-                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
-                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Total turns</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.total_turns ?? (postmortem.termination as { total_turns?: number } | undefined)?.total_turns ?? 0)}</p>
-                  </div>
-                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
-                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Participants</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.stakeholder_count ?? (postmortem.stakeholder_reports as unknown[] | undefined)?.length ?? config?.stakeholders?.length ?? 0)}</p>
-                  </div>
-                  <div style={{ borderRadius: 12, background: "var(--color-surface-dark-elevated)", padding: 16 }}>
-                    <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-on-dark-soft)", marginBottom: 4, letterSpacing: "0.08em", textTransform: "uppercase" }}>Voltage</p>
-                    <p style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 28, fontWeight: 700, letterSpacing: "-0.03em" }}>{String(postmortem.voltage || config?.voltage || 0)}</p>
-                  </div>
+                  {tile("Total turns", totalTurnsPm)}
+                  {participants > 0 && tile("Participants", participants)}
+                  {config?.voltage !== undefined && tile("Voltage", config.voltage)}
                 </div>
 
-                {/* Summary if available */}
                 {!!postmortem.summary && (
                   <div style={{ marginBottom: 16, padding: 12, borderRadius: 8, background: "var(--color-surface-dark-soft)" }}>
                     <p style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--color-primary)", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase", marginBottom: 4 }}>Summary</p>
-                    <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-on-dark-soft)", margin: 0 }}>{String(postmortem.summary)}</p>
+                    <p style={{ fontSize: 13, lineHeight: 1.6, color: "var(--color-on-dark-soft)", margin: 0 }}>{postmortem.summary}</p>
                   </div>
                 )}
 
-                {(postmortem.leaderboard as Array<{ name: string; stance: string; turns: number }>)?.map((entry, i) => (
-                  <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: i === 0 ? "var(--color-surface-dark-elevated)" : "transparent", borderRadius: 8, marginBottom: 4 }}>
-                    <span style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif", fontSize: 20, width: 28, letterSpacing: "-0.03em", color: i === 0 ? "var(--color-on-dark)" : "var(--color-on-dark-soft)" }}>#{i + 1}</span>
-                    <div style={{ flex: 1 }}><span style={{ fontWeight: 600 }}>{entry.name}</span><span style={{ marginLeft: 8, fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--color-on-dark-soft)" }}>{entry.stance}</span></div>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-on-dark-soft)" }}>{entry.turns} turns</span>
+                {reports.map((r, i) => (
+                  <div key={r.agent_id ?? r.name} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 12px", background: i === 0 ? "var(--color-surface-dark-elevated)" : "transparent", borderRadius: 8, marginBottom: 4 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ fontWeight: 600 }}>{r.name}</span>
+                      {r.stance && <span style={{ marginLeft: 8, fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--color-on-dark-soft)" }}>{r.stance}</span>}
+                      {!!r.position_shifts && <span style={{ marginLeft: 8, fontSize: 11, color: "var(--color-on-dark-soft)" }}>{r.position_shifts} shift{r.position_shifts === 1 ? "" : "s"}</span>}
+                    </div>
+                    {r.dominant_action && (
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--color-on-dark-soft)" }}>mostly {r.dominant_action.replace(/_/g, " ")}</span>
+                    )}
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--color-on-dark-soft)" }}>{r.total_turns ?? 0} turns</span>
                   </div>
                 ))}
               </div>
             </div>
             </>
-          )}
+            );
+          })()}
         </div>
 
         {/* ── Human Turn Input (only while the room is live) ── */}

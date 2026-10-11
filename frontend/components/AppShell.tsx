@@ -43,7 +43,7 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
     <div className="min-h-screen bg-canvas text-ink overflow-x-hidden">
       {!hideTopNav && (
       <nav
-        className="fixed top-0 left-0 right-0 h-16 z-50 bg-canvas border-b border-hairline flex items-center px-6 gap-6"
+        className="fixed top-0 left-0 right-0 h-16 z-50 bg-canvas border-b border-hairline flex items-center px-3 sm:px-6 gap-3 sm:gap-6"
         aria-label="Top navigation"
       >
         <Link href="/" className="flex items-center gap-2.5 shrink-0">
@@ -55,7 +55,7 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
           </span>
         </Link>
 
-        <div className="flex-1 flex items-center justify-center gap-1 relative" role="tablist">
+        <div className="flex-1 min-w-0 flex items-center sm:justify-center gap-1 relative overflow-x-auto" role="tablist">
           {NAV_TABS.map((tab) => {
             const isActive = tab.label === activeTab || (tab.label === "War Room" && pathname.startsWith("/simulate"));
             return (
@@ -64,7 +64,7 @@ export function AppShell({ children, activeTab = "War Room", hideTopNav = false 
                 href={tab.href}
                 role="tab"
                 aria-selected={isActive}
-                className={`relative px-5 py-2 text-sm font-medium transition-colors duration-150 ${
+                className={`relative shrink-0 whitespace-nowrap px-3 sm:px-5 py-2 text-sm font-medium transition-colors duration-150 ${
                   isActive
                     ? "text-ink"
                     : "text-muted hover:text-ink"

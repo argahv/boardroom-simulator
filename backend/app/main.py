@@ -933,6 +933,39 @@ def _evolution_result(event: dict, stance: str) -> dict:
     return result
 
 
+_OUTCOME_KEYS = ("reason", "outcome_type", "summary", "confidence", "vote_breakdown",
+                 "agreed_issues", "walkaway_party", "judge_notes", "total_turns")
+
+
+def _outcome_of(event: dict) -> dict:
+    """The verdict fields of a done event, small enough to keep on the simulation row."""
+    return {k: event[k] for k in _OUTCOME_KEYS if event.get(k) not in (None, "", [], {})}
+
+
+async def _persist_outcome(simulation_id: str, entry: dict, event: dict) -> None:
+    entry["outcome"] = _outcome_of(event)
+    try:
+        await get_database().save_simulation_outcome(simulation_id, entry["outcome"])
+    except Exception as exc:
+        logger.warning("OUTCOME_SAVE_ERR %s: %s", simulation_id, exc)
+
+
+async def _stored_outcome(simulation_id: str) -> dict | None:
+    """How a finished run ended: from memory while it is still there, else from the DB."""
+    entry = _active_simulations.get(simulation_id)
+    if entry is not None:
+        if entry.get("outcome"):
+            return entry["outcome"]
+        ctx = entry.get("context")
+        # The run task may not have processed its done event yet.
+        done = next((e for e in reversed(ctx.space.events) if e.get("type") == "done"), None) if ctx else None
+        return _outcome_of(done) if done else None
+    try:
+        return await get_database().get_simulation_outcome(simulation_id)
+    except Exception:
+        return None
+
+
 def _save_recording(ctx) -> None:
     """Persist the run as a replayable JSON recording for offline evaluation."""
     if not app_config.RECORDINGS_DIR or ctx is None:
@@ -1064,6 +1097,7 @@ async def _run_simulation_task(simulation_id: str, entry: dict, config: Simulati
                     await _db.update_participant_stats(simulation_id)
                 except Exception as exc:
                     logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+                await _persist_outcome(simulation_id, entry, event)
                 _schedule_post_simulation(config, simulation_id, event, ctx)
                 _save_recording(ctx)
                 asyncio.create_task(_cleanup_simulation(simulation_id))
@@ -1076,6 +1110,8 @@ async def _run_simulation_task(simulation_id: str, entry: dict, config: Simulati
             await get_database().update_simulation_status(simulation_id, "complete")
         except Exception as exc:
             logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+        # A stopped run still replays with its system events and verdict.
+        _save_recording(ctx)
         raise
     except Exception as exc:
         logger.exception("SIM_RUN_ERR simulation_id=%s", simulation_id)
@@ -1156,11 +1192,13 @@ async def stop_simulation_handler(simulation_id: str) -> dict:
             raise HTTPException(status_code=409, detail="Simulation is not running")
         ctx = entry["context"]
         entry["status"] = "complete"  # visible at once; cancellation finishes in the background
+    done = {"type": "done", "agent_id": "__scheduler__", "reason": "stopped",
+            "outcome_type": "no_decision", "summary": "The simulation was stopped.",
+            "total_turns": ctx.turn_count}
     # Viewers see the ending before the run shuts the room down.
-    await ctx.space.publish({"type": "done", "agent_id": "__scheduler__", "reason": "stopped",
-                             "outcome_type": "no_decision", "summary": "The simulation was stopped.",
-                             "total_turns": ctx.turn_count})
+    await ctx.space.publish(done)
     task.cancel()
+    await _persist_outcome(simulation_id, entry, done)
     return {"status": "stopping"}
 
 
@@ -1233,6 +1271,9 @@ async def get_simulation_handler(simulation_id: str) -> dict:
             pass
         if not response:
             raise HTTPException(status_code=404, detail="Simulation not found")
+
+    if response["status"] == "complete":
+        response["outcome"] = await _stored_outcome(simulation_id)
 
     # Attach document metadata (exclude extracted_text / filepath)
     # Prefer in-memory documents when available
@@ -1447,6 +1488,13 @@ async def postmortem_handler(simulation_id: str) -> dict:
         outcome_type="no_decision",
         total_turns=len(space.events) if hasattr(space, "events") else 0,
     )
+    # The real ending, when it was recorded, so the verdict matches what happened.
+    stored = await _stored_outcome(simulation_id)
+    if stored:
+        try:
+            tr = TerminationResult(**{**tr.model_dump(), **stored})
+        except Exception as exc:
+            logger.warning("Stored outcome unusable for postmortem sim=%s: %s", simulation_id, exc)
 
     try:
         pm = await gen.generate(simulation_id, tr)

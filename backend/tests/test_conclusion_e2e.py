@@ -425,7 +425,7 @@ class TestPostmortemGenerator:
 
         # Verify ALL sections exist
         assert pm.simulation_id == "test-sim-123"
-        assert pm.verdict == "Deal reached"
+        assert pm.verdict == "Motion carried"
         assert pm.end_reason == "vote_majority"
         assert pm.termination.reason == "vote_majority"
         assert len(pm.stakeholder_reports) == 4

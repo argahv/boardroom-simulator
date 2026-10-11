@@ -219,6 +219,9 @@ export function ControlBar({
           borderRadius: 9999,
           background: "var(--color-surface-card)",
           margin: "0 auto",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          maxWidth: "100%",
         }}
       >
         <PlaybackBtn onClick={onRestart} title="Restart">
@@ -308,6 +311,7 @@ export function ControlBar({
             color: "var(--color-ink)",
             padding: "0 8px",
             fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
           }}
         >
           <span ref={turnRef}>Turn {Math.min(total, turn + 1)}</span> / {total}

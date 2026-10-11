@@ -295,8 +295,32 @@ export type SimulationListItem = {
 export const fetchSimulations = () =>
   request<SimulationListItem[]>("/simulations");
 
+// How a finished run ended (the fields of its `done` event).
+export type SimulationOutcome = {
+  reason?: string;
+  outcome_type?: string;
+  summary?: string;
+  confidence?: number;
+  vote_breakdown?: Record<string, number>;
+  agreed_issues?: Array<{ proposal?: string; proposed_by?: string; position?: string }>;
+  walkaway_party?: string | null;
+  judge_notes?: string;
+  total_turns?: number;
+};
+
 export const fetchSimulation = (simulationId: string) =>
-  request<{ config: SimulationConfig; status: string }>(`/simulations/${simulationId}`);
+  request<{ config: SimulationConfig; status: string; outcome?: SimulationOutcome | null }>(`/simulations/${simulationId}`);
+
+// The full event log of a run (turns, system events, snapshots, done); 404 when none was saved.
+export type SimulationRecording = {
+  simulation_id: string;
+  config: SimulationConfig;
+  events: Array<Record<string, unknown>>;
+  meta?: Record<string, unknown>;
+};
+
+export const fetchSimulationRecording = (simulationId: string) =>
+  request<SimulationRecording>(`/simulations/${simulationId}/recording`);
 
 export const injectTurn = (simulationId: string, stakeholderId: string, content: string) =>
   request<Record<string, unknown>>(`/simulations/${simulationId}/inject`, {

@@ -7,9 +7,9 @@ interface TrustLeveragePanelProps {
 }
 
 // Scores arrive as 0–1 from the behavior engine; older data may already be 0–100.
-const toPct = (v: number | undefined) => {
-  if (v === undefined || Number.isNaN(v)) return 50;
-  return Math.round(v <= 1 ? v * 100 : v);
+const toPct = (v: number | undefined): number | null => {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  return Math.max(0, Math.min(100, Math.round(v <= 1 ? v * 100 : v)));
 };
 
 export default function TrustLeveragePanel({ trustScores = {}, leverageScores = {}, nameMap = {} }: TrustLeveragePanelProps) {
@@ -28,16 +28,16 @@ export default function TrustLeveragePanel({ trustScores = {}, leverageScores = 
             <div className="flex items-center gap-2">
               <span className="w-8 text-xs">Trust</span>
               <div className="h-2 w-16 rounded-full bg-gray-200">
-                <div className="h-full rounded-full bg-green-500" style={{ width: `${trust}%` }} />
+                {trust !== null && <div className="h-full rounded-full bg-green-500" style={{ width: `${trust}%` }} />}
               </div>
-              <span className="w-6 text-xs tabular-nums">{trust}</span>
+              <span className="w-6 text-xs tabular-nums">{trust ?? "—"}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="w-8 text-xs">Lev</span>
               <div className="h-2 w-16 rounded-full bg-gray-200">
-                <div className="h-full rounded-full bg-amber-500" style={{ width: `${lev}%` }} />
+                {lev !== null && <div className="h-full rounded-full bg-amber-500" style={{ width: `${lev}%` }} />}
               </div>
-              <span className="w-6 text-xs tabular-nums">{lev}</span>
+              <span className="w-6 text-xs tabular-nums">{lev ?? "—"}</span>
             </div>
             </div>
           </div>

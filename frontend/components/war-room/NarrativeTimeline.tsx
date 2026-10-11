@@ -1,85 +1,89 @@
 "use client";
 
-interface Phase {
+import type { RoomPoint } from "@/lib/use-simulation-state";
+
+type Tone = "risk" | "calm" | "clash" | "trust" | "pressure";
+
+interface Marker {
   atTurn: number;
   label: string;
-  type: "intro" | "clash" | "escalation" | "resolution" | "conclusion";
+  tone: Tone;
 }
 
 interface NarrativeTimelineProps {
+  /** Current room turn index (0-based). */
   turn: number;
   totalTurns: number;
-  phases?: Phase[];
+  /** Snapshot history up to the current turn; markers are derived from it. */
+  simState?: { roomHistory?: RoomPoint[] } | null;
   dark?: boolean;
 }
 
-const PHASE_STYLES: Record<
-  Phase["type"],
-  { dot: string; text: string; hex: string }
-> = {
-  intro: {
-    dot: "bg-accent-teal",
-    text: "text-accent-teal",
-    hex: "var(--color-accent-teal)",
-  },
-  clash: {
-    dot: "bg-primary",
-    text: "text-primary",
-    hex: "var(--color-primary)",
-  },
-  escalation: {
-    dot: "bg-primary-active",
-    text: "text-primary-active",
-    hex: "var(--color-primary-active)",
-  },
-  resolution: {
-    dot: "bg-accent-amber",
-    text: "text-accent-amber",
-    hex: "var(--color-accent-amber)",
-  },
-  conclusion: {
-    dot: "bg-green-500",
-    text: "text-green-500",
-    hex: "#22c55e",
-  },
+const TONE_STYLES: Record<Tone, { dot: string; text: string }> = {
+  risk: { dot: "bg-primary", text: "text-primary" },
+  calm: { dot: "bg-accent-teal", text: "text-accent-teal" },
+  clash: { dot: "bg-primary-active", text: "text-primary-active" },
+  trust: { dot: "bg-accent-amber", text: "text-accent-amber" },
+  pressure: { dot: "bg-secondary", text: "text-secondary" },
 };
 
-function defaultPhases(totalTurns: number): Phase[] {
-  const t = Math.max(totalTurns, 1);
-  return [
-    { atTurn: Math.floor(t * 0.1), label: "Intro", type: "intro" },
-    { atTurn: Math.floor(t * 0.3), label: "First Clash", type: "clash" },
-    { atTurn: Math.floor(t * 0.55), label: "Escalation", type: "escalation" },
-    { atTurn: Math.floor(t * 0.8), label: "Resolution", type: "resolution" },
-    { atTurn: Math.floor(t * 0.95), label: "Conclusion", type: "conclusion" },
-  ];
+// The backend changes behaviour at these levels: agents shift tactics at deadlock risk 0.6,
+// and the scheduler announces time pressure at 0.5 and 0.8.
+const DEADLOCK_LEVEL = 0.6;
+const PRESSURE_LEVELS: [number, string][] = [
+  [0.5, "Time pressure 50%"],
+  [0.8, "Time pressure critical"],
+];
+
+const pct = (v: number) => `${Math.round(v * 100)}%`;
+
+function deriveMarkers(history: RoomPoint[]): Marker[] {
+  const pts = history.filter((p) => p.turn >= 0);
+  const markers: Marker[] = [];
+
+  const firstRisk = pts.find((p) => (p.deadlockRisk ?? 0) >= DEADLOCK_LEVEL);
+  if (firstRisk) {
+    markers.push({ atTurn: firstRisk.turn, label: `Deadlock risk ${pct(firstRisk.deadlockRisk ?? 0)}`, tone: "risk" });
+    const eased = pts.find(
+      (p) => p.turn > firstRisk.turn && p.deadlockRisk !== null && p.deadlockRisk < DEADLOCK_LEVEL
+    );
+    if (eased) markers.push({ atTurn: eased.turn, label: "Deadlock risk eased", tone: "calm" });
+  }
+
+  const tension = pts.filter((p) => p.tension !== null);
+  if (tension.length >= 2) {
+    const peak = tension.reduce((a, b) => ((b.tension ?? 0) > (a.tension ?? 0) ? b : a));
+    if (peak.turn !== tension[0].turn) {
+      markers.push({ atTurn: peak.turn, label: `Tension peak ${pct(peak.tension ?? 0)}`, tone: "clash" });
+    }
+  }
+
+  const trust = pts.filter((p) => p.trust !== null);
+  if (trust.length >= 2) {
+    const low = trust.reduce((a, b) => ((b.trust ?? 1) < (a.trust ?? 1) ? b : a));
+    if (low.turn !== trust[0].turn) {
+      markers.push({ atTurn: low.turn, label: `Trust low ${pct(low.trust ?? 0)}`, tone: "trust" });
+    }
+  }
+
+  for (const [level, label] of PRESSURE_LEVELS) {
+    const hit = pts.find((p) => (p.timePressure ?? 0) >= level);
+    if (hit) markers.push({ atTurn: hit.turn, label, tone: "pressure" });
+  }
+
+  return markers.sort((a, b) => a.atTurn - b.atTurn);
 }
 
 export function NarrativeTimeline({
   turn,
   totalTurns,
-  phases,
+  simState,
   dark = false,
 }: NarrativeTimelineProps) {
-  const pct = Math.min(
-    100,
-    ((turn + 1) / Math.max(totalTurns, 1)) * 100
-  );
-  const resolved = phases ?? defaultPhases(totalTurns);
-
-  let activeIdx = -1;
-  for (let i = resolved.length - 1; i >= 0; i--) {
-    if (turn >= resolved[i].atTurn) {
-      activeIdx = i;
-      break;
-    }
-  }
-  const activePhase = activeIdx >= 0 ? resolved[activeIdx] : null;
-  const barColor = activePhase
-    ? PHASE_STYLES[activePhase.type].hex
-    : dark
-      ? "var(--color-primary)"
-      : "var(--color-ink)";
+  const total = Math.max(totalTurns, 1);
+  const pct100 = Math.min(100, ((turn + 1) / total) * 100);
+  const markers = deriveMarkers(simState?.roomHistory ?? []);
+  const position = (t: number) => Math.min(100, ((t + 1) / total) * 100);
 
   return (
     <div
@@ -102,7 +106,7 @@ export function NarrativeTimeline({
             dark ? "text-canvas/50" : "text-muted"
           }`}
         >
-          {Math.round(pct)}%
+          {Math.round(pct100)}%
         </span>
       </div>
 
@@ -113,63 +117,35 @@ export function NarrativeTimeline({
       >
         <div
           className="absolute inset-0 rounded-full transition-all duration-[600ms]"
-          style={{ width: `${pct}%`, background: barColor }}
+          style={{ width: `${pct100}%`, background: dark ? "var(--color-primary)" : "var(--color-ink)" }}
         />
 
-        {resolved.map((phase) => {
-          const pos =
-            (phase.atTurn / Math.max(totalTurns, 1)) * 100;
-          const isActive = turn >= phase.atTurn;
-          const s = PHASE_STYLES[phase.type];
-          return (
-            <div
-              key={phase.type}
-              className={`absolute top-1/2 h-[7px] w-[7px] rounded-full transition-all duration-300 ${
-                isActive
-                  ? s.dot
-                  : dark
-                    ? "bg-canvas/15"
-                    : "bg-ink/20"
-              }`}
-              style={{
-                left: `${pos}%`,
-                transform: "translate(-50%, -50%)",
-              }}
-            />
-          );
-        })}
+        {markers.map((m) => (
+          <div
+            key={`${m.tone}-${m.label}`}
+            title={`T${m.atTurn + 1} · ${m.label}`}
+            className={`absolute top-1/2 h-[7px] w-[7px] rounded-full ring-2 ${
+              dark ? "ring-surface-dark" : "ring-surface-card"
+            } ${TONE_STYLES[m.tone].dot}`}
+            style={{ left: `${position(m.atTurn)}%`, transform: "translate(-50%, -50%)" }}
+          />
+        ))}
       </div>
 
-      <div className="relative mt-[6px] h-[16px]">
-        {resolved.map((phase) => {
-          const pos =
-            (phase.atTurn / Math.max(totalTurns, 1)) * 100;
-          const isActive = turn >= phase.atTurn;
-          const s = PHASE_STYLES[phase.type];
-          return (
-            <div
-              key={phase.type}
-              className="absolute top-0 whitespace-nowrap"
-              style={{
-                left: `${pos}%`,
-                transform: "translateX(-50%)",
-              }}
+      {markers.length > 0 && (
+        <div className="mt-[8px] flex flex-wrap gap-x-3 gap-y-1">
+          {markers.map((m) => (
+            <span
+              key={`${m.tone}-${m.label}`}
+              className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.08em]"
             >
-              <span
-                className={`text-[9px] font-bold uppercase tracking-[0.08em] transition-colors duration-300 ${
-                  isActive
-                    ? s.text
-                    : dark
-                      ? "text-canvas/25"
-                      : "text-muted/40"
-                }`}
-              >
-                {phase.label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
+              <span className={`inline-block h-[6px] w-[6px] rounded-full ${TONE_STYLES[m.tone].dot}`} />
+              <span className={dark ? "text-canvas/50" : "text-muted"}>T{m.atTurn + 1}</span>
+              <span className={TONE_STYLES[m.tone].text}>{m.label}</span>
+            </span>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
