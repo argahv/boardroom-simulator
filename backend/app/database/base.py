@@ -160,6 +160,21 @@ class DatabaseBackend(ABC):
     async def get_persona_detail(self, persona_id: str) -> dict | None:
         pass
 
+    @abstractmethod
+    async def get_stakeholder_detail(self, stakeholder_id: str) -> dict | None:
+        """The persona JSON for exactly this id, with sim_count, total_turns and document_count."""
+        pass
+
+    @abstractmethod
+    async def get_persona_profile(self, persona_id: str) -> dict | None:
+        """Like get_persona_detail (same id/slug/name resolution) plus the stats."""
+        pass
+
+    @abstractmethod
+    async def get_simulation_summary(self, simulation_id: str) -> dict | None:
+        """{subject, outcome, names, stances} of a run, for describing what a persona went through."""
+        pass
+
     # Persona documents
 
     @abstractmethod

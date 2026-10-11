@@ -1,6 +1,9 @@
 import type {
   DashboardAnalytics,
   DocumentMeta,
+  DraftPersonaResponse,
+  DraftSimulationRequest,
+  DraftSimulationResponse,
   EvolutionProposal,
   KnowledgeQueryResult,
   Postmortem,
@@ -8,8 +11,16 @@ import type {
   SimulationState,
   SimulationConfig,
   Stakeholder,
+  StakeholderPatch,
   StateSnapshotData,
   StateSnapshotEvent,
+} from "@/lib/types";
+
+export type {
+  DraftPersonaResponse,
+  DraftSimulationRequest,
+  DraftSimulationResponse,
+  StakeholderPatch,
 } from "@/lib/types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -97,6 +108,54 @@ export const deleteStakeholder = (id: string) =>
   request<void>(`/stakeholders/${id}`, {
     method: "DELETE",
   });
+
+export const getStakeholder = (id: string) =>
+  request<Stakeholder>(`/stakeholders/${encodeURIComponent(id)}`);
+
+/** Partial edit for autosave; omitted fields are left alone and personality is merged. */
+export const patchStakeholder = (id: string, patch: StakeholderPatch) =>
+  request<Stakeholder>(`/stakeholders/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+// ── AI drafts ──────────────────────────────────────────────────────
+// The server falls back to templates / keyword parsing when the LLM is unavailable,
+// so these only reject on a real request failure.
+
+export const draftPersona = (text: string) =>
+  request<DraftPersonaResponse>("/drafts/persona", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+
+export const draftSimulation = (req: DraftSimulationRequest) =>
+  request<DraftSimulationResponse>("/drafts/simulation", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export async function draftSimulationFromFiles(
+  brief: string,
+  personaIds: string[],
+  files: File[],
+): Promise<DraftSimulationResponse> {
+  const formData = new FormData();
+  formData.append("brief", brief);
+  formData.append("persona_ids", personaIds.join(","));
+  files.forEach((f) => formData.append("files", f));
+  // No Content-Type: the browser sets the multipart boundary.
+  const res = await fetch(`${API_URL}/drafts/simulation/upload`, {
+    method: "POST",
+    body: formData,
+    headers: { "X-Request-ID": genRequestId() },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Draft failed with ${res.status}`);
+  }
+  return res.json();
+}
 
 // ── Persona Documents ──────────────────────────────────────────────
 

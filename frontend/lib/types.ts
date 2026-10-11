@@ -24,6 +24,22 @@ export type Stakeholder = {
   stance?: AgentStance;
   personality?: PersonalityProfile;
   tools?: string[];
+  archetype?: AgentArchetype | null;
+  tool_profile?: string;
+  document_count?: number;
+};
+
+/** PATCH /stakeholders/{id}: any subset; personality is merged trait by trait. */
+export type StakeholderPatch = {
+  name?: string;
+  role?: string;
+  focus?: string;
+  backstory?: string;
+  stance?: AgentStance;
+  archetype?: AgentArchetype | null;
+  hidden_agenda?: string;
+  tag?: string | null;
+  personality?: Partial<PersonalityProfile>;
 };
 
 export type SimulationCreate = {
@@ -428,7 +444,7 @@ export type KnowledgeQueryResult = {
     chunk_id: string;
     text: string;
     score: number;
-    metadata: any;
+    metadata: { source?: string; [key: string]: unknown } | null;
   }>;
 };
 
@@ -518,6 +534,49 @@ export type EvolutionProposal = {
   status: "pending" | "approved" | "rejected";
   applied_at: string | null;
   created_at: string;
+  simulation_subject: string | null;
+  /** Plain words from this persona's seat, e.g. "lost the vote", "deal reached", "walked out". */
+  outcome: string | null;
+  /** One sentence, e.g. "After 'Series B' (lost the vote): +5 stubbornness, -3 empathy". */
+  reason: string;
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI drafts (POST /drafts/persona, /drafts/simulation)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export type DraftPersona = {
+  name: string;
+  role: string;
+  focus: string;
+  backstory: string;
+  stance: AgentStance;
+  archetype: AgentArchetype | null;
+  personality: PersonalityProfile;
+  hidden_agenda: string;
+};
+
+export type DraftPersonaResponse = {
+  persona: DraftPersona;
+  source: "llm" | "fallback";
+  /** Fields the AI inferred rather than read, e.g. ["hidden_agenda"]. */
+  guessed: string[];
+};
+
+export type DraftSimulationRequest = {
+  brief?: string;
+  persona_ids?: string[];
+  /** Template slug. */
+  template?: string;
+  /** With `instruction`, refine this config instead of starting over. */
+  current?: SimulationConfig;
+  instruction?: string;
+};
+
+export type DraftSimulationResponse = {
+  config: SimulationConfig;
+  source: "llm" | "template" | "fallback";
+  notes: string[];
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

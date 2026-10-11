@@ -342,6 +342,90 @@ def _is_extreme_outcome(simulation_result: dict[str, Any]) -> bool:
     return False
 
 
+# ── Plain-words context ─────────────────────────────────────────────────
+
+
+def outcome_words(
+    outcome: dict[str, Any] | None,
+    stance: str | None = None,
+    persona_id: str = "",
+    names: dict[str, str] | None = None,
+) -> str | None:
+    """How a finished meeting ended, seen from one participant's seat.
+
+    ``outcome`` is the stored termination (reason, outcome_type, walkaway_party).
+    Mirrors the mapping that picks the deltas, so the words match the change.
+    """
+    if not outcome:
+        return None
+    reason = outcome.get("reason", "")
+    kind = outcome.get("outcome_type", "")
+    if reason == "vote_majority" and kind in ("agreement", "rejected"):
+        carried = kind == "agreement"
+        if stance == "champion":
+            return "won the vote" if carried else "lost the vote"
+        if stance == "detractor":
+            return "lost the vote" if carried else "won the vote"
+        return "deal reached" if carried else "voted down"
+    if kind in ("agreement", "judge_ruling") or reason in ("consensus", "explicit_agreement"):
+        return "deal reached"
+    if kind == "walkaway" or reason in ("walkaway", "deadlock_walkaway"):
+        party = outcome.get("walkaway_party")
+        if not party:
+            return "impasse"
+        if party == persona_id:
+            return "walked out"
+        other = (names or {}).get(party)
+        return f"{other} walked out" if other else "someone walked out"
+    if kind == "impasse":
+        return "impasse"
+    return "no decision"
+
+
+_RESULT_WORDS = {
+    "consensus": "deal reached",
+    "walkaway": "walked out",
+    "deadlock": "impasse",
+    "timeout": "no decision",
+}
+
+
+def result_words(simulation_result: dict[str, Any], stance: str = "") -> str | None:
+    """Fallback words from the evolution-rule input when the stored termination is unavailable."""
+    kind = simulation_result.get("outcome_type")
+    if kind == "vote":
+        won = _did_stance_win(stance, simulation_result.get("vote_result", ""), simulation_result)
+        # An undecidable vote applies the loss rule, so say so.
+        return "won the vote" if won else "lost the vote"
+    return _RESULT_WORDS.get(kind or "")
+
+
+def describe_evolution(
+    subject: str | None,
+    outcome: str | None,
+    deltas: dict[str, Any],
+) -> str:
+    """One sentence, e.g. "After 'Series B' (lost the vote): +5 stubbornness, -3 empathy"."""
+    subject = (subject or "").strip()
+    if len(subject) > 60:
+        subject = subject[:57].rstrip() + "..."
+    head = f"After '{subject}'" if subject else "After a meeting"
+    if outcome:
+        head += f" ({outcome})"
+
+    order = {t: i for i, t in enumerate(TRAITS)}
+    numeric = [
+        (k, int(v)) for k, v in (deltas or {}).items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and int(v) != 0
+    ]
+    numeric.sort(key=lambda kv: (-abs(kv[1]), order.get(kv[0], len(order)), kv[0]))
+    changes = [f"{v:+d} {k}" for k, v in numeric]
+    stance_to = (deltas or {}).get("stance")
+    if isinstance(stance_to, str) and stance_to:
+        changes.append(f"stance to {stance_to}")
+    return f"{head}: {', '.join(changes)}" if changes else f"{head}: no change"
+
+
 # ── Database-Backed Service ─────────────────────────────────────────────
 
 import json as _json
@@ -368,6 +452,12 @@ class EvolutionService:
         proposal = compute_evolution(
             persona_id, current_personality, current_stance, simulation_result
         )
+        meeting = await self._meeting(simulation_id)
+        outcome = None
+        if meeting.get("outcome"):
+            outcome = outcome_words(meeting["outcome"], current_stance, persona_id, meeting.get("names"))
+        outcome = outcome or result_words(simulation_result, current_stance)
+        subject = meeting.get("subject") or None
         evo = PersonaEvolution(
             id=str(_uuid4()),
             persona_id=persona_id,
@@ -379,9 +469,22 @@ class EvolutionService:
             status="pending",
             applied_at=None,
             created_at=_dt.now(_tz.utc).isoformat(),
+            simulation_subject=subject,
+            outcome=outcome,
+            reason=describe_evolution(subject, outcome, proposal["deltas"]),
         )
         await self._db.create_persona_evolution(evo)
+        proposal["outcome"] = outcome
+        proposal["reason"] = evo.reason
         return proposal
+
+    async def _meeting(self, simulation_id: str) -> dict:
+        """Subject, stored termination and seat names of the run; {} when unknown."""
+        try:
+            return await self._db.get_simulation_summary(simulation_id) or {}
+        except Exception as exc:
+            logger.info("No meeting context for evolution sim=%s: %s", simulation_id, exc)
+            return {}
 
     async def get_pending_evolutions(self, persona_id: str) -> list[dict]:
         raw = await self._db.get_pending_evolutions(persona_id)
@@ -403,6 +506,9 @@ clamp_trait = _clamp_trait
 __all__ = [
     "compute_evolution_deltas",
     "compute_evolution",
+    "outcome_words",
+    "result_words",
+    "describe_evolution",
     "clamp_trait",
     "EvolutionService",
     "MAX_DELTA",

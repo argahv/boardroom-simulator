@@ -79,6 +79,9 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestSizeLimitMiddleware)
 
+from .drafts import router as drafts_router  # noqa: E402
+app.include_router(drafts_router)
+
 # Serve uploaded files in dev (auth not required for static mount)
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
 os.makedirs(config.CHROMA_PERSIST_DIR, exist_ok=True)
@@ -240,6 +243,8 @@ def health() -> dict[str, str | bool]:
 
 # ── Stakeholders (DB-backed) ─────────────────────────────────────────────
 
+from .models import StakeholderPatch, normalize_personality
+
 @app.get("/stakeholders")
 async def list_stakeholders_api() -> list[dict]:
     db = get_database()
@@ -252,6 +257,13 @@ async def list_stakeholders_api() -> list[dict]:
     logger.info("list_stakeholders (detail): %d personas", len(personas))
     return personas
 
+async def _persona_json(stakeholder_id: str) -> dict:
+    persona = await get_database().get_stakeholder_detail(stakeholder_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    return persona
+
+
 @app.post("/stakeholders", status_code=201)
 async def create_stakeholder_api(payload: Stakeholder) -> dict:
     db = get_database()
@@ -260,7 +272,11 @@ async def create_stakeholder_api(payload: Stakeholder) -> dict:
     await db.create_stakeholder(s)
     has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
     logger.info("create_stakeholder %s (detail=%s): name=%s role=%s", sid, has_detail, s.name, s.role)
-    return s.model_dump()
+    return await _persona_json(sid)
+
+@app.get("/stakeholders/{stakeholder_id}")
+async def get_stakeholder_api(stakeholder_id: str) -> dict:
+    return await _persona_json(stakeholder_id)
 
 @app.put("/stakeholders/{stakeholder_id}")
 async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> dict:
@@ -268,11 +284,37 @@ async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> d
     existing = await db.get_stakeholder(stakeholder_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
-    s = payload.model_copy(update={"id": stakeholder_id})
+    update: dict = {"id": stakeholder_id}
+    # Older editors PUT the whole persona without knowing about archetype; don't wipe it.
+    if "archetype" not in payload.model_fields_set:
+        update["archetype"] = existing.archetype
+    s = payload.model_copy(update=update)
     await db.update_stakeholder(s)
     has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
     logger.info("update_stakeholder %s (detail=%s): name=%s role=%s", stakeholder_id, has_detail, s.name, s.role)
-    return s.model_dump()
+    return await _persona_json(stakeholder_id)
+
+# Fields a PATCH may clear with null; for the rest null means "leave as is".
+_NULLABLE_PERSONA_FIELDS = {"archetype", "tag"}
+
+@app.patch("/stakeholders/{stakeholder_id}")
+async def patch_stakeholder_api(stakeholder_id: str, payload: StakeholderPatch) -> dict:
+    db = get_database()
+    existing = await db.get_stakeholder(stakeholder_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    changes = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items()
+        if v is not None or k in _NULLABLE_PERSONA_FIELDS
+    }
+    if "personality" in changes:
+        merged = normalize_personality(existing.personality)
+        merged.update({k: v for k, v in changes["personality"].items() if v is not None})
+        changes["personality"] = json.dumps(merged, separators=(",", ":"))
+    if changes:
+        await db.update_stakeholder(existing.model_copy(update=changes))
+    logger.info("patch_stakeholder %s fields=%s", stakeholder_id, sorted(changes))
+    return await _persona_json(stakeholder_id)
 
 @app.delete("/stakeholders/{stakeholder_id}", status_code=204)
 async def delete_stakeholder_api(stakeholder_id: str) -> Response:
@@ -288,12 +330,9 @@ async def delete_stakeholder_api(stakeholder_id: str) -> Response:
 
 @app.get("/personas/{persona_id}")
 async def get_persona_api(persona_id: str) -> dict:
-    db = get_database()
-    persona = await db.get_persona_detail(persona_id)
+    persona = await get_database().get_persona_profile(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
-    docs = await db.get_persona_documents(persona_id)
-    persona["document_count"] = len(docs)
     return persona
 
 
@@ -517,13 +556,14 @@ async def approve_evolution(evolution_id: str):
         raise HTTPException(status_code=404, detail="Persona not found")
 
     deltas = json.loads(evo.proposed_deltas) if isinstance(evo.proposed_deltas, str) else evo.proposed_deltas
-    current = json.loads(persona["personality"]) if isinstance(persona["personality"], str) else persona["personality"]
+    current = normalize_personality(persona["personality"])
 
     updated = {}
-    for trait in ("aggressiveness", "empathy", "stubbornness", "verbosity"):
-        cur = current.get(trait, 50)
+    for trait, cur in current.items():
         delta = deltas.get(trait, 0)
-        updated[trait] = max(0, min(100, cur + delta))
+        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+            delta = 0
+        updated[trait] = max(0, min(100, int(cur + delta)))
 
     new_personality_json = json.dumps(updated)
     await db.update_persona(evo.persona_id, new_personality_json)
@@ -535,7 +575,7 @@ async def approve_evolution(evolution_id: str):
     logger.info("Evolution approved & applied persona=%s evolution=%s deltas=%s personality_after=%s",
                 evo.persona_id, evolution_id, evo.proposed_deltas, new_personality_json)
 
-    return {"status": "approved", "evolution_id": evolution_id}
+    return {"status": "approved", "evolution_id": evolution_id, "personality": updated}
 
 
 @app.post("/evolutions/{evolution_id}/reject")

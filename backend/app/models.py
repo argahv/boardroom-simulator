@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Annotated, Literal, Optional
-from pydantic import BaseModel, Field, BeforeValidator
+from pydantic import BaseModel, Field, BeforeValidator, StringConstraints
 
 ActionType = Literal["statement", "question", "challenge", "compromise", "agreement", "coalition_signal", "interrupt", "escalate", "vote", "walkaway"]
 ModelTemperature = Literal["stable", "volatile"]
@@ -66,19 +66,81 @@ def _json_str(v: object) -> str:
         return v
     return json.dumps(v, separators=(",", ":"))
 
+
+STANCES = ("champion", "detractor", "neutral", "moderator", "wildcard")
+ARCHETYPES = ("opportunist", "idealist", "diplomat", "pragmatist", "agitator", "guardian")
+PERSONALITY_TRAITS = ("aggressiveness", "empathy", "stubbornness", "verbosity")
+
+PersonaStance = Literal["champion", "detractor", "neutral", "moderator", "wildcard"]
+PersonaArchetype = Literal["opportunist", "idealist", "diplomat", "pragmatist", "agitator", "guardian"]
+
+
+def _lower(v: object) -> object:
+    return v.strip().lower() if isinstance(v, str) else v
+
+
+def _stance(v: object) -> object:
+    v = _lower(v)
+    return "neutral" if v in (None, "") else v
+
+
+def _archetype(v: object) -> object:
+    v = _lower(v)
+    return None if v == "" else v
+
+
+def normalize_personality(raw: object) -> dict[str, int]:
+    """All four traits as ints in 0..100, whatever shape (JSON string, partial dict) was stored."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw) if raw.strip() else {}
+        except ValueError:
+            raw = {}
+    if not isinstance(raw, dict):
+        raw = {}
+    out: dict[str, int] = {}
+    for trait in PERSONALITY_TRAITS:
+        value = raw.get(trait)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            value = 50
+        out[trait] = max(0, min(100, int(round(value))))
+    return out
+
+
 class Stakeholder(BaseModel):
     id: str
     name: str
-    role: str
-    focus: str
+    role: str = ""
+    focus: str = ""
     incentive_tuning: int = Field(default=50, ge=0, le=100)
     hidden_agenda: str = ""
     tag: Optional[str] = None  # SKEPTICAL / AGREEABLE / LOCKED / CALIBRATING / VISIONARY
     tool_profile: ToolProfile = "none"  # determines which tools this agent gets
     backstory: str = ""
-    stance: str = "neutral"
+    stance: Annotated[PersonaStance, BeforeValidator(_stance)] = "neutral"
     personality: Annotated[str, BeforeValidator(_json_str)] = "{}"
     tools: Annotated[str, BeforeValidator(_json_str)] = "[]"
+    archetype: Annotated[Optional[PersonaArchetype], BeforeValidator(_archetype)] = None
+
+
+class PersonalityPatch(BaseModel):
+    aggressiveness: Optional[int] = Field(default=None, ge=0, le=100)
+    empathy: Optional[int] = Field(default=None, ge=0, le=100)
+    stubbornness: Optional[int] = Field(default=None, ge=0, le=100)
+    verbosity: Optional[int] = Field(default=None, ge=0, le=100)
+
+
+class StakeholderPatch(BaseModel):
+    """Partial persona edit (autosave). Omitted fields are left alone; personality is merged trait by trait."""
+    name: Optional[Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]] = None
+    role: Optional[str] = None
+    focus: Optional[str] = None
+    backstory: Optional[str] = None
+    stance: Annotated[Optional[PersonaStance], BeforeValidator(_lower)] = None
+    archetype: Annotated[Optional[PersonaArchetype], BeforeValidator(_archetype)] = None
+    hidden_agenda: Optional[str] = None
+    tag: Optional[str] = None
+    personality: Optional[PersonalityPatch] = None
 
 
 class ScenarioTemplate(BaseModel):
@@ -375,6 +437,9 @@ class PersonaEvolution(BaseModel):
     status: str = "pending"
     applied_at: str | None = None
     created_at: str = ""
+    simulation_subject: str | None = None
+    outcome: str | None = None  # plain words from this persona's seat, e.g. "lost the vote"
+    reason: str = ""  # one sentence, built from subject + outcome + deltas; never stored
 
 
 class PersonaResearch(BaseModel):
