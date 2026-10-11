@@ -1180,6 +1180,20 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
     )
 
 
+@app.delete("/simulations/{simulation_id}", status_code=204)
+async def delete_simulation_handler(simulation_id: str) -> Response:
+    """Delete a finished or never-started simulation and everything recorded for it."""
+    async with _simulations_lock:
+        entry = _active_simulations.get(simulation_id)
+        if entry is not None and entry.get("status") == "running":
+            raise HTTPException(status_code=409, detail="Stop the simulation before deleting it")
+        _active_simulations.pop(simulation_id, None)
+    deleted = await get_database().delete_simulation(simulation_id)
+    if not deleted and entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    return Response(status_code=204)
+
+
 @app.post("/simulations/{simulation_id}/stop")
 async def stop_simulation_handler(simulation_id: str) -> dict:
     """Stop a running simulation on purpose."""

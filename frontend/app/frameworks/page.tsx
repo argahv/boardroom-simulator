@@ -49,7 +49,7 @@ export default function FrameworksPage() {
   };
 
   return (
-    <AppShell activeTab="Frameworks">
+    <AppShell>
       <div className="px-8 py-8">
         <div className="mb-8">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary">Frameworks</p>

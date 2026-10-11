@@ -481,7 +481,7 @@ export default function WarRoomPage({ params }: PageProps) {
   }, [shownTurns, showVerdict, outcome]);
 
   return (
-    <AppShell activeTab="War Room">
+    <AppShell>
       <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh" }}>
         {/* ── The Brief — editorial header stripe ── */}
         <div style={{ padding: "28px 32px 20px", borderBottom: "1px solid var(--color-hairline)", background: "var(--color-surface-card)" }}>

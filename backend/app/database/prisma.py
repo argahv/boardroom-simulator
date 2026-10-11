@@ -266,13 +266,14 @@ class PrismaBackend(DatabaseBackend):
 
     async def delete_simulation(self, simulation_id: str) -> bool:
         client = self._client_or_raise()
-        try:
-            row = await client.simulations.delete(
-                where={"simulation_id": simulation_id},
-            )
-            return row is not None
-        except Exception:
+        if not self._is_valid_uuid(simulation_id):
             return False
+        if await client.simulations.find_first(where={"id": simulation_id}) is None:
+            return False
+        # semantic_memories does not cascade from simulations; the rest of the run's rows do.
+        await client.semantic_memories.delete_many(where={"simulation_id": simulation_id})
+        await client.simulations.delete(where={"id": simulation_id})
+        return True
 
     # ------------------------------------------------------------------
     # Postmortem methods

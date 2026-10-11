@@ -251,7 +251,7 @@ export default function PersonasPage() {
   };
 
   return (
-    <AppShell activeTab="Personas">
+    <AppShell>
       <div className="px-8 py-8">
       <div className="mb-8">
         <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Strategic Archetypes</p>

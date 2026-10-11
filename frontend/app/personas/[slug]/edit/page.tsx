@@ -61,7 +61,7 @@ export default function EditPersonaPage({ params }: PageProps) {
   };
 
   return (
-    <AppShell activeTab="Personas">
+    <AppShell>
       <div className="px-8 py-8">
         <Link href="/personas" className="inline-flex items-center gap-1 text-xs text-muted hover:text-ink transition mb-6">
           <span className="material-symbols-outlined text-[14px]">arrow_back</span>

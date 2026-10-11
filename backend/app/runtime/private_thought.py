@@ -34,6 +34,8 @@ class StrategicThought:
         return {
             "agent_id": self.agent_id,
             "public_position": self.public_position,
+            # For observers of the run (the war room), not for other agents, who see get_public_state().
+            "private_concern": self.private_concern[:240] + "..." if len(self.private_concern) > 240 else self.private_concern,
             "strategy_hint": self.strategy[:100] + "..." if len(self.strategy) > 100 else self.strategy,
             "confidence": self.confidence,
             "last_revised": self.last_revised,

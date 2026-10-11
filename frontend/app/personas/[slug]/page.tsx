@@ -186,7 +186,7 @@ export default function AgentDetailPage({ params }: PageProps) {
   // GSAP entrance animations removed
 
   return (
-    <AppShell activeTab="Personas">
+    <AppShell>
       <div className="px-8 py-8">
         <Link href="/personas" className="text-xs text-muted hover:text-ink transition-colors inline-flex items-center gap-1 mb-6">
           <span className="material-symbols-outlined text-[14px]">arrow_back</span>

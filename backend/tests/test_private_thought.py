@@ -68,6 +68,7 @@ def test_strategic_thought_snapshot():
     snap = t.snapshot()
     assert snap["agent_id"] == "agent_a"
     assert snap["public_position"] == "I support"
+    assert snap["private_concern"] == "I worry"
     assert "strategy_hint" in snap
 
 

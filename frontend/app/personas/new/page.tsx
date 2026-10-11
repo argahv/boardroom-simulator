@@ -35,7 +35,7 @@ export default function NewPersonaPage() {
   };
 
   return (
-    <AppShell activeTab="Personas">
+    <AppShell>
       <div className="px-8 py-8">
         {error && (
           <div className="mb-6 rounded-2xl bg-primary/10 p-4 text-sm text-primary-active">{error}</div>

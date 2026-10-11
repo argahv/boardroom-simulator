@@ -73,6 +73,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     elapsedMs,
   });
 
+  // 204 No Content (deletes) has no body to parse.
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 };
 
@@ -343,6 +345,9 @@ export const fetchSimulationReplay = async (simulationId: string): Promise<State
     data: s.data,
   }));
 };
+
+export const deleteSimulation = (simulationId: string) =>
+  request<void>(`/simulations/${simulationId}`, { method: "DELETE" });
 
 export const stopSimulation = (simulationId: string) =>
   request<{ status: string }>(`/simulations/${simulationId}/stop`, { method: "POST" });
