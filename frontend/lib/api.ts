@@ -459,6 +459,51 @@ export const fetchSimulationAnalytics = () =>
 export const fetchAnalyticsDashboard = () =>
   request<DashboardAnalytics>("/analytics/dashboard");
 
+// ── Cross-meeting insights (/analytics/insights) ──
+export type OutcomeKind = "carried" | "agreed" | "voted_down" | "walkout" | "impasse" | "stalled" | "stopped" | "unfinished";
+export type InsightGroup = { group: string; meetings: number; decided_rate: number | null; enough: boolean };
+export type InsightMove = {
+  action: string; count: number; share: number | null;
+  share_decided: number | null; share_open: number | null; lift: number | null;
+};
+export type InsightPerson = {
+  key: string; persona_id: string | null; name: string; role: string;
+  meetings: number; turns: number; airtime: number | null;
+  targeted_per_meeting: number; hostility_received: number | null; hostility_given: number | null;
+  signature: { action: string; times_typical: number } | null;
+  votes: Partial<Record<"yes" | "no" | "abstain", number>>;
+  sided_with_result: number | null; walkouts: number; usual_stance: string;
+};
+export type Insights = {
+  window_days: number | null;
+  totals: { meetings: number; finished: number; decided: number; turns: number; people: number };
+  headlines: { tone: "good" | "warn" | "info"; area: "outcomes" | "tactics" | "people" | "quality"; title: string; body: string }[];
+  outcomes: {
+    mix: { kind: OutcomeKind; label: string; count: number }[];
+    finished: number; decision_rate: number | null; stall_rate: number | null; walkout_rate: number | null;
+    median_turns_to_decision: number | null; median_turns_stalled: number | null;
+    by_size: InsightGroup[]; by_heat: InsightGroup[]; by_temperature: InsightGroup[]; by_balance: InsightGroup[];
+  };
+  tactics: {
+    moves: InsightMove[];
+    openers: { action: string; meetings: number; decided_rate: number | null; enough: boolean }[];
+    answers_to_pressure: { action: string; share: number | null }[];
+    heat_by_phase: { phase: string; anger?: number; fear?: number; joy?: number }[];
+    hostile_share: number | null; conciliatory_share: number | null;
+  };
+  people: InsightPerson[];
+  quality: {
+    turns_checked: number; fallback_rate: number | null; parse_fail_rate: number | null;
+    relabelled_rate: number | null; target_guessed_rate: number | null;
+    p50_latency_ms: number | null; p95_latency_ms: number | null; tokens_per_meeting: number | null;
+    never_finished: number; stopped: number; models: Record<string, number>;
+  };
+  recent: { id: string; subject: string; created_at: string | null; kind: OutcomeKind; label: string; turns: number; size: number; outcome_summary: string }[];
+};
+
+export const fetchInsights = (days?: number) =>
+  request<Insights>(`/analytics/insights${days ? `?days=${days}` : ""}`);
+
 
 
 export const injectHumanTurn = (

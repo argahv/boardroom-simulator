@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, Query, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -1771,6 +1771,14 @@ async def analytics_dashboard() -> dict:
 
     aggregator = DashboardAggregator()
     return await aggregator.aggregate()
+
+
+@app.get("/analytics/insights")
+async def analytics_insights(days: int | None = Query(default=None, ge=1, le=3650)) -> dict:
+    """How meetings end, who drives them, which moves pay off, and run quality."""
+    from app.analytics.insights import load_insights
+
+    return await load_insights(days)
 
 
 async def _cleanup_simulation(simulation_id: str, delay: float = 30.0) -> None:
