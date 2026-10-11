@@ -1,6 +1,9 @@
 import type {
   DashboardAnalytics,
   DocumentMeta,
+  DraftPersonaResponse,
+  DraftSimulationRequest,
+  DraftSimulationResponse,
   EvolutionProposal,
   KnowledgeQueryResult,
   Postmortem,
@@ -8,8 +11,16 @@ import type {
   SimulationState,
   SimulationConfig,
   Stakeholder,
+  StakeholderPatch,
   StateSnapshotData,
   StateSnapshotEvent,
+} from "@/lib/types";
+
+export type {
+  DraftPersonaResponse,
+  DraftSimulationRequest,
+  DraftSimulationResponse,
+  StakeholderPatch,
 } from "@/lib/types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
@@ -73,6 +84,8 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
     elapsedMs,
   });
 
+  // 204 No Content (deletes) has no body to parse.
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 };
 
@@ -95,6 +108,54 @@ export const deleteStakeholder = (id: string) =>
   request<void>(`/stakeholders/${id}`, {
     method: "DELETE",
   });
+
+export const getStakeholder = (id: string) =>
+  request<Stakeholder>(`/stakeholders/${encodeURIComponent(id)}`);
+
+/** Partial edit for autosave; omitted fields are left alone and personality is merged. */
+export const patchStakeholder = (id: string, patch: StakeholderPatch) =>
+  request<Stakeholder>(`/stakeholders/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+
+// ── AI drafts ──────────────────────────────────────────────────────
+// The server falls back to templates / keyword parsing when the LLM is unavailable,
+// so these only reject on a real request failure.
+
+export const draftPersona = (text: string) =>
+  request<DraftPersonaResponse>("/drafts/persona", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+
+export const draftSimulation = (req: DraftSimulationRequest) =>
+  request<DraftSimulationResponse>("/drafts/simulation", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+
+export async function draftSimulationFromFiles(
+  brief: string,
+  personaIds: string[],
+  files: File[],
+): Promise<DraftSimulationResponse> {
+  const formData = new FormData();
+  formData.append("brief", brief);
+  formData.append("persona_ids", personaIds.join(","));
+  files.forEach((f) => formData.append("files", f));
+  // No Content-Type: the browser sets the multipart boundary.
+  const res = await fetch(`${API_URL}/drafts/simulation/upload`, {
+    method: "POST",
+    body: formData,
+    headers: { "X-Request-ID": genRequestId() },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Draft failed with ${res.status}`);
+  }
+  return res.json();
+}
 
 // ── Persona Documents ──────────────────────────────────────────────
 
@@ -295,8 +356,32 @@ export type SimulationListItem = {
 export const fetchSimulations = () =>
   request<SimulationListItem[]>("/simulations");
 
+// How a finished run ended (the fields of its `done` event).
+export type SimulationOutcome = {
+  reason?: string;
+  outcome_type?: string;
+  summary?: string;
+  confidence?: number;
+  vote_breakdown?: Record<string, number>;
+  agreed_issues?: Array<{ proposal?: string; proposed_by?: string; position?: string }>;
+  walkaway_party?: string | null;
+  judge_notes?: string;
+  total_turns?: number;
+};
+
 export const fetchSimulation = (simulationId: string) =>
-  request<{ config: SimulationConfig; status: string }>(`/simulations/${simulationId}`);
+  request<{ config: SimulationConfig; status: string; outcome?: SimulationOutcome | null }>(`/simulations/${simulationId}`);
+
+// The full event log of a run (turns, system events, snapshots, done); 404 when none was saved.
+export type SimulationRecording = {
+  simulation_id: string;
+  config: SimulationConfig;
+  events: Array<Record<string, unknown>>;
+  meta?: Record<string, unknown>;
+};
+
+export const fetchSimulationRecording = (simulationId: string) =>
+  request<SimulationRecording>(`/simulations/${simulationId}/recording`);
 
 export const injectTurn = (simulationId: string, stakeholderId: string, content: string) =>
   request<Record<string, unknown>>(`/simulations/${simulationId}/inject`, {
@@ -319,6 +404,12 @@ export const fetchSimulationReplay = async (simulationId: string): Promise<State
     data: s.data,
   }));
 };
+
+export const deleteSimulation = (simulationId: string) =>
+  request<void>(`/simulations/${simulationId}`, { method: "DELETE" });
+
+export const stopSimulation = (simulationId: string) =>
+  request<{ status: string }>(`/simulations/${simulationId}/stop`, { method: "POST" });
 
 export const streamSimulation = (
   simulationId: string,

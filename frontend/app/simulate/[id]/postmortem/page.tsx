@@ -1,12 +1,30 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
 import { ExpandableText } from "@/components/ExpandableText";
-import { fetchPostmortem } from "@/lib/api";
-import type { AlignmentDelta, Postmortem, StrategyCard, TopologyNode } from "@/lib/types";
+import { TwistMenu } from "@/components/TwistMenu";
+import {
+  approveEvolution,
+  fetchPendingEvolutions,
+  fetchPostmortem,
+  fetchSimulation,
+  getStakeholder,
+  rejectEvolution,
+} from "@/lib/api";
+import { TRAITS, TRAIT_META, applyGhost, ghostFromEvolutions, normalizePersonality, traitWord } from "@/lib/persona";
+import type {
+  AlignmentDelta,
+  EvolutionProposal,
+  PersonalityProfile,
+  Postmortem,
+  SimulationConfig,
+  StrategyCard,
+  TopologyNode,
+} from "@/lib/types";
 
 type PageProps = { params: Promise<{ id: string }> };
 
@@ -22,6 +40,8 @@ export default function PostmortemPage({ params }: PageProps) {
   const [postmortem, setPostmortem] = useState<Postmortem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [config, setConfig] = useState<SimulationConfig | null>(null);
+  const [changes, setChanges] = useState<PersonChange[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -34,8 +54,24 @@ export default function PostmortemPage({ params }: PageProps) {
     return () => { alive = false; };
   }, [id]);
 
+  useEffect(() => {
+    let alive = true;
+    fetchSimulation(id)
+      .then((sim) => { if (alive) setConfig(sim.config ?? null); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [id]);
+
+  // Evolutions are proposed in the background after a run ends, so look again once the postmortem is in.
+  useEffect(() => {
+    if (!config) return;
+    let alive = true;
+    pendingChangesFor(id, config).then((found) => { if (alive) setChanges(found); }).catch(() => {});
+    return () => { alive = false; };
+  }, [id, config, postmortem]);
+
   return (
-    <AppShell activeTab="War Room">
+    <AppShell>
       <div className="px-8 py-8">
       {/* Header */}
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
@@ -54,6 +90,19 @@ export default function PostmortemPage({ params }: PageProps) {
           ← Back to War Room
         </Button>
       </div>
+
+      {(changes.length > 0 || config) && (
+        <div className="mb-8 space-y-4">
+          {changes.length > 0 && (
+            <PeopleChanged changes={changes} onSettled={(evoId) => setChanges((list) => list.filter((c) => c.evo.id !== evoId))} />
+          )}
+          {config && (
+            <div className="rounded-xl border border-hairline bg-surface-card px-4 py-3 sm:px-5">
+              <TwistMenu simulationId={id} config={config} />
+            </div>
+          )}
+        </div>
+      )}
 
       {loading && (
         <div className="flex items-center gap-3 text-muted text-sm">
@@ -717,5 +766,128 @@ function ScoreCard({
         {value}
       </p>
     </div>
+  );
+}
+
+// ── People changed by this meeting ─────────────────────────────────────
+
+type PersonChange = { evo: EvolutionProposal; name: string; personality: PersonalityProfile };
+
+/** Pending evolutions this run proposed for library people in it, with their current dials. */
+async function pendingChangesFor(simulationId: string, config: SimulationConfig): Promise<PersonChange[]> {
+  const seats = config.stakeholders ?? [];
+  const results = await Promise.allSettled(
+    seats.map(async (seat): Promise<PersonChange | null> => {
+      const evo = (await fetchPendingEvolutions(seat.id)).find((e) => e.simulation_id === simulationId);
+      if (!evo) return null;
+      const personality = await getStakeholder(seat.id)
+        .then((p) => normalizePersonality(p.personality))
+        .catch(() => normalizePersonality(evo.before_snapshot));
+      return { evo, name: seat.name, personality };
+    }),
+  );
+  return results.flatMap((r) => (r.status === "fulfilled" && r.value ? [r.value] : []));
+}
+
+function PeopleChanged({ changes, onSettled }: { changes: PersonChange[]; onSettled: (evoId: string) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  const settle = useCallback(async (ids: string[], action: "keep" | "discard") => {
+    setBusy(ids.length > 1 ? "all" : ids[0]);
+    setError("");
+    try {
+      for (const evoId of ids) {
+        if (action === "keep") await approveEvolution(evoId);
+        else await rejectEvolution(evoId);
+        onSettled(evoId);
+      }
+    } catch {
+      setError(action === "keep" ? "Couldn't keep that change. Try again." : "Couldn't discard that change. Try again.");
+    } finally {
+      setBusy(null);
+    }
+  }, [onSettled]);
+
+  const several = changes.length > 1;
+  return (
+    <section aria-labelledby="people-changed-title" className="rounded-2xl border border-accent-amber/60 bg-accent-amber/[0.08] p-4 sm:p-5">
+      <div className="flex flex-wrap items-center gap-2">
+        <span aria-hidden className="h-2 w-2 animate-pulse rounded-full bg-accent-amber" />
+        <h3 id="people-changed-title" className="font-mono text-[10px] font-bold uppercase tracking-[0.15em] text-body-strong">
+          {several ? `${changes.length} changes need your call` : "A change needs your call"}
+        </h3>
+        {several && (
+          <span className="ml-auto text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => void settle(changes.map((c) => c.evo.id), "keep")}
+              disabled={!!busy}
+              className="inline-flex min-h-8 cursor-pointer items-center rounded-full border border-ink/20 bg-surface-card px-3 text-ink transition hover:border-ink/40 disabled:opacity-60"
+            >
+              {busy === "all" ? "Keeping…" : "Keep all"}
+            </button>
+          </span>
+        )}
+      </div>
+      <p className="mt-1.5 text-sm text-muted">Keep a change and it becomes part of how they play in every meeting from now on.</p>
+
+      <ul className="mt-3 space-y-2">
+        {changes.map(({ evo, name, personality }) => {
+          const delta = ghostFromEvolutions(evo);
+          const after = applyGhost(personality, delta);
+          const shifts = TRAITS.filter((t) => (delta[t] ?? 0) !== 0);
+          const working = busy === evo.id;
+          return (
+            <li key={evo.id} className="rounded-xl border border-hairline bg-surface-card p-3">
+              <Link href={`/personas/${encodeURIComponent(evo.persona_id)}`} className="text-sm font-semibold text-ink underline-offset-4 hover:underline">
+                {name}
+              </Link>
+              <p className="mt-0.5 text-sm leading-snug text-body-strong">
+                {evo.reason || (evo.outcome ? `After this meeting (${evo.outcome})` : "After this meeting")}
+              </p>
+              {shifts.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-1.5" aria-label={`What changes for ${name}`}>
+                  {shifts.map((t) => {
+                    const from = traitWord(t, personality[t]);
+                    const to = traitWord(t, after[t]);
+                    return (
+                      <li
+                        key={t}
+                        className="inline-flex items-center gap-1 rounded-full border border-dashed px-2 py-0.5 text-[11px] text-body-strong"
+                        style={{ borderColor: TRAIT_META[t].color }}
+                      >
+                        <span className="font-semibold">{TRAIT_META[t].label}</span>
+                        <span className="font-mono">{(delta[t] ?? 0) > 0 ? "+" : ""}{delta[t]}</span>
+                        {from !== to && <span className="text-muted">{from} → {to}</span>}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => void settle([evo.id], "keep")}
+                  disabled={!!busy}
+                  className="inline-flex min-h-8 cursor-pointer items-center rounded-full bg-ink px-4 text-on-dark transition hover:bg-surface-dark disabled:opacity-60"
+                >
+                  {working ? "Working…" : "Keep"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void settle([evo.id], "discard")}
+                  disabled={!!busy}
+                  className="inline-flex min-h-8 cursor-pointer items-center rounded-full border border-hairline px-4 text-ink transition hover:bg-ink/5 disabled:opacity-60"
+                >
+                  Discard
+                </button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {error && <p role="alert" className="mt-2 text-xs font-semibold text-error">{error}</p>}
+    </section>
   );
 }

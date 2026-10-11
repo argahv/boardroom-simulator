@@ -1,367 +1,355 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AppShell } from "@/components/AppShell";
+import { StanceRing } from "@/components/PersonaCard";
 import { deleteStakeholder, fetchStakeholders } from "@/lib/api";
-import type { AgentStance, Stakeholder } from "@/lib/types";
-
-type ArchetypeFilter = "all" | "executive" | "technical" | "procurement" | "legal";
-
-const ARCHETYPE_LABELS: Record<ArchetypeFilter, string> = {
-  all: "All",
-  executive: "Executive",
-  technical: "Technical",
-  procurement: "Procurement",
-  legal: "Legal",
-};
+import { ARCHETYPES, ARCHETYPE_META, STANCE_CYCLE, STANCE_META, behaviourLine, fromStakeholder } from "@/lib/persona";
+import type { AgentArchetype, AgentStance, Stakeholder } from "@/lib/types";
+import { errorText, firstName } from "./_lib/files";
 
 type StanceFilter = "all" | AgentStance;
+type ArchetypeFilter = "all" | "none" | AgentArchetype;
 
-const STANCE_LABELS: Record<StanceFilter, string> = {
-  all: "All",
-  champion: "Champion",
-  detractor: "Detractor",
-  neutral: "Neutral",
-  moderator: "Moderator",
-  wildcard: "Wildcard",
-};
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-const STANCE_COLORS: Record<string, string> = {
-  champion: "bg-success-soft text-success",
-  detractor: "bg-error-soft text-error",
-  neutral: "bg-surface-container-low text-muted",
-  moderator: "bg-accent-blue/10 text-accent-blue",
-  wildcard: "bg-primary-soft text-primary",
-};
+export default function PersonasPage() {
+  const [personas, setPersonas] = useState<Stakeholder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reload, setReload] = useState(0);
+  const [query, setQuery] = useState("");
+  const [stance, setStance] = useState<StanceFilter>("all");
+  const [archetype, setArchetype] = useState<ArchetypeFilter>("all");
 
-const PERSONALITY_BAR_COLORS: Record<string, string> = {
-  aggressiveness: "var(--color-chart-1)",
-  empathy: "var(--color-chart-2)",
-  stubbornness: "var(--color-chart-3)",
-  verbosity: "var(--color-chart-4)",
-};
+  useEffect(() => {
+    let alive = true;
+    fetchStakeholders()
+      .then((data) => { if (alive) setPersonas(data); })
+      .catch((err: unknown) => { if (alive) setLoadError(errorText(err, "Couldn't load the library.")); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [reload]);
 
-function PersonaCard({
-  persona,
-  slug,
-  deleteConfirmId,
-  onDelete,
-  onSetDeleteConfirmId,
-}: {
-  persona: Stakeholder;
-  slug: string;
-  deleteConfirmId: string | null;
-  onDelete: (id: string) => void;
-  onSetDeleteConfirmId: (id: string | null) => void;
-}) {
+  const stanceCounts = useMemo(() => {
+    const counts = new Map<AgentStance, number>();
+    for (const p of personas) {
+      const s = p.stance && STANCE_META[p.stance] ? p.stance : "neutral";
+      counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+    return counts;
+  }, [personas]);
+
+  const archetypeCounts = useMemo(() => {
+    const counts = new Map<AgentArchetype | "none", number>();
+    for (const p of personas) {
+      const a = p.archetype && ARCHETYPE_META[p.archetype] ? p.archetype : "none";
+      counts.set(a, (counts.get(a) ?? 0) + 1);
+    }
+    return counts;
+  }, [personas]);
+
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return personas.filter((p) => {
+      if (stance !== "all" && (p.stance ?? "neutral") !== stance) return false;
+      if (archetype !== "all" && (p.archetype ?? "none") !== archetype) return false;
+      if (!q) return true;
+      return [p.name, p.role, p.focus, p.backstory].some((f) => (f ?? "").toLowerCase().includes(q));
+    });
+  }, [personas, query, stance, archetype]);
+
+  const filtered = stance !== "all" || archetype !== "all" || query.trim() !== "";
+  const anyArchetype = ARCHETYPES.some((a) => archetypeCounts.has(a));
+  const clearFilters = () => {
+    setQuery("");
+    setStance("all");
+    setArchetype("all");
+  };
+
+  const stanceOptions: FilterOption<StanceFilter>[] = [
+    { value: "all", label: "Anyone" },
+    ...STANCE_CYCLE.filter((s) => stanceCounts.has(s) || stance === s).map((s) => ({
+      value: s,
+      label: STANCE_META[s].label,
+      count: stanceCounts.get(s) ?? 0,
+      dot: STANCE_META[s].color,
+    })),
+  ];
+  const archetypeOptions: FilterOption<ArchetypeFilter>[] = [
+    { value: "all", label: "Any" },
+    ...ARCHETYPES.filter((a) => archetypeCounts.has(a) || archetype === a).map((a) => ({
+      value: a,
+      label: ARCHETYPE_META[a].label,
+      count: archetypeCounts.get(a) ?? 0,
+      title: ARCHETYPE_META[a].description,
+    })),
+    ...(archetypeCounts.has("none") ? [{ value: "none" as const, label: "Not set", count: archetypeCounts.get("none") ?? 0 }] : []),
+  ];
+
+  const empty = !loading && !loadError && personas.length === 0;
+
   return (
-    <div className="anim-slide-up">
-      <div className="group rounded-2xl border border-hairline bg-surface-card p-5 transition hover:border-primary/50 hover:shadow-md block">
-        <div className="mb-3 flex items-start justify-between">
-          <div className="flex-1 min-w-0">
-            <h3 className="font-display text-2xl font-semibold truncate">{persona.name}</h3>
-            <p className="mt-0.5 text-sm text-muted truncate">{persona.role}</p>
-            {persona.stance && (
-              <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-medium mt-1 capitalize ${
-                STANCE_COLORS[persona.stance] ?? "bg-gray-100 text-gray-700"
-              }`}>
-                {persona.stance}
-              </span>
-            )}
+    <AppShell>
+      <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-8 sm:py-8">
+        <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div className="min-w-0">
+            <p className="font-mono text-[10px] font-bold uppercase tracking-[0.2em] text-primary">Persona library</p>
+            <h1 className="mt-2 font-display text-4xl font-semibold tracking-display sm:text-5xl">The people you negotiate with</h1>
+            <p className="mt-2 max-w-xl text-sm text-muted">
+              Each one remembers past meetings and can be seated in any simulation.
+            </p>
           </div>
-          {persona.tag && (
-            <span className="shrink-0 rounded-full bg-surface-card border border-hairline px-2.5 py-0.5 text-[10px] font-medium ml-2">
-              {persona.tag}
-            </span>
+          {!empty && (
+            <div className="text-sm font-semibold">
+              <Link
+                href="/personas/new"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-5 text-on-dark transition hover:bg-primary-active"
+              >
+                <span aria-hidden className="material-symbols-outlined text-[18px]">person_add</span>
+                New persona
+              </Link>
+            </div>
           )}
-        </div>
+        </header>
 
-        <div className="flex items-center gap-3 mb-3 text-xs">
-          <span className="flex items-center gap-1 text-muted">
-            <span className="material-symbols-outlined text-[14px]">play_circle</span>
-            {persona.sim_count ?? 0} sims
-          </span>
-          <span className="flex items-center gap-1 text-muted">
-            <span className="material-symbols-outlined text-[14px]">forum</span>
-            {persona.total_turns ?? 0} turns
-          </span>
-          <span className="flex items-center gap-1 text-muted">
-            <span className="material-symbols-outlined text-[14px]">description</span>
-            {persona.tools?.length ?? 0} docs
-          </span>
-        </div>
-
-        {persona.focus && (
-          <p className="text-xs text-muted leading-relaxed line-clamp-2 mb-4 italic">{persona.focus}</p>
-        )}
-        {persona.backstory && (
-          <p className="text-xs text-muted italic line-clamp-2 mb-4">{persona.backstory}</p>
-        )}
-
-        {persona.templates && persona.templates.length > 0 && (
-          <div className="flex flex-wrap gap-1 mb-4">
-            <span className="text-[10px] text-muted/60 mr-0.5">in:</span>
-            {persona.templates.slice(0, 3).map((t: string) => (
-              <span key={t} className="text-[10px] px-2 py-0.5 rounded-full bg-primary/5 text-primary border border-primary/20">
-                {t.replace(/-/g, ' ')}
-              </span>
-            ))}
-            {persona.templates.length > 3 && (
-              <span className="text-[10px] text-muted">+{persona.templates.length - 3}</span>
-            )}
-          </div>
-        )}
-
-        {persona.personality && (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 mb-4">
-            {Object.entries(persona.personality).map(([trait, val]) => (
-              <div key={trait} className="flex items-center gap-2">
-                <span className="text-[10px] text-muted/70 capitalize w-16 shrink-0">{trait}</span>
-                <div className="flex-1 h-1 rounded-full bg-hairline">
-                  <div className="h-full rounded-full" style={{
-                    width: `${val}%`,
-                    backgroundColor: PERSONALITY_BAR_COLORS[trait] ?? "#888",
-                  }} />
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Pending evolution badge */}
-        {persona.evolution_pending && (
-          <div className="mb-3">
-            <span className="inline-block rounded-full bg-warning-soft text-warning px-2.5 py-0.5 text-[10px] font-medium">
-              Pending evolution
+        {loadError && (
+          <div role="alert" className="mb-6 flex flex-wrap items-center gap-3 rounded-2xl bg-error-soft px-4 py-3 text-sm text-error">
+            <span className="min-w-0 flex-1">{loadError}</span>
+            <span className="text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => {
+                  setLoading(true);
+                  setLoadError("");
+                  setReload((n) => n + 1);
+                }}
+                className="min-h-8 cursor-pointer rounded-full border border-error/40 px-3 text-error transition hover:bg-error/10"
+              >
+                Try again
+              </button>
             </span>
           </div>
         )}
 
-        <Link
-          href={`/personas/${slug}`}
-          className="mb-3 block text-right text-xs font-medium text-primary hover:underline"
-        >
-          View profile →
-        </Link>
+        {personas.length > 0 && (
+          <div className="mb-6 space-y-3">
+            <div className="relative max-w-md">
+              <span aria-hidden className="material-symbols-outlined pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-[18px] text-muted">search</span>
+              <div className="text-sm">
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search by name, role or backstory"
+                  aria-label="Search personas"
+                  className="w-full rounded-full border border-hairline bg-surface-card/70 py-2.5 pl-10 pr-4 text-ink outline-none transition placeholder:text-muted/70 focus:border-primary"
+                />
+              </div>
+            </div>
+            <FilterRow label="Side" options={stanceOptions} value={stance} onChange={setStance} />
+            {anyArchetype && <FilterRow label="Temperament" options={archetypeOptions} value={archetype} onChange={setArchetype} />}
+          </div>
+        )}
 
-        <div className="flex gap-2">
-          <Link
-            href={`/personas/${persona.id}/edit`}
-            className="flex-1 rounded-full bg-surface-card px-4 py-2 text-sm font-medium text-center transition hover:bg-primary/10"
-          >
-            Edit
-          </Link>
-          <button
-            onClick={() => onSetDeleteConfirmId(persona.id)}
-            className="rounded-full bg-primary/10 px-4 py-2 text-sm font-medium text-primary-active transition hover:bg-primary/20"
-          >
-            Delete
-          </button>
-        </div>
-
-        {deleteConfirmId === persona.id && (
-          <div className="mt-3 rounded-2xl bg-primary/5 p-3">
-            <p className="mb-2 text-xs text-muted">Delete this persona?</p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => onDelete(persona.id)}
-                className="flex-1 rounded-full bg-primary px-3 py-1.5 text-xs font-medium text-canvas"
+        {loading ? (
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy="true" aria-label="Loading personas">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <li key={i} className="h-44 animate-pulse rounded-2xl border border-hairline bg-surface-card p-4">
+                <div className="flex gap-3">
+                  <div className="h-11 w-11 rounded-full bg-ink/8" />
+                  <div className="flex-1 space-y-2 pt-1">
+                    <div className="h-4 w-32 rounded bg-ink/8" />
+                    <div className="h-3 w-24 rounded bg-ink/8" />
+                  </div>
+                </div>
+                <div className="mt-5 h-3 w-3/4 rounded bg-ink/8" />
+              </li>
+            ))}
+          </ul>
+        ) : empty ? (
+          <div className="rounded-2xl border-2 border-dashed border-hairline bg-surface-card/50 px-6 py-14 text-center">
+            <p className="font-display text-2xl font-semibold">No personas yet</p>
+            <p className="mx-auto mt-2 max-w-sm text-sm text-muted">
+              Add someone you&apos;re about to negotiate with. &ldquo;Dana Okafor, CFO&rdquo; is enough to start.
+            </p>
+            <div className="mt-5 text-sm font-semibold">
+              <Link
+                href="/personas/new"
+                className="inline-flex min-h-10 items-center gap-1.5 rounded-full bg-primary px-5 text-on-dark transition hover:bg-primary-active"
               >
-                Confirm
-              </button>
-              <button
-                onClick={() => onSetDeleteConfirmId(null)}
-                className="flex-1 rounded-full bg-surface-card px-3 py-1.5 text-xs font-medium"
-              >
-                Cancel
-              </button>
+                <span aria-hidden className="material-symbols-outlined text-[18px]">person_add</span>
+                Add your first persona
+              </Link>
             </div>
           </div>
+        ) : visible.length === 0 && personas.length > 0 ? (
+          <div className="rounded-2xl border border-dashed border-hairline bg-surface-card/50 px-6 py-10 text-center text-sm text-muted">
+            Nobody matches.{" "}
+            <span className="font-semibold">
+              <button type="button" onClick={clearFilters} className="cursor-pointer text-primary-active underline underline-offset-4">
+                Clear filters
+              </button>
+            </span>
+          </div>
+        ) : (
+          <>
+            {filtered && (
+              <p className="mb-3 text-xs text-muted" aria-live="polite">
+                Showing {visible.length} of {plural(personas.length, "persona")}
+              </p>
+            )}
+            <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {visible.map((p) => (
+                <LibraryCard
+                  key={p.id}
+                  persona={p}
+                  onDeleted={() => setPersonas((prev) => prev.filter((x) => x.id !== p.id))}
+                />
+              ))}
+            </ul>
+          </>
         )}
       </div>
+    </AppShell>
+  );
+}
+
+type FilterOption<T extends string> = { value: T; label: string; count?: number; dot?: string; title?: string };
+
+function FilterRow<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: FilterOption<T>[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold" role="group" aria-label={label}>
+      <span className="mr-1 w-full font-mono text-[10px] uppercase tracking-[0.15em] text-muted sm:w-24">{label}</span>
+      {options.map((o) => {
+        const active = value === o.value;
+        return (
+          <button
+            key={o.value}
+            type="button"
+            aria-pressed={active}
+            title={o.title}
+            onClick={() => onChange(active && o.value !== "all" ? ("all" as T) : o.value)}
+            className={`inline-flex min-h-8 cursor-pointer items-center gap-1.5 rounded-full border px-3 transition ${
+              active ? "border-ink bg-ink text-on-dark" : "border-hairline bg-surface-card/60 text-muted hover:border-ink/30 hover:text-ink"
+            }`}
+          >
+            {o.dot && <span aria-hidden className="h-2 w-2 rounded-full" style={{ background: o.dot }} />}
+            {o.label}
+            {o.count !== undefined && <span className={`font-mono font-normal ${active ? "text-on-dark/70" : "text-muted/80"}`}>{o.count}</span>}
+          </button>
+        );
+      })}
     </div>
   );
 }
 
-export default function PersonasPage() {
-  const [personas, setPersonas] = useState<Stakeholder[]>([]);
-  const [filteredPersonas, setFilteredPersonas] = useState<Stakeholder[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [archetypeFilter, setArchetypeFilter] = useState<ArchetypeFilter>("all");
-  const [stanceFilter, setStanceFilter] = useState<StanceFilter>("all");
-  const [loading, setLoading] = useState(true);
+function LibraryCard({ persona, onDeleted }: { persona: Stakeholder; onDeleted: () => void }) {
+  const draft = fromStakeholder(persona);
+  const meta = STANCE_META[draft.stance];
+  const [confirming, setConfirming] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState("");
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const href = `/personas/${encodeURIComponent(persona.id)}`;
+  const sims = persona.sim_count ?? 0;
 
-  const loadPersonas = async () => {
-    setLoading(true);
+  const remove = async () => {
+    setDeleting(true);
     setError("");
     try {
-      const data = await fetchStakeholders();
-      setPersonas(data);
+      await deleteStakeholder(persona.id);
+      onDeleted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load personas");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const filterPersonas = () => {
-    let filtered = personas;
-
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(
-        (p) =>
-          p.name.toLowerCase().includes(query) ||
-          p.role.toLowerCase().includes(query) ||
-          p.focus.toLowerCase().includes(query)
-      );
-    }
-
-    if (archetypeFilter !== "all") {
-      filtered = filtered.filter((p) => p.role.toLowerCase().includes(archetypeFilter));
-    }
-
-    if (stanceFilter !== "all") {
-      filtered = filtered.filter((p) => p.stance === stanceFilter);
-    }
-
-    setFilteredPersonas(filtered);
-  };
-
-  useEffect(() => {
-    loadPersonas();
-  }, []);
-
-  useEffect(() => {
-    filterPersonas();
-  }, [personas, searchQuery, archetypeFilter, stanceFilter]);
-
-  const handleDelete = async (id: string) => {
-    setError("");
-    try {
-      await deleteStakeholder(id);
-      setDeleteConfirmId(null);
-      loadPersonas();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete persona");
+      setError(errorText(err, "Couldn't delete. Try again."));
+      setDeleting(false);
     }
   };
 
   return (
-    <AppShell activeTab="Personas">
-      <div className="px-8 py-8">
-      <div className="mb-8">
-        <p className="text-sm font-semibold uppercase tracking-[0.28em] text-primary">Strategic Archetypes</p>
-        <h2 className="mt-3 font-display text-5xl font-semibold tracking-display">Persona Library</h2>
-        <p className="mt-4 text-muted">
-          Reusable stakeholder personas with behavioral patterns, incentives, and negotiation styles.
+    <li className="anim-slide-up group relative flex flex-col rounded-2xl border border-hairline bg-surface-card p-4 transition hover:border-primary/40 hover:shadow-sm focus-within:border-primary/40">
+      <div className="flex items-start gap-3">
+        <StanceRing stance={draft.stance} name={draft.name} size={44} />
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-muted">
+            <span>{meta.label}</span>
+            {draft.archetype && <span className="font-normal">· {ARCHETYPE_META[draft.archetype].label}</span>}
+          </p>
+          <h2 className="truncate font-display text-xl font-semibold leading-tight text-ink">
+            {/* The stretched link makes the whole card open the persona; actions sit above it. */}
+            <Link href={href} className="outline-none after:absolute after:inset-0 after:rounded-2xl after:content-[''] focus-visible:underline">
+              {draft.name || "Unnamed"}
+            </Link>
+          </h2>
+          <p className="truncate text-sm text-muted">{draft.role || "No role yet"}</p>
+        </div>
+      </div>
+
+      <p className="mt-3 text-[13px] leading-snug text-body-strong">{behaviourLine(draft)}</p>
+
+      <div className="mt-auto flex items-center gap-2 pt-4">
+        <p className="min-w-0 flex-1 truncate text-xs text-muted">
+          {sims > 0 ? plural(sims, "meeting") : "No meetings yet"}
+          {persona.document_count !== undefined && persona.document_count > 0 && ` · ${plural(persona.document_count, "doc")}`}
         </p>
-      </div>
-
-      {error && (
-        <div className="mb-6 rounded-2xl bg-primary/10 p-4 text-sm text-primary-active">{error}</div>
-      )}
-
-      <div className="mb-6 flex flex-wrap gap-3">
-        <input
-          type="text"
-          placeholder="Search personas..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          className="flex-1 min-w-64 rounded-full border border-hairline bg-surface-card/70 px-5 py-3 outline-none focus:border-primary transition-colors"
-        />
-        <div className="flex gap-2">
-          {(Object.keys(ARCHETYPE_LABELS) as ArchetypeFilter[]).map((filter) => (
-            <button
-              key={filter}
-              onClick={() => setArchetypeFilter(filter)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                archetypeFilter === filter
-                  ? "bg-primary text-canvas"
-                  : "bg-surface-card text-muted hover:bg-primary/10"
-              }`}
-            >
-              {ARCHETYPE_LABELS[filter]}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          {(Object.keys(STANCE_LABELS) as StanceFilter[]).map((filter) => (
-            <button
-              key={filter}
-              onClick={() => setStanceFilter(filter)}
-              className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-                stanceFilter === filter
-                  ? "bg-primary text-canvas"
-                  : "bg-surface-card text-muted hover:bg-primary/10"
-              }`}
-            >
-              {STANCE_LABELS[filter]}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {personas.length === 0 && !loading && (
-        <div className="text-center py-16 border-2 border-dashed border-hairline rounded-2xl bg-surface-card/50">
-          <p className="text-lg text-muted font-medium">No personas yet</p>
-          <p className="text-sm text-muted/70 mt-1">Build your first stakeholder to populate the library.</p>
-          <Link href="/personas/new" className="mt-5 inline-flex items-center gap-2 rounded-full bg-primary px-6 py-3 text-sm font-semibold text-on-dark transition hover:bg-primary-active shadow-[0_12px_24px_rgba(237,111,92,0.25)]">
-            Create your first persona
-          </Link>
-        </div>
-      )}
-
-      {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {[1, 2, 3, 4, 5, 6].map((i) => (
-            <div key={i} className="rounded-2xl border border-hairline bg-surface-card p-5 animate-pulse">
-              <div className="h-5 w-32 rounded bg-ink/8 anim-shimmer mb-3" />
-              <div className="h-3 w-24 rounded bg-ink/8 anim-shimmer mb-4" />
-              <div className="h-3 w-full rounded bg-ink/8 anim-shimmer mb-2" />
-              <div className="h-3 w-3/4 rounded bg-ink/8 anim-shimmer" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredPersonas.map((persona) => {
-            return (
-              <PersonaCard
-                key={persona.id}
-                persona={persona}
-                slug={persona.id}
-                deleteConfirmId={deleteConfirmId}
-                onDelete={handleDelete}
-                onSetDeleteConfirmId={setDeleteConfirmId}
-              />
-            );
-          })}
-
+        <div className="relative z-10 flex shrink-0 items-center gap-1 text-xs font-semibold">
           <Link
-            href="/personas/new"
-            className="flex min-h-64 items-center justify-center rounded-3xl border-2 border-dashed border-ink/20 bg-white/20 transition hover:border-primary hover:bg-white/30"
+            href={`/simulate/new?with=${encodeURIComponent(persona.id)}`}
+            className="inline-flex min-h-8 items-center gap-1 rounded-full px-2.5 text-primary-active transition hover:bg-primary-soft"
+            title={`Start a meeting with ${draft.name}`}
           >
-            <div className="text-center">
-              <div className="text-4xl text-primary">+</div>
-              <p className="mt-2 font-semibold">Create New Persona</p>
-            </div>
+            <span aria-hidden className="material-symbols-outlined text-[16px]">play_arrow</span>
+            Rehearse
           </Link>
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            aria-label={`Delete ${draft.name}`}
+            title="Delete"
+            className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-muted transition hover:bg-error-soft hover:text-error"
+          >
+            <span aria-hidden className="material-symbols-outlined text-[18px]">delete</span>
+          </button>
         </div>
-      )}
-
       </div>
 
-      <Link
-        href="/personas/new"
-        className="fixed bottom-8 right-8 flex h-14 items-center gap-2 rounded-full bg-primary px-6 shadow-2xl transition hover:bg-primary-active"
-      >
-        <span className="text-2xl text-canvas">+</span>
-        <span className="font-semibold text-canvas">Create New Persona</span>
-      </Link>
-    </AppShell>
+      {confirming && (
+        <div className="relative z-10 mt-3 rounded-xl bg-error-soft p-3" role="alertdialog" aria-label={`Delete ${draft.name}?`}>
+          <p className="text-xs text-ink">
+            Delete {draft.name ? firstName(draft.name) : "this persona"} from the library? Past simulations keep their transcripts.
+          </p>
+          {error && <p className="mt-1 text-xs font-semibold text-error">{error}</p>}
+          <div className="mt-2 flex gap-2 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => void remove()}
+              disabled={deleting}
+              className="min-h-8 flex-1 cursor-pointer rounded-full bg-error px-3 text-on-dark transition hover:opacity-90 disabled:opacity-60"
+            >
+              {deleting ? "Deleting..." : "Delete"}
+            </button>
+            <button
+              type="button"
+              onClick={() => { setConfirming(false); setError(""); }}
+              disabled={deleting}
+              autoFocus
+              className="min-h-8 flex-1 cursor-pointer rounded-full border border-hairline bg-surface-card px-3 text-ink transition hover:bg-ink/5"
+            >
+              Keep
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }

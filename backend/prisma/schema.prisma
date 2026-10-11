@@ -51,6 +51,10 @@ model persona_evolution {
   status          String       @default("pending")
   applied_at      DateTime?    @db.Timestamptz(6)
   created_at      DateTime     @default(now()) @db.Timestamptz(6)
+  /// Kept on the row so the history still reads after the simulation is deleted.
+  simulation_subject String?
+  /// Plain words from this persona's seat, e.g. "lost the vote".
+  outcome            String?
   stakeholders    stakeholders @relation(fields: [persona_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@index([persona_id], map: "idx_persona_evo_pid")
@@ -200,6 +204,8 @@ model stakeholders {
   stance            String              @default("neutral")
   personality       Json                @default("{}")
   tools             Json                @default("[]")
+  /// opportunist | idealist | diplomat | pragmatist | agitator | guardian
+  archetype         String?
   persona_documents persona_documents[]
   persona_evolution persona_evolution[]
   persona_research  persona_research[]

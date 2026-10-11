@@ -16,7 +16,10 @@ import prisma.errors
 from prisma import Prisma
 from prisma.fields import Json as PrismaJson
 
+from app.evolution import describe_evolution, outcome_words
 from app.models import (
+    ARCHETYPES,
+    STANCES,
     PersonaDocument,
     PersonaEvolution,
     PersonaResearch,
@@ -24,6 +27,7 @@ from app.models import (
     SimulationDocument,
     SimulationState,
     Stakeholder,
+    normalize_personality,
 )
 from .base import DatabaseBackend
 
@@ -129,16 +133,19 @@ class PrismaBackend(DatabaseBackend):
             tag=row.tag,
             tool_profile=row.tool_profile or "none",
             backstory=row.backstory or "",
-            stance=row.stance or "neutral",
+            stance=row.stance if row.stance in STANCES else "neutral",
             personality=json.dumps(row.personality or {}, separators=(",", ":")),
             tools=json.dumps(row.tools or [], separators=(",", ":")),
+            archetype=PrismaBackend._archetype_of(row),
         )
 
     @staticmethod
+    def _archetype_of(row) -> str | None:
+        value = getattr(row, "archetype", None)
+        return value if value in ARCHETYPES else None
+
+    @staticmethod
     def _row_to_persona_detail(row) -> dict:
-        personality = row.personality or {}
-        if isinstance(personality, str):
-            personality = json.loads(personality)
         tools = row.tools or []
         if isinstance(tools, str):
             tools = json.loads(tools)
@@ -153,8 +160,9 @@ class PrismaBackend(DatabaseBackend):
             "tool_profile": row.tool_profile or "none",
             "backstory": row.backstory or "",
             "stance": row.stance or "neutral",
-            "personality": personality,
+            "personality": normalize_personality(row.personality),
             "tools": tools,
+            "archetype": PrismaBackend._archetype_of(row),
         }
 
     @staticmethod
@@ -266,13 +274,14 @@ class PrismaBackend(DatabaseBackend):
 
     async def delete_simulation(self, simulation_id: str) -> bool:
         client = self._client_or_raise()
-        try:
-            row = await client.simulations.delete(
-                where={"simulation_id": simulation_id},
-            )
-            return row is not None
-        except Exception:
+        if not self._is_valid_uuid(simulation_id):
             return False
+        if await client.simulations.find_first(where={"id": simulation_id}) is None:
+            return False
+        # semantic_memories does not cascade from simulations; the rest of the run's rows do.
+        await client.semantic_memories.delete_many(where={"simulation_id": simulation_id})
+        await client.simulations.delete(where={"id": simulation_id})
+        return True
 
     # ------------------------------------------------------------------
     # Postmortem methods
@@ -338,8 +347,7 @@ class PrismaBackend(DatabaseBackend):
         # Create participants with persona_id lookup
         for s in config.get("stakeholders", []):
             sname = s.get("name", "")
-            pid_row = await client.personas.find_first(where={"name": sname})
-            persona_uuid = pid_row.id if pid_row else None
+            persona_uuid = await self._persona_id_for(client, s.get("id", ""), sname)
             existing_p = await client.simulation_participants.find_first(
                 where={"simulation_id": simulation_id, "name": sname},
             )
@@ -411,6 +419,37 @@ class PrismaBackend(DatabaseBackend):
             )
         except Exception:
             pass
+
+    async def save_simulation_outcome(self, simulation_id: str, outcome: dict) -> None:
+        """Keep how the run ended in simulations.metadata so replays can show the verdict."""
+        client = self._client_or_raise()
+        if not self._is_valid_uuid(simulation_id):
+            return
+        row = await client.simulations.find_first(where={"id": simulation_id})
+        if row is None:
+            return
+        meta = row.metadata
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        meta = dict(meta) if isinstance(meta, dict) else {}
+        meta["outcome"] = outcome
+        await client.simulations.update(
+            where={"id": simulation_id},
+            data={"metadata": PrismaJson(meta), "updated_at": self._now()},
+        )
+
+    async def get_simulation_outcome(self, simulation_id: str) -> Optional[dict]:
+        client = self._client_or_raise()
+        if not self._is_valid_uuid(simulation_id):
+            return None
+        row = await client.simulations.find_first(where={"id": simulation_id})
+        if row is None:
+            return None
+        meta = row.metadata
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        outcome = meta.get("outcome") if isinstance(meta, dict) else None
+        return outcome if isinstance(outcome, dict) and outcome else None
 
     async def update_participant_stats(self, simulation_id: str) -> None:
         client = self._client_or_raise()
@@ -491,7 +530,7 @@ class PrismaBackend(DatabaseBackend):
             es = r.emotional_state
             if isinstance(es, str):
                 es = json.loads(es)
-            result.append({
+            row = {
                 "turn_index": r.turn_index,
                 "content": r.content,
                 "action_type": r.action_type,
@@ -501,8 +540,31 @@ class PrismaBackend(DatabaseBackend):
                 "created_at": str(r.created_at) if r.created_at else None,
                 "speaker": speaker.name if speaker else "",
                 "speaker_role": speaker.role if speaker else "",
-            })
+            }
+            # The stored event carries what the columns don't: the room's turn clock,
+            # who was addressed, votes and human interjections.
+            td = r.turn_data
+            if isinstance(td, str):
+                try:
+                    td = json.loads(td)
+                except ValueError:
+                    td = None
+            if isinstance(td, dict):
+                for key in ("turn_number", "agent_id", "directed_at", "directed_at_name", "vote", "is_human"):
+                    if td.get(key) is not None:
+                        row[key] = td[key]
+            result.append(row)
         return result
+
+    @staticmethod
+    def _config_people(config) -> int:
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except ValueError:
+                return 0
+        people = config.get("stakeholders") if isinstance(config, dict) else None
+        return len(people) if isinstance(people, list) else 0
 
     async def list_simulations_v2(self) -> list[dict]:
         client = self._client_or_raise()
@@ -519,7 +581,8 @@ class PrismaBackend(DatabaseBackend):
                     "description": r.subject_description,
                 },
                 "status": r.status,
-                "stakeholder_count": r.total_participants,
+                # total_participants is never written; the stored config knows who was seated.
+                "stakeholder_count": r.total_participants or self._config_people(r.config),
                 "voltage": r.voltage,
                 "model_temperature": r.model_temperature,
                 "created_at": r.created_at,
@@ -529,6 +592,17 @@ class PrismaBackend(DatabaseBackend):
     # ------------------------------------------------------------------
     # Agent detail methods
     # ------------------------------------------------------------------
+
+    async def _persona_id_for(self, client, stakeholder_id: str, name: str) -> Optional[str]:
+        """The personas row for a stakeholder: by id, then slug, then (legacy rows) by name."""
+        row = None
+        if stakeholder_id and self._is_valid_uuid(stakeholder_id):
+            row = await client.personas.find_first(where={"id": stakeholder_id})
+        if row is None and stakeholder_id:
+            row = await client.personas.find_first(where={"slug": stakeholder_id})
+        if row is None and name:
+            row = await client.personas.find_first(where={"name": name})
+        return row.id if row else None
 
     async def get_agent_by_id(self, persona_id: str) -> Optional[dict]:
         client = self._client_or_raise()
@@ -734,6 +808,7 @@ class PrismaBackend(DatabaseBackend):
             "stance": stakeholder.stance or "neutral",
             "personality": PrismaJson(self._pydantic_to_json(stakeholder.personality)),
             "tools": PrismaJson(self._pydantic_to_json(stakeholder.tools)),
+            "archetype": stakeholder.archetype,
             "created_at": now,
             "updated_at": now,
         }
@@ -785,12 +860,26 @@ class PrismaBackend(DatabaseBackend):
             "stance": stakeholder.stance or "neutral",
             "personality": PrismaJson(self._pydantic_to_json(stakeholder.personality)),
             "tools": PrismaJson(self._pydantic_to_json(stakeholder.tools)),
+            "archetype": stakeholder.archetype,
             "updated_at": now,
         }
         await client.stakeholders.update(
             data=data,
             where={"id": stakeholder.id},
         )
+        # Keep the personas row (detail page, stats, history) in step with the edit.
+        pid = await self._persona_id_for(client, stakeholder.id, "")
+        if pid:
+            await client.personas.update(where={"id": pid}, data={
+                "name": stakeholder.name,
+                "role": stakeholder.role or "",
+                "focus": stakeholder.focus or "",
+                "backstory": stakeholder.backstory or "",
+                "hidden_agenda": stakeholder.hidden_agenda or "",
+                "tags": [stakeholder.tag] if stakeholder.tag else [],
+                "personality": PrismaJson(self._pydantic_to_json(stakeholder.personality)),
+                "updated_at": now,
+            })
         return stakeholder
 
     async def list_stakeholders(
@@ -944,15 +1033,11 @@ class PrismaBackend(DatabaseBackend):
                 "role": r.role or "",
                 "backstory": r.backstory or "",
                 "stance": r.stance or "neutral",
-                "personality": {
-                    "aggressiveness": 50,
-                    "empathy": 50,
-                    "stubbornness": 50,
-                    "verbosity": 50,
-                },
+                "personality": normalize_personality(r.personality),
                 "hidden_agenda": r.hidden_agenda or "",
                 "tools": [],
                 "inject_knowledge": None,
+                "archetype": self._archetype_of(r),
             }
             for r in rows
         ]
@@ -1192,57 +1277,90 @@ class PrismaBackend(DatabaseBackend):
     # Persona Growth System
     # ------------------------------------------------------------------
 
+    async def _with_stats(self, client, rows) -> list[dict]:
+        """Persona JSON for stakeholder rows plus sim_count, total_turns and document_count."""
+        if not rows:
+            return []
+        ids = [r.id for r in rows]
+        names = [r.name for r in rows if r.name]
+        # Run stats live on the personas row: matched by id or slug, by name only for legacy rows.
+        persona_rows = await client.personas.find_many(where={"OR": [
+            {"id": {"in": [i for i in ids if self._is_valid_uuid(i)]}},
+            {"slug": {"in": ids}},
+            {"name": {"in": names}},
+        ]})
+        persona_by_key: dict[str, str] = {}
+        for p in persona_rows:
+            if p.name:
+                persona_by_key.setdefault(f"name:{p.name}", p.id)
+            persona_by_key[f"id:{p.id}"] = p.id
+            if p.slug:
+                persona_by_key[f"id:{p.slug}"] = p.id
+        participants = await client.simulation_participants.find_many(
+            where={"persona_id": {"in": list(set(persona_by_key.values()))}},
+            take=10000,
+        )
+        stats_by_pid: dict[str, dict] = {}
+        for p in participants:
+            stats = stats_by_pid.setdefault(p.persona_id, {"sim_count": 0, "total_turns": 0})
+            stats["sim_count"] += 1
+            stats["total_turns"] += p.turn_count or 0
+        doc_groups = await client.persona_documents.group_by(
+            by=["persona_id"], where={"persona_id": {"in": ids}}, count=True,
+        )
+        docs_by_id = {g["persona_id"]: (g.get("_count") or {}).get("_all", 0) for g in doc_groups}
+
+        result = []
+        for r in rows:
+            d = self._row_to_persona_detail(r)
+            pid = persona_by_key.get(f"id:{r.id}") or persona_by_key.get(f"name:{r.name}")
+            stats = stats_by_pid.get(pid or "", {})
+            d["sim_count"] = stats.get("sim_count", 0)
+            d["total_turns"] = stats.get("total_turns", 0)
+            d["document_count"] = docs_by_id.get(r.id, 0)
+            result.append(d)
+        return result
+
     async def list_personas_v2(self) -> list[dict]:
         client = self._client_or_raise()
         rows = await client.stakeholders.find_many(
             order={"created_at": "desc"},
             take=1000,
         )
-        # Fetch persona stats (sim_count, total_turns) for each stakeholder
-        persona_rows = await client.personas.find_many(take=1000)
-        persona_by_name: dict[str, str] = {p.name: p.id for p in persona_rows if p.name}
-        persona_ids = list(persona_by_name.values())
-        participants = await client.simulation_participants.find_many(
-            where={"persona_id": {"in": persona_ids}},
-            take=10000,
-        )
-        stats_by_pid: dict[str, dict] = {}
-        for p in participants:
-            pid = p.persona_id
-            if pid not in stats_by_pid:
-                stats_by_pid[pid] = {"sim_count": 0, "total_turns": 0}
-            stats_by_pid[pid]["sim_count"] += 1
-            stats_by_pid[pid]["total_turns"] += p.turn_count or 0
+        return await self._with_stats(client, rows)
 
-        result = []
-        for r in rows:
-            d = self._row_to_persona_detail(r)
-            pid = persona_by_name.get(r.name)
-            if pid and pid in stats_by_pid:
-                d["sim_count"] = stats_by_pid[pid]["sim_count"]
-                d["total_turns"] = stats_by_pid[pid]["total_turns"]
-            else:
-                d["sim_count"] = 0
-                d["total_turns"] = 0
-            result.append(d)
-        return result
-
-    async def get_persona_detail(self, persona_id: str) -> dict | None:
-        client = self._client_or_raise()
+    async def _resolve_persona_row(self, client, persona_id: str):
         row = await client.stakeholders.find_first(
             where={"id": persona_id},
         )
         if row:
-            return self._row_to_persona_detail(row)
-        p = await client.personas.find_first(where={"id": persona_id})
-        if p:
-            row = await client.stakeholders.find_first(where={"name": p.name})
-            if row:
-                return self._row_to_persona_detail(row)
-        row = await client.stakeholders.find_first(where={"name": persona_id})
-        if row:
-            return self._row_to_persona_detail(row)
-        return None
+            return row
+        if self._is_valid_uuid(persona_id):
+            p = await client.personas.find_first(where={"id": persona_id})
+            if p:
+                row = await client.stakeholders.find_first(where={"name": p.name})
+                if row:
+                    return row
+        return await client.stakeholders.find_first(where={"name": persona_id})
+
+    async def get_persona_detail(self, persona_id: str) -> dict | None:
+        client = self._client_or_raise()
+        row = await self._resolve_persona_row(client, persona_id)
+        return self._row_to_persona_detail(row) if row else None
+
+    async def get_persona_profile(self, persona_id: str) -> dict | None:
+        client = self._client_or_raise()
+        row = await self._resolve_persona_row(client, persona_id)
+        if row is None:
+            return None
+        return (await self._with_stats(client, [row]))[0]
+
+    async def get_stakeholder_detail(self, stakeholder_id: str) -> dict | None:
+        client = self._client_or_raise()
+        row = await client.stakeholders.find_first(where={"id": stakeholder_id})
+        if row is None:
+            return None
+        return (await self._with_stats(client, [row]))[0]
 
     async def list_personas(self) -> list[dict]:
         """List all personas from the stakeholders table (hasattr-discovered by main.py)."""
@@ -1305,13 +1423,22 @@ class PrismaBackend(DatabaseBackend):
     # --- Persona evolution ---
 
     @staticmethod
-    def _row_to_persona_evolution(row) -> PersonaEvolution:
+    def _row_to_persona_evolution(row, meeting: dict | None = None) -> PersonaEvolution:
         proposed = row.proposed_deltas or {}
         if isinstance(proposed, str):
             proposed = json.loads(proposed)
         before = row.before_snapshot or {}
         if isinstance(before, str):
             before = json.loads(before)
+        subject = getattr(row, "simulation_subject", None)
+        outcome = getattr(row, "outcome", None)
+        if meeting:  # rows written before the context columns existed
+            subject = subject or meeting.get("subject") or None
+            if outcome is None:
+                outcome = outcome_words(
+                    meeting.get("outcome"), meeting.get("stances", {}).get(row.persona_id),
+                    row.persona_id, meeting.get("names"),
+                )
         return PersonaEvolution(
             id=row.id,
             persona_id=row.persona_id,
@@ -1321,7 +1448,47 @@ class PrismaBackend(DatabaseBackend):
             status=row.status or "pending",
             applied_at=str(row.applied_at) if row.applied_at else None,
             created_at=str(row.created_at) if row.created_at else "",
+            simulation_subject=subject,
+            outcome=outcome,
+            reason=describe_evolution(subject, outcome, proposed if isinstance(proposed, dict) else {}),
         )
+
+    async def _evolutions_with_context(self, client, rows) -> list[PersonaEvolution]:
+        missing = {
+            r.simulation_id for r in rows
+            if (getattr(r, "simulation_subject", None) is None or getattr(r, "outcome", None) is None)
+            and self._is_valid_uuid(r.simulation_id or "")
+        }
+        meetings: dict[str, dict] = {}
+        if missing:
+            sims = await client.simulations.find_many(where={"id": {"in": list(missing)}})
+            meetings = {sim.id: self._simulation_summary(sim) for sim in sims}
+        return [self._row_to_persona_evolution(r, meetings.get(r.simulation_id)) for r in rows]
+
+    @staticmethod
+    def _simulation_summary(sim) -> dict:
+        meta = sim.metadata
+        if isinstance(meta, str):
+            meta = json.loads(meta) if meta.strip() else {}
+        cfg = sim.config
+        if isinstance(cfg, str):
+            cfg = json.loads(cfg) if cfg.strip() else {}
+        seats = (cfg.get("stakeholders") if isinstance(cfg, dict) else None) or []
+        seats = [s for s in seats if isinstance(s, dict) and s.get("id")]
+        outcome = meta.get("outcome") if isinstance(meta, dict) else None
+        return {
+            "subject": sim.subject_name or "",
+            "outcome": outcome if isinstance(outcome, dict) and outcome else None,
+            "names": {s["id"]: s.get("name", "") for s in seats},
+            "stances": {s["id"]: s.get("stance", "neutral") for s in seats},
+        }
+
+    async def get_simulation_summary(self, simulation_id: str) -> dict | None:
+        client = self._client_or_raise()
+        if not self._is_valid_uuid(simulation_id):
+            return None
+        sim = await client.simulations.find_first(where={"id": simulation_id})
+        return self._simulation_summary(sim) if sim else None
 
     async def create_persona_evolution(self, evolution: PersonaEvolution) -> PersonaEvolution:
         client = self._client_or_raise()
@@ -1334,6 +1501,8 @@ class PrismaBackend(DatabaseBackend):
             "before_snapshot": PrismaJson(self._pydantic_to_json(evolution.before_snapshot)),
             "status": evolution.status,
             "applied_at": evolution.applied_at,
+            "simulation_subject": evolution.simulation_subject,
+            "outcome": evolution.outcome,
             "created_at": now,
         })
         return evolution
@@ -1349,7 +1518,7 @@ class PrismaBackend(DatabaseBackend):
             where={"persona_id": persona_id, "status": "pending"},
             order={"created_at": "desc"},
         )
-        return [self._row_to_persona_evolution(r) for r in rows]
+        return await self._evolutions_with_context(client, rows)
 
     async def approve_evolution(self, evolution_id: str) -> bool:
         client = self._client_or_raise()
@@ -1380,7 +1549,7 @@ class PrismaBackend(DatabaseBackend):
             where={"persona_id": persona_id},
             order={"created_at": "desc"},
         )
-        return [self._row_to_persona_evolution(r) for r in rows]
+        return await self._evolutions_with_context(client, rows)
 
     async def update_persona(self, persona_id: str, personality: str, stance: str | None = None) -> bool:
         client = self._client_or_raise()
@@ -1395,9 +1564,20 @@ class PrismaBackend(DatabaseBackend):
                 where={"id": persona_id},
                 data=data,
             )
-            return row is not None
         except Exception:
             return False
+        if row is None:
+            return False
+        # The personas row feeds the next simulation's lookups; keep its traits in step.
+        try:
+            pid = await self._persona_id_for(client, persona_id, "")
+            if pid:
+                await client.personas.update(where={"id": pid}, data={
+                    "personality": PrismaJson(pj), "updated_at": now,
+                })
+        except Exception as exc:
+            logger.warning("personas sync after evolution failed for %s: %s", persona_id, exc)
+        return True
 
     # --- Persona research ---
 

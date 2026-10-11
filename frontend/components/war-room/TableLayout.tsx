@@ -5,6 +5,7 @@ import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import type { Turn } from "./TranscriptStream";
 import { Avatar, initialsFromName } from "@/components/Avatar";
+import { ActionGlyph, actionLabel } from "@/components/ActionGlyph";
 import { ConflictTimeline } from "./ConflictTimeline";
 import { EventLog } from "./EventLog";
 import { Leaderboard } from "./Leaderboard";
@@ -13,6 +14,7 @@ import { LeverageShifts } from "./LeverageShifts";
 import { StateDiffPanel } from "./StateDiffPanel";
 import { EmotionalInfluencePanel } from "./EmotionalInfluencePanel";
 import { StrategicPlanPanel } from "./StrategicPlanPanel";
+import { RoomStatePanel } from "./RoomStatePanel";
 import EmotionIndicator from "@/components/emotion-indicator";
 import type { SimulationStateData } from "@/lib/use-simulation-state";
 
@@ -44,13 +46,40 @@ interface TableLayoutProps {
   nameMap?: Record<string, string>;
 }
 
+// The stage is dark, so neutral and moderator take the on-dark muted tone.
+const MUTED_ON_DARK = "var(--color-on-dark-soft)";
+
 const STANCE_COLORS: Record<string, string> = {
   champion: "var(--color-primary)",
   detractor: "var(--color-error)",
-  neutral: "var(--color-muted)",
-  moderator: "var(--color-accent-teal)",
+  neutral: MUTED_ON_DARK,
+  moderator: MUTED_ON_DARK,
   wildcard: "var(--color-accent-amber)",
 };
+
+const VOTE_CHIP: Record<string, string> = {
+  yes: "bg-secondary text-on-dark",
+  no: "bg-error text-on-dark",
+  abstain: "bg-on-dark/15 text-on-dark-soft",
+};
+
+const SEAT_CHIP = "rounded-full px-1.5 py-[1px] font-mono text-[8px] font-bold uppercase tracking-[0.1em]";
+
+/** Each person's most recent ballot, keyed by agent id. */
+function latestVotes(turns: Turn[], stakeholders: TableStakeholder[]): Record<string, string> {
+  const votes: Record<string, string> = {};
+  for (const t of turns) {
+    if (t.kind !== "agent" || t.action_type !== "vote" || !t.vote) continue;
+    const id = t.agent_id ?? stakeholders.find((s) => s.name === t.speaker)?.id;
+    if (id) votes[id] = t.vote.toLowerCase();
+  }
+  return votes;
+}
+
+function stanceTint(stance: string): { background: string; color: string } {
+  const c = STANCE_COLORS[stance] ?? MUTED_ON_DARK;
+  return { background: `color-mix(in srgb, ${c} 16%, transparent)`, color: c };
+}
 
 function SpeakingPulse({ active }: { active: boolean }) {
   if (!active) return null;
@@ -59,6 +88,31 @@ function SpeakingPulse({ active }: { active: boolean }) {
       <span className="absolute inset-0 animate-ping rounded-full bg-primary/30" />
       <span className="absolute inset-0 animate-pulse rounded-full bg-primary/20" />
     </span>
+  );
+}
+
+// Mounted with a key per turn, so each new turn types out from the start.
+function TypewriterText({ text }: { text: string }) {
+  const [shown, setShown] = useState(0);
+
+  useEffect(() => {
+    let i = 0;
+    const timer = setInterval(() => {
+      i++;
+      setShown(i);
+      if (i >= text.length) clearInterval(timer);
+    }, 18);
+    return () => clearInterval(timer);
+  }, [text]);
+
+  return (
+    <>
+      &ldquo;{text.slice(0, shown)}
+      {shown < text.length && (
+        <span className="inline-block h-[0.85em] w-[2px] animate-pulse bg-primary align-middle" />
+      )}
+      &rdquo;
+    </>
   );
 }
 
@@ -74,9 +128,19 @@ export function TableLayout({
   nameMap,
 }: TableLayoutProps) {
   const tableRef = useRef<HTMLDivElement>(null);
-  const [typewriter, setTypewriter] = useState("");
-  const typewriterIdx = useRef(0);
-  const prevSpeakerRef = useRef<string | null>(null);
+
+  // System rows (room events) never take the floor.
+  const speech = current?.kind === "agent" ? current : undefined;
+
+  const speakerAgentId = useMemo(() => {
+    if (!speech) return null;
+    if (speech.agent_id) return speech.agent_id;
+    const name = speakerId ?? speech.speaker;
+    return stakeholders.find((s) => s.name === name)?.id ?? null;
+  }, [speech, speakerId, stakeholders]);
+
+  const votes = useMemo(() => latestVotes(turns, stakeholders), [turns, stakeholders]);
+  const departed = useMemo(() => new Set(simState?.departed ?? []), [simState?.departed]);
 
   // Per-agent emotion mapping
   const agentEmotions = useMemo(() => {
@@ -96,277 +160,289 @@ export function TableLayout({
     });
   }, [stakeholders]);
 
-  // Current speaker trust connections to others
+  // Current speaker trust connections to others; pairs with no recorded trust get no line.
+  const trustMatrix = simState?.trustMatrix;
   const speakerConnections = useMemo(() => {
-    if (!speakerId || !simState?.trustMatrix) return [];
-    const tm = simState.trustMatrix;
-    const speakerNode = stakeholders.find((s) => s.name === speakerId);
-    if (!speakerNode) return [];
-    return stakeholders
-      .filter((s) => s.id !== speakerNode.id)
-      .map((s) => ({
-        target: s.id,
-        trust: tm[speakerNode.id]?.[s.id] ?? 0.5,
-      }));
-  }, [speakerId, simState?.trustMatrix, stakeholders]);
+    const row = speakerAgentId ? trustMatrix?.[speakerAgentId] : undefined;
+    if (!row) return [];
+    const conns: { target: string; trust: number }[] = [];
+    for (const s of stakeholders) {
+      const trust = row[s.id];
+      if (s.id === speakerAgentId || typeof trust !== "number" || !Number.isFinite(trust)) continue;
+      conns.push({ target: s.id, trust });
+    }
+    return conns;
+  }, [speakerAgentId, trustMatrix, stakeholders]);
 
-  // Animate table entrance
+  // Animate table entrance. The page rebuilds `stakeholders` on every render, so key on who is
+  // seated; re-running a from-tween mid-flight would leave seats stuck part-faded.
+  const seatKey = stakeholders.map((s) => s.id).join("|");
   useGSAP(() => {
     if (!tableRef.current) return;
-    gsap.from(tableRef.current.querySelectorAll("[data-anim='seat']"), {
-      y: 20,
-      opacity: 0,
-      stagger: 0.06,
-      duration: 0.5,
-      ease: "back.out(1.7)",
-    });
-  }, { dependencies: [stakeholders] });
+    gsap.fromTo(
+      tableRef.current.querySelectorAll("[data-anim='seat']"),
+      { y: 20, opacity: 0 },
+      { y: 0, opacity: 1, stagger: 0.06, duration: 0.5, ease: "back.out(1.7)", clearProps: "opacity" },
+    );
+  }, { dependencies: [seatKey] });
 
-  // Typewriter effect for current speech
-  useEffect(() => {
-    if (!current) { setTypewriter(""); typewriterIdx.current = 0; return; }
-    const speakerChanged = current.speaker !== prevSpeakerRef.current;
-    prevSpeakerRef.current = current.speaker ?? null;
-    if (speakerChanged) {
-      setTypewriter("");
-      typewriterIdx.current = 0;
-      const full = current.content ?? "";
-      const speed = 18;
-      const timer = setInterval(() => {
-        typewriterIdx.current++;
-        setTypewriter(full.slice(0, typewriterIdx.current));
-        if (typewriterIdx.current >= full.length) clearInterval(timer);
-      }, speed);
-      return () => clearInterval(timer);
-    } else {
-      setTypewriter(current.content ?? "");
-    }
-  }, [current]);
+  const speakerPos = positions.find((p) => p.id === speakerAgentId);
+  const speechVote = speech?.action_type === "vote" && speech.vote ? speech.vote.toLowerCase() : null;
+  const speechTarget = speech ? speech.directed_at_name ?? speech.directed_at ?? null : null;
 
   return (
-    <div
-      className="grid min-h-[calc(100vh-220px)] gap-4 p-4"
-      style={{ gridTemplateColumns: "1fr 340px" }}
-    >
+    <div className="grid min-h-[calc(100vh-220px)] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_340px]">
       {/* ── Main table view ── */}
-      <div className="flex flex-col gap-3">
-        <div
-          ref={tableRef}
-          className="relative aspect-[16/10] overflow-hidden rounded-xl"
-          style={{
-            background: "radial-gradient(circle at center, var(--color-surface-dark-soft) 0%, var(--color-surface-dark) 100%)",
-          }}
-        >
-          {/* Table surface — mahogany oval */}
+      <div className="flex min-w-0 flex-col gap-3">
+        <div className="relative">
           <div
-            className="absolute inset-6 rounded-full"
+            ref={tableRef}
+            className="relative aspect-square overflow-hidden rounded-xl sm:aspect-[16/10]"
             style={{
-              background: "radial-gradient(ellipse at center, var(--color-surface-dark-elevated) 0%, var(--color-surface-dark) 60%, var(--color-surface-dark-soft) 100%)",
-              border: "1px solid rgba(255,255,255,0.06)",
-              boxShadow: "inset 0 0 60px rgba(0,0,0,0.5)",
+              background: "radial-gradient(circle at center, var(--color-surface-dark-soft) 0%, var(--color-surface-dark) 100%)",
             }}
-          />
+          >
+            {/* Table surface — mahogany oval */}
+            <div
+              className="absolute inset-6 rounded-full"
+              style={{
+                background: "radial-gradient(ellipse at center, var(--color-surface-dark-elevated) 0%, var(--color-surface-dark) 60%, var(--color-surface-dark-soft) 100%)",
+                border: "1px solid rgba(255,255,255,0.06)",
+                boxShadow: "inset 0 0 60px rgba(0,0,0,0.5)",
+              }}
+            />
 
-          {/* Table center glow — coral accent */}
-          <div
-            className="absolute left-1/2 top-1/2 h-16 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full"
-            style={{
-              background: "radial-gradient(ellipse, rgba(237,111,92,0.10) 0%, transparent 70%)",
-            }}
-          />
+            {/* Table center glow — coral accent */}
+            <div
+              className="absolute left-1/2 top-1/2 h-16 w-24 -translate-x-1/2 -translate-y-1/2 rounded-full"
+              style={{
+                background: "radial-gradient(ellipse, rgba(237,111,92,0.10) 0%, transparent 70%)",
+              }}
+            />
 
-          {/* Trust connection lines from speaker */}
-          <svg className="absolute inset-0 h-full w-full pointer-events-none" viewBox="0 0 100 100">
-            {speakerConnections.map((conn) => {
-              const speakerPos = positions.find((p) => stakeholders.find((s) => s.name === speakerId)?.id === p.id);
-              const targetPos = positions.find((p) => p.id === conn.target);
-              if (!speakerPos || !targetPos) return null;
-              const trustWidth = 0.06 + conn.trust * 0.2;
+            {/* Trust connection lines from speaker */}
+            <svg className="absolute inset-0 h-full w-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
+              {speakerPos && speakerConnections.map((conn) => {
+                const targetPos = positions.find((p) => p.id === conn.target);
+                if (!targetPos) return null;
+                const trustWidth = 0.06 + conn.trust * 0.2;
+                return (
+                  <line
+                    key={conn.target}
+                    x1={speakerPos.x} y1={speakerPos.y}
+                    x2={targetPos.x} y2={targetPos.y}
+                    stroke={conn.trust > 0.6 ? "#22c55e" : conn.trust > 0.3 ? "#a3a3a3" : "#ef4444"}
+                    strokeWidth={trustWidth}
+                    opacity={0.25}
+                    strokeDasharray="1 1.5"
+                  />
+                );
+              })}
+            </svg>
+
+            {/* Seat markers */}
+            {positions.map((p) => {
+              const s = stakeholders.find((st) => st.id === p.id);
+              if (!s) return null;
+              const speaking = s.id === speakerAgentId;
+              const left = departed.has(s.id);
+              const vote = votes[s.id];
+              const agentState = agentEmotions[s.id];
               return (
-                <line
-                  key={conn.target}
-                  x1={speakerPos.x} y1={speakerPos.y}
-                  x2={targetPos.x} y2={targetPos.y}
-                  stroke={conn.trust > 0.6 ? "#22c55e" : conn.trust > 0.3 ? "#a3a3a3" : "#ef4444"}
-                  strokeWidth={trustWidth}
-                  opacity={0.25}
-                  strokeDasharray="1 1.5"
-                />
+                <div
+                  key={s.id}
+                  data-anim="seat"
+                  data-departed={left}
+                  className="absolute flex flex-col items-center max-sm:scale-[0.85]"
+                  style={{
+                    left: `${p.x}%`,
+                    top: `${p.y}%`,
+                    transform: `translate(-50%, -50%)`,
+                    transition: "all 400ms cubic-bezier(.4,0,.2,1)",
+                  }}
+                >
+                  {/* Avatar with speaking pulse */}
+                  <div className="relative mb-1">
+                    <SpeakingPulse active={speaking} />
+                    <div
+                      style={{
+                        transform: speaking ? "translateY(-4px) scale(1.1)" : "translateY(0) scale(1)",
+                        transition: "transform 350ms cubic-bezier(.34,1.56,.64,1), opacity 300ms",
+                        opacity: left && !speaking ? 0.35 : 1,
+                        filter: left && !speaking ? "grayscale(1)" : undefined,
+                      }}
+                    >
+                      <Avatar
+                        initials={initialsFromName(s.name)}
+                        size={speaking ? 64 : 52}
+                        speaking={speaking}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Name + stance */}
+                  <div className="text-center">
+                    <div
+                      className="text-[13px] font-semibold leading-tight"
+                      style={{
+                        color: speaking ? "#fff" : left ? "rgba(255,255,255,0.4)" : "rgba(255,255,255,0.7)",
+                        transition: "color 300ms",
+                      }}
+                    >
+                      {s.name.split(" ")[0]}
+                    </div>
+                    <div
+                      className="text-[10px]"
+                      style={{
+                        color: speaking ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)",
+                        transition: "color 300ms",
+                      }}
+                    >
+                      {s.role.split(" ")[0] || s.stance}
+                    </div>
+                    {(left || vote) && (
+                      <div className="mt-0.5 flex items-center justify-center gap-1">
+                        {left && (
+                          <span className={`${SEAT_CHIP} bg-accent-amber/25 text-accent-amber`} title="Left the room before the end">
+                            Walked out
+                          </span>
+                        )}
+                        {vote && (
+                          <span className={`${SEAT_CHIP} ${VOTE_CHIP[vote] ?? VOTE_CHIP.abstain}`} title={`Voted ${vote}`}>
+                            {vote}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                    {/* Emotion indicator */}
+                    {agentState?.emotion && !left && (
+                      <div className="mt-0.5 scale-[0.7] origin-center">
+                        <EmotionIndicator emotions={agentState.emotion} size="sm" />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Stance dot */}
+                  <div
+                    className="mt-1 h-1.5 w-1.5 rounded-full"
+                    title={s.stance}
+                    style={{
+                      background: STANCE_COLORS[s.stance] ?? MUTED_ON_DARK,
+                      opacity: speaking ? 1 : 0.5,
+                      transition: "opacity 300ms",
+                    }}
+                  />
+                </div>
               );
             })}
-          </svg>
 
-          {/* Seat markers */}
-          {positions.map((p) => {
-            const s = stakeholders.find((st) => st.id === p.id);
-            if (!s) return null;
-            const speaking = s.name === speakerId;
-            const agentState = agentEmotions[s.id];
-            return (
-              <div
-                key={s.id}
-                data-anim="seat"
-                className="absolute flex flex-col items-center"
-                style={{
-                  left: `${p.x}%`,
-                  top: `${p.y}%`,
-                  transform: `translate(-50%, -50%)`,
-                  transition: "all 400ms cubic-bezier(.4,0,.2,1)",
-                }}
-              >
-                {/* Avatar with speaking pulse */}
-                <div className="relative mb-1">
-                  <SpeakingPulse active={speaking} />
-                  <div
-                    style={{
-                      transform: speaking ? "translateY(-4px) scale(1.1)" : "translateY(0) scale(1)",
-                      transition: "transform 350ms cubic-bezier(.34,1.56,.64,1)",
-                    }}
-                  >
-                    <Avatar
-                      initials={initialsFromName(s.name)}
-                      size={speaking ? 64 : 52}
-                      speaking={speaking}
-                    />
-                  </div>
+            {!speech && (
+              <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
+                <div className="text-3xl text-canvas/20" style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif" }}>Empty table</div>
+                <div className="mt-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-canvas/30">
+                  Awaiting first speaker
                 </div>
-
-                {/* Name + stance */}
-                <div className="text-center">
-                  <div
-                    className="text-[13px] font-semibold leading-tight"
-                    style={{
-                      color: speaking ? "#fff" : "rgba(255,255,255,0.7)",
-                      transition: "color 300ms",
-                    }}
-                  >
-                    {s.name.split(" ")[0]}
-                  </div>
-                  <div
-                    className="text-[10px]"
-                    style={{
-                      color: speaking ? "rgba(255,255,255,0.5)" : "rgba(255,255,255,0.35)",
-                      transition: "color 300ms",
-                    }}
-                  >
-                    {s.role.split(" ")[0] || s.stance}
-                  </div>
-                  {/* Emotion indicator */}
-                  {agentState?.emotion && (
-                    <div className="mt-0.5 scale-[0.7] origin-center">
-                      <EmotionIndicator emotions={agentState.emotion} size="sm" />
-                    </div>
-                  )}
-                </div>
-
-                {/* Stance dot */}
-                <div
-                  className="mt-1 h-1.5 w-1.5 rounded-full"
-                  style={{
-                    background: STANCE_COLORS[s.stance] ?? "#a3a3a3",
-                    opacity: speaking ? 1 : 0.5,
-                    transition: "opacity 300ms",
-                  }}
-                />
               </div>
-            );
-          })}
+            )}
 
-          {/* ── Current speech bubble ── */}
-          {current && speakerId && (
-            <div className="absolute left-1/2 top-1/2 w-[42%] -translate-x-1/2 -translate-y-1/2">
+            {/* Status bar */}
+            <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2 rounded-full border border-hairline/30 bg-ink/60 px-3 py-1.5 backdrop-blur-sm">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-secondary animate-pulse" />
+                <span className="truncate text-[10px] text-canvas/60">
+                  {stakeholders.length - departed.size} at table · turn {turn + 1}/{totalTurns}
+                </span>
+              </div>
+              <div className="flex shrink-0 items-center gap-1">
+                {stakeholders.map((s) => (
+                  <div
+                    key={s.id}
+                    className="h-1.5 w-1.5 rounded-full transition-all duration-300"
+                    style={{
+                      background: STANCE_COLORS[s.stance] ?? MUTED_ON_DARK,
+                      opacity: s.id === speakerAgentId ? 1 : departed.has(s.id) ? 0.1 : 0.3,
+                      transform: s.id === speakerAgentId ? "scale(1.5)" : "scale(1)",
+                    }}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Current speech bubble: centred on the table from sm up, below it on phones ── */}
+          {speech && (
+            <div className="mt-3 sm:absolute sm:left-1/2 sm:top-1/2 sm:mt-0 sm:flex sm:max-h-[85%] sm:w-[42%] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:flex-col">
               <div
-                className="rounded-xl border p-4 backdrop-blur-sm"
+                className="rounded-xl border p-4 backdrop-blur-sm sm:min-h-0 sm:overflow-y-auto"
                 style={{
                   background: "rgba(30,28,25,0.92)",
                   borderColor: "rgba(237,111,92,0.25)",
                   boxShadow: "0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(237,111,92,0.08) inset",
                 }}
               >
-                <div className="mb-2 flex items-center gap-2">
+                <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="rounded bg-primary/20 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-[0.12em] text-primary" style={{ fontFamily: "var(--font-mono)" }}>
-                    T{String(turn).padStart(2, "0")}
+                    T{String(speech.turn_number + 1).padStart(2, "0")}
                   </span>
-                  <span className="text-[10px] font-medium text-canvas/50">{current.speaker}</span>
-                </div>
-                <div className="min-h-[2.5em] text-[17px] leading-[1.35] text-canvas" style={{ fontFamily: "var(--font-body), Inter, sans-serif", letterSpacing: "-0.01em" }}>
-                  &ldquo;{typewriter}
-                  {(typewriter.length < (current.content?.length ?? 0)) && (
-                    <span className="inline-block h-[0.85em] w-[2px] animate-pulse bg-primary align-middle" />
-                  )}
-                  &rdquo;
-                </div>
-                <div className="mt-2 text-[10px] text-canvas/40">
-                  {current.stance && (
+                  <span className="text-[10px] font-medium text-canvas/50">{speech.speaker}</span>
+                  {speech.is_human && (
                     <span
-                      className="mr-2 rounded-full px-1.5 py-[1px] text-[9px] font-semibold uppercase"
-                      style={{
-                        background: `${STANCE_COLORS[current.stance] ?? "#666"}22`,
-                        color: STANCE_COLORS[current.stance] ?? "#666",
-                      }}
+                      className="rounded-full bg-canvas px-[6px] py-[1px] font-mono text-[8px] font-bold tracking-[0.12em] text-ink"
+                      title="Typed by a person in the room, not generated"
                     >
-                      {current.stance}
+                      HUMAN
                     </span>
                   )}
-                  {current.action_type && (
-                    <span className="text-canvas/30">{current.action_type.replace("_", " ")}</span>
+                  {speechTarget && (
+                    <span className="text-[10px] text-canvas/40">→ {speechTarget}</span>
+                  )}
+                </div>
+                <div className="min-h-[2.5em] text-[17px] leading-[1.35] text-canvas" style={{ fontFamily: "var(--font-body), Inter, sans-serif", letterSpacing: "-0.01em" }}>
+                  <TypewriterText key={speech.turn_index} text={speech.content ?? ""} />
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] text-canvas/40">
+                  {speech.stance && (
+                    <span
+                      className="rounded-full px-1.5 py-[1px] text-[9px] font-semibold uppercase"
+                      style={stanceTint(speech.stance)}
+                    >
+                      {speech.stance}
+                    </span>
+                  )}
+                  {speech.action_type && (
+                    <span className="inline-flex items-center gap-1 font-mono text-[9px] uppercase tracking-[0.08em] text-canvas/50">
+                      <ActionGlyph type={speech.action_type} size={11} />
+                      {actionLabel(speech.action_type)}
+                    </span>
+                  )}
+                  {speechVote && (
+                    <span className={`${SEAT_CHIP} ${VOTE_CHIP[speechVote] ?? VOTE_CHIP.abstain}`}>
+                      {speechVote}
+                    </span>
                   )}
                 </div>
               </div>
             </div>
           )}
-
-          {!current && (
-            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-center">
-              <div className="text-3xl text-canvas/20" style={{ fontFamily: "var(--font-display), 'Playfair Display', Georgia, serif" }}>Empty table</div>
-              <div className="mt-2 font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-canvas/30">
-                Awaiting first speaker
-              </div>
-            </div>
-          )}
-
-          {/* Status bar */}
-          <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between">
-            <div className="flex items-center gap-2 rounded-full border border-hairline/30 bg-ink/60 px-3 py-1.5 backdrop-blur-sm">
-              <span className="h-2 w-2 rounded-full bg-secondary animate-pulse" />
-              <span className="text-[10px] text-canvas/60">
-                {stakeholders.length} at table · turn {turn+1}/{totalTurns}
-              </span>
-            </div>
-            <div className="flex items-center gap-1">
-              {stakeholders.map((s) => (
-                <div
-                  key={s.id}
-                  className="h-1.5 w-1.5 rounded-full transition-all duration-300"
-                  style={{
-                    background: STANCE_COLORS[s.stance] ?? "#666",
-                    opacity: s.name === speakerId ? 1 : 0.3,
-                    transform: s.name === speakerId ? "scale(1.5)" : "scale(1)",
-                  }}
-                />
-              ))}
-            </div>
-          </div>
         </div>
 
-        <ConflictTimeline turn={turn} totalTurns={totalTurns} dark />
+        <ConflictTimeline turn={turn} totalTurns={totalTurns} simState={simState} dark />
         <EventLog events={eventLog} />
       </div>
 
       {/* ── Sidebar ── */}
-      <div className="flex flex-col gap-[14px]">
+      <div className="flex min-w-0 flex-col gap-[14px]">
+        <RoomStatePanel simState={simState} nameMap={nameMap} focusAgentId={speakerAgentId} />
         <Leaderboard leaderboard={simState?.leaderboard} nameMap={nameMap} />
-        <IncentiveHeatmap socialPhysics={simState?.socialPhysics} totalAgents={stakeholders.length} />
+        <IncentiveHeatmap socialPhysics={simState?.socialPhysics} totalAgents={stakeholders.length} deadlockRisk={simState?.deadlockRisk} />
         <LeverageShifts leverageHistory={simState?.leverageHistory} nameMap={nameMap} />
-        {speakerId && (() => {
-          const sid = stakeholders.find(s => s.name === speakerId)?.id;
-          return sid ? (
-            <EmotionalInfluencePanel
-              modulation={simState?.getAgentState(sid)?.modulation ?? undefined}
-              agentName={speakerId}
-            />
-          ) : null;
-        })()}
+        {speakerAgentId && (
+          <EmotionalInfluencePanel
+            modulation={simState?.getAgentState(speakerAgentId)?.modulation ?? undefined}
+            emotions={simState?.getAgentState(speakerAgentId)?.emotion}
+            agentName={nameMap?.[speakerAgentId] ?? speech?.speaker ?? speakerAgentId}
+          />
+        )}
         <StrategicPlanPanel
           plans={simState?.agentPlans}
           nameMap={nameMap}

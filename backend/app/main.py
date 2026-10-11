@@ -79,6 +79,9 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(RequestSizeLimitMiddleware)
 
+from .drafts import router as drafts_router  # noqa: E402
+app.include_router(drafts_router)
+
 # Serve uploaded files in dev (auth not required for static mount)
 os.makedirs(config.UPLOAD_DIR, exist_ok=True)
 os.makedirs(config.CHROMA_PERSIST_DIR, exist_ok=True)
@@ -240,15 +243,26 @@ def health() -> dict[str, str | bool]:
 
 # ── Stakeholders (DB-backed) ─────────────────────────────────────────────
 
+from .models import StakeholderPatch, normalize_personality
+
 @app.get("/stakeholders")
 async def list_stakeholders_api() -> list[dict]:
     db = get_database()
     try:
         personas = await db.list_personas_v2()
-        logger.info("list_stakeholders (detail): %d personas", len(personas))
-        return personas
-    except Exception:
-        return []
+    except Exception as exc:
+        # An outage must not look like an empty library.
+        logger.exception("list_stakeholders failed")
+        raise HTTPException(status_code=503, detail="Persona library unavailable") from exc
+    logger.info("list_stakeholders (detail): %d personas", len(personas))
+    return personas
+
+async def _persona_json(stakeholder_id: str) -> dict:
+    persona = await get_database().get_stakeholder_detail(stakeholder_id)
+    if persona is None:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    return persona
+
 
 @app.post("/stakeholders", status_code=201)
 async def create_stakeholder_api(payload: Stakeholder) -> dict:
@@ -258,7 +272,11 @@ async def create_stakeholder_api(payload: Stakeholder) -> dict:
     await db.create_stakeholder(s)
     has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
     logger.info("create_stakeholder %s (detail=%s): name=%s role=%s", sid, has_detail, s.name, s.role)
-    return s.model_dump()
+    return await _persona_json(sid)
+
+@app.get("/stakeholders/{stakeholder_id}")
+async def get_stakeholder_api(stakeholder_id: str) -> dict:
+    return await _persona_json(stakeholder_id)
 
 @app.put("/stakeholders/{stakeholder_id}")
 async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> dict:
@@ -266,11 +284,37 @@ async def update_stakeholder_api(stakeholder_id: str, payload: Stakeholder) -> d
     existing = await db.get_stakeholder(stakeholder_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Stakeholder not found")
-    s = payload.model_copy(update={"id": stakeholder_id})
+    update: dict = {"id": stakeholder_id}
+    # Older editors PUT the whole persona without knowing about archetype; don't wipe it.
+    if "archetype" not in payload.model_fields_set:
+        update["archetype"] = existing.archetype
+    s = payload.model_copy(update=update)
     await db.update_stakeholder(s)
     has_detail = bool(s.backstory or s.stance != "neutral" or s.personality != "{}" or s.tools != "[]")
     logger.info("update_stakeholder %s (detail=%s): name=%s role=%s", stakeholder_id, has_detail, s.name, s.role)
-    return s.model_dump()
+    return await _persona_json(stakeholder_id)
+
+# Fields a PATCH may clear with null; for the rest null means "leave as is".
+_NULLABLE_PERSONA_FIELDS = {"archetype", "tag"}
+
+@app.patch("/stakeholders/{stakeholder_id}")
+async def patch_stakeholder_api(stakeholder_id: str, payload: StakeholderPatch) -> dict:
+    db = get_database()
+    existing = await db.get_stakeholder(stakeholder_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Stakeholder not found")
+    changes = {
+        k: v for k, v in payload.model_dump(exclude_unset=True).items()
+        if v is not None or k in _NULLABLE_PERSONA_FIELDS
+    }
+    if "personality" in changes:
+        merged = normalize_personality(existing.personality)
+        merged.update({k: v for k, v in changes["personality"].items() if v is not None})
+        changes["personality"] = json.dumps(merged, separators=(",", ":"))
+    if changes:
+        await db.update_stakeholder(existing.model_copy(update=changes))
+    logger.info("patch_stakeholder %s fields=%s", stakeholder_id, sorted(changes))
+    return await _persona_json(stakeholder_id)
 
 @app.delete("/stakeholders/{stakeholder_id}", status_code=204)
 async def delete_stakeholder_api(stakeholder_id: str) -> Response:
@@ -286,12 +330,9 @@ async def delete_stakeholder_api(stakeholder_id: str) -> Response:
 
 @app.get("/personas/{persona_id}")
 async def get_persona_api(persona_id: str) -> dict:
-    db = get_database()
-    persona = await db.get_persona_detail(persona_id)
+    persona = await get_database().get_persona_profile(persona_id)
     if persona is None:
         raise HTTPException(status_code=404, detail="Persona not found")
-    docs = await db.get_persona_documents(persona_id)
-    persona["document_count"] = len(docs)
     return persona
 
 
@@ -515,13 +556,14 @@ async def approve_evolution(evolution_id: str):
         raise HTTPException(status_code=404, detail="Persona not found")
 
     deltas = json.loads(evo.proposed_deltas) if isinstance(evo.proposed_deltas, str) else evo.proposed_deltas
-    current = json.loads(persona["personality"]) if isinstance(persona["personality"], str) else persona["personality"]
+    current = normalize_personality(persona["personality"])
 
     updated = {}
-    for trait in ("aggressiveness", "empathy", "stubbornness", "verbosity"):
-        cur = current.get(trait, 50)
+    for trait, cur in current.items():
         delta = deltas.get(trait, 0)
-        updated[trait] = max(0, min(100, cur + delta))
+        if isinstance(delta, bool) or not isinstance(delta, (int, float)):
+            delta = 0
+        updated[trait] = max(0, min(100, int(cur + delta)))
 
     new_personality_json = json.dumps(updated)
     await db.update_persona(evo.persona_id, new_personality_json)
@@ -533,7 +575,7 @@ async def approve_evolution(evolution_id: str):
     logger.info("Evolution approved & applied persona=%s evolution=%s deltas=%s personality_after=%s",
                 evo.persona_id, evolution_id, evo.proposed_deltas, new_personality_json)
 
-    return {"status": "approved", "evolution_id": evolution_id}
+    return {"status": "approved", "evolution_id": evolution_id, "personality": updated}
 
 
 @app.post("/evolutions/{evolution_id}/reject")
@@ -685,22 +727,22 @@ async def list_simulations_handler() -> list[dict]:
     # List from new schema, unioned with in-memory active streams
     db = get_database()
     now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        db_sims = await db.list_simulations_v2()
+    except Exception:
+        db_sims = []
+    # The stored creation time, so "recent" lists don't float every in-memory run to the top as "just now".
+    created = {s["simulation_id"]: s.get("created_at") for s in db_sims}
     active = [
         {"simulation_id": sid, "subject": entry["config"].get("subject", {}), "status": entry["status"],
          "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50),
          "model_temperature": entry["config"].get("model_temperature", "stable"),
-         "created_at": now_iso}
+         "created_at": created.get(sid) or now_iso}
         for sid, entry in _active_simulations.items()
     ]
-    try:
-        db_sims = await db.list_simulations_v2()
-        # Merge: DB sims + active (active overrides with latest status)
-        seen = {s["simulation_id"] for s in active}
-        for s in db_sims:
-            if s["simulation_id"] not in seen:
-                active.append(s)
-    except Exception:
-        pass
+    # Merge: DB sims + active (active overrides with latest status)
+    seen = {s["simulation_id"] for s in active}
+    active.extend(s for s in db_sims if s["simulation_id"] not in seen)
     return active
 
 
@@ -931,6 +973,39 @@ def _evolution_result(event: dict, stance: str) -> dict:
     return result
 
 
+_OUTCOME_KEYS = ("reason", "outcome_type", "summary", "confidence", "vote_breakdown",
+                 "agreed_issues", "walkaway_party", "judge_notes", "total_turns")
+
+
+def _outcome_of(event: dict) -> dict:
+    """The verdict fields of a done event, small enough to keep on the simulation row."""
+    return {k: event[k] for k in _OUTCOME_KEYS if event.get(k) not in (None, "", [], {})}
+
+
+async def _persist_outcome(simulation_id: str, entry: dict, event: dict) -> None:
+    entry["outcome"] = _outcome_of(event)
+    try:
+        await get_database().save_simulation_outcome(simulation_id, entry["outcome"])
+    except Exception as exc:
+        logger.warning("OUTCOME_SAVE_ERR %s: %s", simulation_id, exc)
+
+
+async def _stored_outcome(simulation_id: str) -> dict | None:
+    """How a finished run ended: from memory while it is still there, else from the DB."""
+    entry = _active_simulations.get(simulation_id)
+    if entry is not None:
+        if entry.get("outcome"):
+            return entry["outcome"]
+        ctx = entry.get("context")
+        # The run task may not have processed its done event yet.
+        done = next((e for e in reversed(ctx.space.events) if e.get("type") == "done"), None) if ctx else None
+        return _outcome_of(done) if done else None
+    try:
+        return await get_database().get_simulation_outcome(simulation_id)
+    except Exception:
+        return None
+
+
 def _save_recording(ctx) -> None:
     """Persist the run as a replayable JSON recording for offline evaluation."""
     if not app_config.RECORDINGS_DIR or ctx is None:
@@ -1038,81 +1113,102 @@ def _schedule_post_simulation(config: SimulationConfig, simulation_id: str, even
         logger.warning("Cross-session memory trigger sim=%s err=%s", simulation_id, exc)
 
 
+async def _run_simulation_task(simulation_id: str, entry: dict, config: SimulationConfig, ctx) -> None:
+    """Run a simulation to completion, independent of any viewer's connection.
+
+    Viewers attach through ``/stream`` and read the shared space; closing a
+    tab or reloading the page no longer cancels the run.
+    """
+    try:
+        async for event in run_simulation(config, simulation_id, context=ctx):
+            if event.get("type") == "turn":
+                turn_idx = _extract_turn_index(event)
+                # Viewers read the same event object, so store a copy: the DB orders by
+                # event position, while turn_number keeps the room's turn clock for the UI.
+                saved = {**event, "turn_number": event.get("turn_index")}
+                if event.get("_index") is not None:
+                    saved["turn_index"] = event["_index"]
+                await _save_turn(simulation_id, turn_idx, json.dumps(saved, default=str))
+            elif event.get("type") == "done":
+                entry["status"] = "complete"
+                try:
+                    _db = get_database()
+                    await _db.update_simulation_status(simulation_id, "complete")
+                    await _db.update_participant_stats(simulation_id)
+                except Exception as exc:
+                    logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+                await _persist_outcome(simulation_id, entry, event)
+                _schedule_post_simulation(config, simulation_id, event, ctx)
+                _save_recording(ctx)
+                asyncio.create_task(_cleanup_simulation(simulation_id))
+                return
+    except asyncio.CancelledError:
+        # Stopped on purpose (the stop endpoint already told viewers).
+        ctx.space.shutdown()
+        entry["status"] = "complete"
+        try:
+            await get_database().update_simulation_status(simulation_id, "complete")
+        except Exception as exc:
+            logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+        # A stopped run still replays with its system events and verdict.
+        _save_recording(ctx)
+        raise
+    except Exception as exc:
+        logger.exception("SIM_RUN_ERR simulation_id=%s", simulation_id)
+        ctx.space.events.append({"type": "error", "message": str(exc), "_index": len(ctx.space.events)})
+        ctx.space.shutdown()
+        entry["status"] = "error"
+
+
 @app.get("/simulations/{simulation_id}/stream")
 async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
+    """Start the run if it has not started, then stream it from the first event.
+
+    A second viewer (or a reload) attaches to the same run and catches up from
+    the beginning instead of starting a new one.
+    """
     async with _simulations_lock:
         entry = _active_simulations.get(simulation_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Simulation not found")
-        already_complete = entry["status"] == "complete"
-        if entry["status"] == "running":
-            raise HTTPException(status_code=409, detail="Simulation is already running")
-        if not already_complete:
-            entry["status"] = "running"
-
-    config = SimulationConfig(**entry["config"])
-
-    # Inject document context into system prompt if available
-    doc_ctx = entry.get("_document_context")
-    if doc_ctx:
-        config.system_prompt_template = (
-            config.system_prompt_template + "\n" + doc_ctx
-            if config.system_prompt_template
-            else doc_ctx
-        )
-
-    async def event_stream():
-        try:
-            if not already_complete and not app_config.OPENROUTER_API_KEY:
-                yield f"data: {json.dumps({'type': 'error', 'message': 'OPENROUTER_API_KEY is not set — add it to backend/.env to run simulations.'})}\n\n"
-                return
-            if already_complete:
-                db = get_database()
-                try:
-                    turns = await db.get_turns_by_simulation(simulation_id)
-                except Exception:
-                    turns = []
-                for turn in turns:
-                    yield f"data: {json.dumps(turn, default=str)}\n\n"
-                yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
-                return
-
+        status = entry["status"]
+        start_run = status == "idle" and bool(app_config.OPENROUTER_API_KEY)
+        if start_run:
+            config = SimulationConfig(**entry["config"])
+            # Inject document context into system prompt if available
+            doc_ctx = entry.get("_document_context")
+            if doc_ctx:
+                config.system_prompt_template = (
+                    config.system_prompt_template + "\n" + doc_ctx
+                    if config.system_prompt_template
+                    else doc_ctx
+                )
             # One context per run wires every behavioral subsystem together and
             # keeps a live handle on the shared space for human injection.
             ctx = build_context(config, simulation_id)
             entry["context"] = ctx
-            async for event in run_simulation(config, simulation_id, context=ctx):
-                if event.get("type") == "done":
-                    entry["status"] = "complete"
-                    try:
-                        _db = get_database()
-                        await _db.update_simulation_status(simulation_id, "complete")
-                        await _db.update_participant_stats(simulation_id)
-                    except Exception as exc:
-                        logger.warning("NEW_STATUS_ERR %s: %s", simulation_id, exc)
+            entry["status"] = "running"
+            entry["task"] = asyncio.create_task(_run_simulation_task(simulation_id, entry, config, ctx))
+        ctx = entry.get("context")
 
-                    _schedule_post_simulation(config, simulation_id, event, ctx)
-                    _save_recording(ctx)
-
-                    yield f"data: {json.dumps(event, default=str)}\n\n"
-                    asyncio.create_task(_cleanup_simulation(simulation_id))
-                    return
-                yield f"data: {json.dumps(event, default=str)}\n\n"
-                if event.get("type") == "turn":
-                    turn_idx = _extract_turn_index(event)
-                    if event.get("_index") is not None:
-                        event["turn_index"] = event["_index"]
-                    await _save_turn(simulation_id, turn_idx, json.dumps(event, default=str))
-        except asyncio.CancelledError:
-            yield f"data: {json.dumps({'type': 'cancelled'})}\n\n"
-        except Exception as exc:
-            logger.exception("SIM_STREAM_ERR simulation_id=%s", simulation_id)
-            yield f"data: {json.dumps({'type': 'error', 'message': str(exc)})}\n\n"
-        finally:
-            async with _simulations_lock:
-                _sim_entry = _active_simulations.get(simulation_id)
-                if _sim_entry and _sim_entry.get("status") == "running":
-                    _sim_entry["status"] = "idle"
+    async def event_stream():
+        if status == "idle" and not start_run:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'OPENROUTER_API_KEY is not set — add it to backend/.env to run simulations.'})}\n\n"
+            return
+        if ctx is None:  # finished earlier and no longer in memory: replay what was stored
+            try:
+                turns = await get_database().get_turns_by_simulation(simulation_id)
+            except Exception:
+                turns = []
+            for turn in turns:
+                yield f"data: {json.dumps(turn, default=str)}\n\n"
+            yield f"data: {json.dumps({'type': 'done', 'total_turns': len(turns)})}\n\n"
+            return
+        # Leaving this loop (viewer disconnects) never touches the run itself.
+        async for event in ctx.space.stream():
+            yield f"data: {json.dumps(event, default=str)}\n\n"
+            if event.get("type") in ("done", "error"):
+                return
 
     return StreamingResponse(
         event_stream(),
@@ -1122,6 +1218,42 @@ async def stream_simulation_handler(simulation_id: str) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.delete("/simulations/{simulation_id}", status_code=204)
+async def delete_simulation_handler(simulation_id: str) -> Response:
+    """Delete a finished or never-started simulation and everything recorded for it."""
+    async with _simulations_lock:
+        entry = _active_simulations.get(simulation_id)
+        if entry is not None and entry.get("status") == "running":
+            raise HTTPException(status_code=409, detail="Stop the simulation before deleting it")
+        _active_simulations.pop(simulation_id, None)
+    deleted = await get_database().delete_simulation(simulation_id)
+    if not deleted and entry is None:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+    return Response(status_code=204)
+
+
+@app.post("/simulations/{simulation_id}/stop")
+async def stop_simulation_handler(simulation_id: str) -> dict:
+    """Stop a running simulation on purpose."""
+    async with _simulations_lock:
+        entry = _active_simulations.get(simulation_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+        task = entry.get("task")
+        if entry["status"] != "running" or task is None or task.done():
+            raise HTTPException(status_code=409, detail="Simulation is not running")
+        ctx = entry["context"]
+        entry["status"] = "complete"  # visible at once; cancellation finishes in the background
+    done = {"type": "done", "agent_id": "__scheduler__", "reason": "stopped",
+            "outcome_type": "no_decision", "summary": "The simulation was stopped.",
+            "total_turns": ctx.turn_count}
+    # Viewers see the ending before the run shuts the room down.
+    await ctx.space.publish(done)
+    task.cancel()
+    await _persist_outcome(simulation_id, entry, done)
+    return {"status": "stopping"}
 
 
 @app.get("/simulations/analytics")
@@ -1193,6 +1325,9 @@ async def get_simulation_handler(simulation_id: str) -> dict:
             pass
         if not response:
             raise HTTPException(status_code=404, detail="Simulation not found")
+
+    if response["status"] == "complete":
+        response["outcome"] = await _stored_outcome(simulation_id)
 
     # Attach document metadata (exclude extracted_text / filepath)
     # Prefer in-memory documents when available
@@ -1407,6 +1542,13 @@ async def postmortem_handler(simulation_id: str) -> dict:
         outcome_type="no_decision",
         total_turns=len(space.events) if hasattr(space, "events") else 0,
     )
+    # The real ending, when it was recorded, so the verdict matches what happened.
+    stored = await _stored_outcome(simulation_id)
+    if stored:
+        try:
+            tr = TerminationResult(**{**tr.model_dump(), **stored})
+        except Exception as exc:
+            logger.warning("Stored outcome unusable for postmortem sim=%s: %s", simulation_id, exc)
 
     try:
         pm = await gen.generate(simulation_id, tr)
@@ -1611,12 +1753,9 @@ async def inject_turn_handler(simulation_id: str, payload: dict) -> dict:
         )
         return {"status": "ok", "live": True, "turn": turn}
 
-    from app.runtime.space import SharedSpace
-    space = SharedSpace(config)
-    turn = await space.inject_turn(stakeholder.name, content, agent_id=stakeholder.id,
-                                   action_type=action_type, directed_at=directed_at)
-    await _save_turn(simulation_id, turn.get("turn_index", 0), json.dumps(turn))
-    return {"status": "ok", "live": False, "turn": turn}
+    # A finished (or not yet started) run has no room to speak into; writing the
+    # turn into its stored transcript would rewrite history.
+    raise HTTPException(status_code=409, detail="Simulation is not running")
 
 
 @app.get("/analytics/dashboard")

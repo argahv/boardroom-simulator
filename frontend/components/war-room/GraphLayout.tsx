@@ -2,6 +2,7 @@
 
 import { useMemo, useState, useCallback, useRef, useEffect } from "react";
 import ForceGraph2D from "react-force-graph-2d";
+import { forceCollide, forceX, forceY } from "d3";
 import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import type { Turn } from "./TranscriptStream";
@@ -9,6 +10,7 @@ import { ConflictTimeline } from "./ConflictTimeline";
 import { EventLog } from "./EventLog";
 import { Leaderboard } from "./Leaderboard";
 import { CoalitionTracker } from "./CoalitionTracker";
+import { RoomStatePanel } from "./RoomStatePanel";
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import type { SimulationStateData } from "@/lib/use-simulation-state";
 
@@ -110,6 +112,55 @@ function hexToRgba(hex: string, alpha: number): string {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
+const VOTE_COLORS: Record<string, string> = {
+  yes: "#6e7448",
+  no: TOKENS.error,
+  abstain: TOKENS.muted,
+};
+
+// Only champion/detractor carry colour on the badge; neutral, moderator and the rest read as muted.
+const STANCE_BADGE: Record<string, string> = {
+  champion: "bg-primary/15 text-primary",
+  detractor: "bg-error-soft text-error",
+  wildcard: "bg-accent-amber/20 text-ink",
+};
+
+const VOTE_CHIP: Record<string, string> = {
+  yes: "bg-secondary/15 text-secondary",
+  no: "bg-error-soft text-error",
+  abstain: "bg-ink/10 text-muted",
+};
+
+const CHIP = "inline-flex items-center gap-1 rounded-full px-2 py-[2px] font-mono text-[9px] font-bold uppercase tracking-[0.12em]";
+
+/** Each person's most recent ballot, keyed by agent id. */
+function latestVotes(turns: Turn[], stakeholders: GraphStakeholder[]): Record<string, string> {
+  const votes: Record<string, string> = {};
+  for (const t of turns) {
+    if (t.kind !== "agent" || t.action_type !== "vote" || !t.vote) continue;
+    const id = t.agent_id ?? stakeholders.find((s) => s.name === t.speaker)?.id;
+    if (id) votes[id] = t.vote.toLowerCase();
+  }
+  return votes;
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+}
+
+// Where each node was last drawn. Graph data is rebuilt on every turn, and new node objects
+// would otherwise restart from d3's tight spiral at the origin, piling the seats on each other.
+const lastPos = new Map<string, { x: number; y: number }>();
+
+function seedPosition(id: string, i: number, n: number): { x: number; y: number } {
+  const known = lastPos.get(id);
+  if (known) return known;
+  const r = 35 + 10 * n;
+  const a = (i / Math.max(n, 1)) * 2 * Math.PI - Math.PI / 2;
+  return { x: r * Math.cos(a), y: r * Math.sin(a) };
+}
+
 const STANCE_LABELS: Record<string, string> = {
   champion: "Champion",
   detractor: "Detractor",
@@ -129,6 +180,10 @@ interface GraphNode {
   leverage: number;
   tension: number;
   dominantEmotion: string;
+  departed: boolean;
+  vote: string | null;
+  x?: number;
+  y?: number;
 }
 
 interface GraphLink {
@@ -137,6 +192,8 @@ interface GraphLink {
   value: number;
   type: "exchange" | "trust";
   label?: string;
+  /** Bends one of a two-way pair so both directions stay visible. */
+  curvature?: number;
 }
 
 export function GraphLayout({
@@ -187,6 +244,29 @@ export function GraphLayout({
     gsap.from(graphAreaRef.current, { opacity: 0, y: 16, duration: 0.4, ease: "power2.out", clearProps: "transform" });
   }, { dependencies: [graphReady], revertOnUpdate: true });
 
+  // Spread the seats: d3's defaults (30-unit links, weak charge) overlap nodes this size.
+  // A light pull to the centre keeps people nobody has addressed yet in view.
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg?.d3Force) return;
+    fg.d3Force("charge")?.strength(-160);
+    fg.d3Force("link")?.distance(90);
+    fg.d3Force("collide", forceCollide(34));
+    fg.d3Force("x", forceX(0).strength(0.06));
+    fg.d3Force("y", forceY(0).strength(0.06));
+    fg.d3ReheatSimulation?.();
+  }, [graphReady]);
+
+  // System rows (room events) never take the floor.
+  const speakerAgentId = useMemo(() => {
+    if (!speakerId) return null;
+    if (current?.kind === "agent" && current.agent_id) return current.agent_id;
+    return stakeholders.find((s) => s.name === speakerId)?.id ?? null;
+  }, [speakerId, current, stakeholders]);
+
+  const votes = useMemo(() => latestVotes(turns, stakeholders), [turns, stakeholders]);
+  const departed = useMemo(() => new Set(simState?.departed ?? []), [simState?.departed]);
+
   // Enrich nodes with state data
   const enrichNode = useCallback(
     (s: GraphStakeholder): GraphNode => {
@@ -199,61 +279,76 @@ export function GraphLayout({
         name: nameMap?.[s.id] ?? s.name,
         role: s.role,
         stance: s.stance,
-        isSpeaking: s.name === speakerId,
+        isSpeaking: s.id === speakerAgentId,
         credibility: sp?.credibility ?? 0.5,
         trust: sp?.trust ?? 0.5,
         leverage: sp?.leverage ?? 0.5,
         tension: sp?.tension ?? 0.3,
         dominantEmotion: dominant?.[0] ?? "neutral",
+        departed: departed.has(s.id),
+        vote: votes[s.id] ?? null,
       };
     },
-    [simState, speakerId, nameMap]
+    [simState, speakerAgentId, nameMap, departed, votes]
   );
 
-  // Conversation graph
+  // Conversation graph: who addressed whom (speaker -> directed_at), not who spoke next.
   const convGraph = useMemo(() => {
-    const nodes: GraphNode[] = stakeholders.map(enrichNode);
-    const edgeMap: Record<string, { count: number; speakers: string[] }> = {};
-    for (let i = 1; i < turns.length; i++) {
-      const a = turns[i - 1]?.speaker;
-      const b = turns[i]?.speaker;
-      if (!a || !b || a === b) continue;
-      const aId = stakeholders.find((s) => s.name === a)?.id;
-      const bId = stakeholders.find((s) => s.name === b)?.id;
-      if (!aId || !bId) continue;
-      const key = [aId, bId].sort().join("-");
-      if (!edgeMap[key]) edgeMap[key] = { count: 0, speakers: [a, b] };
-      edgeMap[key].count++;
+    const nodes: GraphNode[] = stakeholders.map((s, i) => ({ ...enrichNode(s), ...seedPosition(s.id, i, stakeholders.length) }));
+    const ids = new Set(stakeholders.map((s) => s.id));
+    const resolve = (ref: string | null | undefined) =>
+      !ref ? undefined : ids.has(ref) ? ref : stakeholders.find((s) => s.name === ref)?.id;
+    const edges = new Map<string, { source: string; target: string; count: number }>();
+    for (const t of turns) {
+      if (t.kind !== "agent" || !t.directed_at) continue;
+      const from = resolve(t.agent_id) ?? resolve(t.speaker);
+      const to = resolve(t.directed_at);
+      if (!from || !to || from === to) continue;
+      const key = JSON.stringify([from, to]);
+      const edge = edges.get(key) ?? { source: from, target: to, count: 0 };
+      edge.count++;
+      edges.set(key, edge);
     }
-    const links: GraphLink[] = Object.entries(edgeMap).map(([key, val]) => {
-      const [a, b] = key.split("-");
-      return { source: a, target: b, value: val.count, type: "exchange" as const, label: `${val.count}x` };
-    });
+    const links: GraphLink[] = [...edges.values()].map((e) => ({
+      source: e.source,
+      target: e.target,
+      value: e.count,
+      type: "exchange" as const,
+      label: `${e.count}x`,
+      curvature: edges.has(JSON.stringify([e.target, e.source])) ? 0.25 : 0,
+    }));
     return { nodes, links };
   }, [stakeholders, turns, enrichNode]);
 
-  // Trust relationship graph
+  // Trust relationship graph: mean of both directions; pairs with no recorded trust get no edge.
+  const trustMatrix = simState?.trustMatrix;
   const relGraph = useMemo(() => {
-    const tm = simState?.trustMatrix ?? {};
-    const nodes: GraphNode[] = stakeholders.map(enrichNode);
+    const tm = trustMatrix ?? {};
+    const nodes: GraphNode[] = stakeholders.map((s, i) => ({ ...enrichNode(s), ...seedPosition(s.id, i, stakeholders.length) }));
     const links: GraphLink[] = [];
     for (const a of stakeholders) {
       for (const b of stakeholders) {
         if (a.id >= b.id) continue;
-        const trust = tm[a.id]?.[b.id] ?? 0.5;
+        const known = [tm[a.id]?.[b.id], tm[b.id]?.[a.id]].filter(
+          (v): v is number => typeof v === "number" && Number.isFinite(v)
+        );
+        if (known.length === 0) continue;
+        const trust = known.reduce((sum, v) => sum + v, 0) / known.length;
         links.push({ source: a.id, target: b.id, value: trust, type: "trust" as const, label: `${Math.round(trust * 100)}%` });
       }
     }
     return { nodes, links };
-  }, [stakeholders, simState?.trustMatrix, enrichNode]);
+  }, [stakeholders, trustMatrix, enrichNode]);
 
   const graphData = mode === "conversation" ? convGraph : relGraph;
 
   // Keyboard navigation
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
+      // Typing in the inject box (or any field) must keep its own cursor keys.
+      if (e.defaultPrevented || isEditableTarget(e.target)) return;
       if (e.key === "Escape") { setSelectedNode(null); return; }
-      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+      if ((e.key === "ArrowLeft" || e.key === "ArrowRight") && !e.altKey && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         const nodes = graphData.nodes as (GraphNode & { x?: number; y?: number })[];
         if (nodes.length === 0) return;
@@ -284,26 +379,50 @@ export function GraphLayout({
     return set;
   }, [selectedNode, graphData.links]);
 
-  // Center on speaker
+  // Follow the speaker, but only pan when they are out of view: panning to every speaker
+  // pushes the rest of the (fitted) room off a narrow canvas.
   useEffect(() => {
-    if (speakerId && fgRef.current && !selectedNode) {
-      const n = (graphData.nodes as any[]).find(
-        (n: any) => n.name === speakerId || stakeholders.find((s) => s.name === speakerId)?.id === n.id
-      );
-      if (n?.x != null) fgRef.current.centerAt(n.x, n.y, 600);
+    if (speakerAgentId && fgRef.current && !selectedNode) {
+      const n = (graphData.nodes as any[]).find((n: any) => n.id === speakerAgentId);
+      if (n?.x == null) return;
+      const p = fgRef.current.graph2ScreenCoords?.(n.x, n.y);
+      const m = 40;
+      const inView = p && p.x >= m && p.y >= m && p.x <= dim.width - m && p.y <= dim.height - m;
+      if (!inView) fgRef.current.centerAt(n.x, n.y, 600);
     }
-  }, [speakerId, mode, selectedNode]);
+  }, [speakerAgentId, mode, selectedNode]);
+
+  // Fit the room to the canvas once the first layout settles, and again when the canvas resizes.
+  const fittedRef = useRef(false);
+  const fitRoom = useCallback(() => {
+    const fg = fgRef.current;
+    if (!fg?.zoomToFit) return;
+    fg.zoomToFit(0, 80);
+    // A small room would otherwise be blown up to the zoom limit.
+    if (fg.zoom() > 3) fg.zoom(3, 0);
+    fittedRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (fittedRef.current) fitRoom();
+  }, [dim.width, dim.height, fitRoom]);
+  // A live run rebuilds the graph every turn, which restarts the engine before it can stop.
+  useEffect(() => {
+    if (!graphReady) return;
+    const t = setTimeout(() => { if (!fittedRef.current) fitRoom(); }, 1500);
+    return () => clearTimeout(t);
+  }, [graphReady, fitRoom]);
 
   // ── Node canvas renderer ──
   const nodeCanvas = useCallback(
     (rawNode: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const node = rawNode as GraphNode & { x: number; y: number; vx?: number; vy?: number };
       if (!isFinite(node.x) || !isFinite(node.y)) return;
+      lastPos.set(node.id, { x: node.x, y: node.y });
 
       const isHighlighted = !highlightIds || highlightIds.has(node.id);
       const isSelected = node.id === selectedNode;
       const isHovered = node.id === hoveredNode;
-      const alpha = isHighlighted ? 1 : 0.15;
+      const alpha = (isHighlighted ? 1 : 0.15) * (node.departed && !node.isSpeaking ? 0.5 : 1);
 
       const baseR = 8 + node.credibility * 14;
       const r = node.isSpeaking ? baseR * 1.12 : baseR;
@@ -356,10 +475,12 @@ export function GraphLayout({
       ctx.fillStyle = grad;
       ctx.fill();
 
-      // ── Border ──
+      // ── Border (dashed once they have walked out) ──
       ctx.strokeStyle = isSelected ? hexToRgba(TOKENS.onDark, 0.8) : hexToRgba(TOKENS.onDark, 0.25);
       ctx.lineWidth = (isSelected ? 2.5 : 1.5) / globalScale;
+      if (node.departed) ctx.setLineDash([3 / globalScale, 2 / globalScale]);
       ctx.stroke();
+      ctx.setLineDash([]);
 
       // ── Inner dot for speaking ──
       if (node.isSpeaking) {
@@ -391,12 +512,14 @@ export function GraphLayout({
       ctx.fillStyle = TOKENS.onDark;
       ctx.fillText(node.name, node.x, labelY);
 
-      // Role subtitle — only for speaking/selected, with its own pill
-      if (node.isSpeaking || isSelected) {
-        const subSize = Math.max(8, fontSize * 0.75);
-        ctx.font = `${subSize}px Inter, sans-serif`;
+      // Subtitle with its own pill: "Walked out" once departed, else the role for speaking/selected
+      const subtitle = node.departed ? "Walked out" : node.isSpeaking || isSelected ? node.role : null;
+      if (subtitle) {
+        // fontSize is in graph units (already divided by zoom), so the floor must be too.
+        const subSize = Math.max(8 / globalScale, fontSize * 0.75);
+        ctx.font = `${node.departed ? "700 " : ""}${subSize}px Inter, sans-serif`;
         const subY = labelY + labelH + 4 / globalScale;
-        const subMetrics = ctx.measureText(node.role);
+        const subMetrics = ctx.measureText(subtitle);
         const subW = subMetrics.width + 8 / globalScale;
         const subH = subSize * 1.3;
         ctx.fillStyle = hexToRgba(TOKENS.ink, 0.45);
@@ -404,8 +527,26 @@ export function GraphLayout({
         ctx.beginPath();
         ctx.roundRect(node.x - srx, subY - 1 / globalScale, srx * 2, subH + 2 / globalScale, 3 / globalScale);
         ctx.fill();
-        ctx.fillStyle = hexToRgba(TOKENS.onDark, 0.7);
-        ctx.fillText(node.role, node.x, subY);
+        ctx.fillStyle = node.departed ? TOKENS.warning : hexToRgba(TOKENS.onDark, 0.7);
+        ctx.fillText(subtitle, node.x, subY);
+      }
+
+      // ── Vote chip above the node ──
+      if (node.vote) {
+        const chipFont = fontSize * 0.8;
+        const text = node.vote.toUpperCase();
+        ctx.font = `700 ${chipFont}px Inter, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        const chipW = ctx.measureText(text).width + 8 / globalScale;
+        const chipH = chipFont * 1.5;
+        const chipY = node.y - r - 6 / globalScale - chipH / 2;
+        ctx.fillStyle = VOTE_COLORS[node.vote] ?? TOKENS.muted;
+        ctx.beginPath();
+        ctx.roundRect(node.x - chipW / 2, chipY - chipH / 2, chipW, chipH, chipH / 2);
+        ctx.fill();
+        ctx.fillStyle = TOKENS.onDark;
+        ctx.fillText(text, node.x, chipY);
       }
 
       // ── Credibility score badge ──
@@ -468,7 +609,9 @@ export function GraphLayout({
     if (!rawNode) { setHoveredNode(null); setTooltip(null); return; }
     const node = rawNode as GraphNode;
     setHoveredNode(node.id);
-    setTooltip({ x: rawNode.x, y: rawNode.y, node });
+    // Node x/y are graph coordinates; the tooltip is placed in container pixels.
+    const screen = fgRef.current?.graph2ScreenCoords?.(rawNode.x, rawNode.y) ?? { x: rawNode.x, y: rawNode.y };
+    setTooltip({ x: screen.x, y: screen.y, node });
   }, []);
 
   const handleNodeClick = useCallback((rawNode: any) => {
@@ -488,23 +631,27 @@ export function GraphLayout({
     const tm = simState?.trustMatrix ?? {};
     const trustTo = stakeholders
       .filter((st) => st.id !== selectedNode)
-      .map((st) => ({
-        name: nameMap?.[st.id] ?? st.name,
-        trust: tm[selectedNode]?.[st.id] ?? 0.5,
-      }))
+      .map((st) => ({ name: nameMap?.[st.id] ?? st.name, trust: tm[selectedNode]?.[st.id] }))
+      .filter((t): t is { name: string; trust: number } => typeof t.trust === "number" && Number.isFinite(t.trust))
       .sort((a, b) => b.trust - a.trust);
-    return { stakeholder: s, socialPhysics: sp, agentState: ast, trustTo };
-  }, [selectedNode, stakeholders, simState, nameMap]);
+    return {
+      stakeholder: s,
+      socialPhysics: sp,
+      agentState: ast,
+      trustTo,
+      departed: departed.has(selectedNode),
+      vote: votes[selectedNode] ?? null,
+    };
+  }, [selectedNode, stakeholders, simState, nameMap, departed, votes]);
 
   return (
     <div
       ref={graphAreaRef}
-      className="grid min-h-[calc(100vh-220px)] gap-4 p-4"
-      style={{ gridTemplateColumns: "1fr 360px" }}
+      className="grid min-h-[calc(100vh-220px)] grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_360px]"
     >
-      <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
         {/* ── Top bar: mode toggle + legend ── */}
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 self-start rounded-lg border border-hairline bg-canvas p-0.5">
             <button className={TAB_CLS(mode === "conversation")} onClick={() => setMode("conversation")}>
               Conversation
@@ -514,14 +661,14 @@ export function GraphLayout({
             </button>
           </div>
 
-          <div className="flex items-center gap-3 text-[10px] text-muted">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted">
             {["champion","detractor","neutral","moderator","wildcard"].map((stance) => (
               <span key={stance} className="flex items-center gap-1">
                 <span className="h-2 w-2 rounded-full" style={{ background: stanceColor(stance) }} />
                 {STANCE_LABELS[stance] ?? stance}
               </span>
             ))}
-            <span className="flex items-center gap-1 ml-2">
+            <span className="flex items-center gap-1 sm:ml-2">
               <span className="h-[2px] w-3 rounded" style={{ background: hexToRgba(TOKENS.success, 0.6) }} />
               trust &gt;60%
             </span>
@@ -554,6 +701,7 @@ export function GraphLayout({
             }}
             linkColor={linkColor}
             linkWidth={linkWidth as any}
+            linkCurvature="curvature"
             linkDirectionalParticles={mode === "conversation" ? 2 : 0}
             linkDirectionalParticleWidth={2.5}
             linkDirectionalParticleSpeed={0.012}
@@ -561,6 +709,7 @@ export function GraphLayout({
             d3VelocityDecay={0.28}
             d3AlphaDecay={0.015}
             cooldownTime={2000}
+            onEngineStop={() => { if (!fittedRef.current) fitRoom(); }}
             onNodeHover={handleNodeHover}
             onNodeClick={handleNodeClick}
             onBackgroundClick={handleBackgroundClick}
@@ -577,7 +726,7 @@ export function GraphLayout({
             <div
               className="pointer-events-none absolute z-50 rounded-xl border border-hairline/30 bg-ink/95 px-3 py-2 shadow-xl backdrop-blur-sm"
               style={{
-                left: Math.min(tooltip.x + 16, dim.width - 200),
+                left: Math.max(8, Math.min(tooltip.x + 16, dim.width - 200)),
                 top: Math.max(tooltip.y - 60, 8),
                 minWidth: 170,
               }}
@@ -594,6 +743,12 @@ export function GraphLayout({
                 <span>Cred <span className="font-mono text-on-dark/80">{Math.round(tooltip.node.credibility * 100)}</span></span>
                 <span>Tense <span className="font-mono text-on-dark/80">{Math.round(tooltip.node.tension * 100)}</span></span>
               </div>
+              {(tooltip.node.departed || tooltip.node.vote) && (
+                <div className="mt-1 flex gap-2 text-[10px] font-semibold uppercase tracking-[0.08em]">
+                  {tooltip.node.departed && <span className="text-warning">Walked out</span>}
+                  {tooltip.node.vote && <span className="text-on-dark">Voted {tooltip.node.vote}</span>}
+                </div>
+              )}
               {tooltip.node.dominantEmotion && tooltip.node.dominantEmotion !== "neutral" && (
                 <div className="mt-1 flex items-center gap-1.5 text-[10px] text-on-dark-soft">
                   <span>Emotion:</span>
@@ -607,30 +762,45 @@ export function GraphLayout({
 
           {/* ── Watermark / mode indicator ── */}
           <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-hairline/20 bg-ink/40 px-3 py-1 text-[10px] text-on-dark-soft backdrop-blur-sm">
-            {mode === "conversation" ? "Conversation flow · particles show exchange direction" : "Trust relationships · edge width = trust strength"}
+            {mode === "conversation" ? "Who addressed whom · particles show direction" : "Trust relationships · edge width = mutual trust"}
             {selectedNode && " · click node or Esc to deselect"}
-            <span className="ml-2 text-on-dark-soft/50">⌃→ navigates</span>
+            <span className="ml-2 hidden text-on-dark-soft/50 sm:inline">← → navigates</span>
           </div>
         </div>
 
-        <ConflictTimeline turn={turn} totalTurns={totalTurns} />
+        <ConflictTimeline turn={turn} totalTurns={totalTurns} simState={simState} />
         <EventLog events={eventLog} />
       </div>
 
       {/* ── Right sidebar ── */}
-      <div className="flex flex-col gap-[14px]">
+      <div className="flex min-w-0 flex-col gap-[14px]">
         {/* Agent detail panel when selected */}
         {selectedAgent && (
           <div className="rounded-xl border border-hairline bg-surface-card p-[18px] transition-all duration-300">
             <div className="mb-3 flex items-center gap-2">
               <Avatar initials={initialsFromName(selectedAgent.stakeholder.name)} size={32} accent={stanceColor(selectedAgent.stakeholder.stance)} />
-              <div>
+              <div className="min-w-0">
                 <div className="text-[13px] font-semibold text-ink">{selectedAgent.stakeholder.name}</div>
                 <div className="text-[10px] text-muted">{selectedAgent.stakeholder.role}</div>
               </div>
               <button className="ml-auto cursor-pointer text-[14px] text-muted hover:text-ink transition-colors" onClick={() => setSelectedNode(null)} aria-label="Deselect">
                 <span className="material-symbols-outlined text-lg">close</span>
               </button>
+            </div>
+
+            <div className="mb-3 flex flex-wrap items-center gap-1.5">
+              <span className={`${CHIP} ${STANCE_BADGE[selectedAgent.stakeholder.stance] ?? "bg-ink/10 text-muted"}`}>
+                {selectedAgent.stakeholder.stance}
+              </span>
+              {selectedAgent.departed && (
+                <span className={`${CHIP} bg-accent-amber/20 text-ink`} title="Left the room before the end">
+                  <span className="material-symbols-outlined text-[12px]" aria-hidden>logout</span>
+                  Walked out
+                </span>
+              )}
+              {selectedAgent.vote && (
+                <span className={`${CHIP} ${VOTE_CHIP[selectedAgent.vote] ?? VOTE_CHIP.abstain}`}>Voted {selectedAgent.vote}</span>
+              )}
             </div>
 
             <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Social Physics</div>
@@ -671,6 +841,9 @@ export function GraphLayout({
 
             <div>
               <div className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-muted">Trust to others</div>
+              {selectedAgent.trustTo.length === 0 && (
+                <span className="text-[11px] italic text-muted">No trust readings yet.</span>
+              )}
               {selectedAgent.trustTo.map((t) => {
                 const barColor = trustColor(t.trust);
                 return (
@@ -687,6 +860,7 @@ export function GraphLayout({
           </div>
         )}
 
+        <RoomStatePanel simState={simState} nameMap={nameMap} focusAgentId={selectedNode ?? speakerAgentId} />
         <Leaderboard leaderboard={simState?.leaderboard} nameMap={nameMap} />
         <CoalitionTracker coalitions={simState?.coalitions} nameMap={nameMap} />
       </div>

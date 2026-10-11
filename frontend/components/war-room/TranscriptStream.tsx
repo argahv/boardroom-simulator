@@ -5,22 +5,93 @@ import ReactMarkdown from "react-markdown";
 import gsap from "gsap";
 import { useGSAP } from "@gsap/react";
 import { Avatar, initialsFromName } from "@/components/Avatar";
+import { ActionGlyph, actionLabel } from "@/components/ActionGlyph";
 
 gsap.registerPlugin(useGSAP);
 
 export type Turn = {
+  // Row position in the transcript.
   turn_index: number;
+  // The room's turn clock (0-based, matches state snapshots); system rows inherit the last agent turn's.
+  turn_number: number;
   speaker: string;
-  speaker_role?: string;
   content: string;
+  kind: "agent" | "system";
+  speaker_role?: string;
   stance?: string;
   reasoning?: string;
   action_type?: string;
+  agent_id?: string;
+  directed_at?: string | null;
+  directed_at_name?: string | null;
+  vote?: string | null;
+  is_human?: boolean;
+  subtype?: string;
+  target_agent?: string;
   _index?: number;
   agent_name?: string;
   agent_role?: string;
   internal_reasoning?: string;
 };
+
+const STANCE_TEXT: Record<string, string> = {
+  champion: "text-primary",
+  detractor: "text-error",
+};
+
+const VOTE_CHIP: Record<string, string> = {
+  yes: "bg-secondary/15 text-secondary",
+  no: "bg-error-soft text-error",
+  abstain: "bg-ink/10 text-muted",
+};
+
+type SystemStyle = { icon: string; row: string; text: string; iconClass: string };
+
+const SYSTEM_STYLES: Record<string, SystemStyle> = {
+  vote_called: {
+    icon: "gavel",
+    row: "my-1 rounded-lg border border-ink/15 bg-surface-card px-2",
+    text: "font-semibold text-ink",
+    iconClass: "text-ink",
+  },
+  roll_call: { icon: "how_to_vote", row: "", text: "text-muted", iconClass: "text-muted" },
+  departure: {
+    icon: "logout",
+    row: "my-1 rounded-lg border-l-2 border-accent-amber bg-accent-amber/10 px-2",
+    text: "font-semibold text-warning",
+    iconClass: "text-accent-amber",
+  },
+  external_event: {
+    icon: "⚡",
+    row: "my-1 rounded-lg border border-accent-amber/50 bg-accent-amber/15 px-2",
+    text: "font-semibold text-ink",
+    iconClass: "text-warning",
+  },
+  time_pressure: { icon: "hourglass_bottom", row: "", text: "font-medium text-primary", iconClass: "text-primary" },
+  goal_shift: { icon: "alt_route", row: "", text: "italic text-muted", iconClass: "text-accent-blue" },
+  turn_timeout: { icon: "timer_off", row: "", text: "italic text-muted", iconClass: "text-muted" },
+};
+
+const GENERIC_SYSTEM: SystemStyle = { icon: "⚙", row: "opacity-65", text: "italic text-muted", iconClass: "text-muted" };
+
+function SystemRow({ t }: { t: Turn }) {
+  const style = (t.subtype && SYSTEM_STYLES[t.subtype]) || GENERIC_SYSTEM;
+  // Material Symbols names are words; anything else is a literal glyph.
+  const isSymbol = /^[a-z_]+$/.test(style.icon);
+  const content = t.subtype === "external_event" ? t.content.replace(/^⚡\s*/, "") : t.content;
+  return (
+    <div className={`flex items-start gap-3 py-[6px] ${style.row}`} data-subtype={t.subtype ?? "system"}>
+      <div className={`flex w-8 shrink-0 items-center justify-center pt-[1px] ${style.iconClass}`}>
+        {isSymbol ? (
+          <span className="material-symbols-outlined text-[16px]" aria-hidden>{style.icon}</span>
+        ) : (
+          <span className="text-[14px]" aria-hidden>{style.icon}</span>
+        )}
+      </div>
+      <p className={`min-w-0 flex-1 text-[12px] leading-[1.5] ${style.text}`}>{content}</p>
+    </div>
+  );
+}
 
 interface TranscriptStreamProps {
   turns: Turn[];
@@ -31,6 +102,7 @@ interface TranscriptStreamProps {
 export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStreamProps) {
   const latestRef = useRef<HTMLDivElement>(null);
   const latestBadgeRef = useRef<HTMLSpanElement>(null);
+  const agentTurns = turns.filter((t) => t.kind === "agent").length;
 
   // Animate new turn slide-in + stance badge pulse
   useGSAP(() => {
@@ -74,7 +146,7 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
     <div className="flex min-h-[360px] flex-col rounded-xl border border-hairline bg-canvas">
       <div className="flex items-center justify-between border-b border-hairline px-5 py-[14px]">
         <span className="font-mono text-[10px] font-bold uppercase tracking-[0.12em] text-muted">Transcript</span>
-        <span className="font-mono text-[11px] text-muted">{turns.length} turns</span>
+        <span className="font-mono text-[11px] text-muted">{agentTurns} {agentTurns === 1 ? "turn" : "turns"}</span>
       </div>
       <div ref={scrollRef} className="max-h-[440px] flex-1 overflow-y-auto px-5 py-3">
         {turns.length === 0 && (
@@ -83,20 +155,12 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
           </p>
         )}
         {turns.map((t, i) => {
-          const isSystem = t.speaker === "⚙ System";
           const isCurrent = i === turns.length - 1;
-          const initials = initialsFromName(t.speaker);
 
-          if (isSystem) {
-            return (
-              <div key={i} className="flex gap-3 py-[6px] opacity-65">
-                <div className="flex w-8 shrink-0 items-center justify-center text-[14px]">⚙</div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-[12px] italic leading-[1.5] text-muted">{t.content}</p>
-                </div>
-              </div>
-            );
-          }
+          if (t.kind === "system") return <SystemRow key={i} t={t} />;
+
+          const vote = t.action_type === "vote" && t.vote ? t.vote.toLowerCase() : null;
+          const target = t.directed_at_name ?? t.directed_at ?? null;
 
           return (
             <div
@@ -107,7 +171,7 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
               }`}
             >
               <Avatar
-                initials={initials}
+                initials={initialsFromName(t.speaker)}
                 size={32}
                 speaking={isCurrent && playing}
                 accent={
@@ -115,20 +179,42 @@ export function TranscriptStream({ turns, playing, scrollRef }: TranscriptStream
                 }
               />
               <div className="min-w-0 flex-1">
-                <div className="mb-1 flex flex-wrap items-center gap-2">
+                <div className="mb-1 flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="text-[14px] font-semibold">{t.speaker}</span>
+                  {t.is_human && (
+                    <span
+                      className="rounded-full bg-ink px-[7px] py-[1px] font-mono text-[9px] font-bold tracking-[0.12em] text-canvas"
+                      title="Typed by a person in the room, not generated"
+                    >
+                      HUMAN
+                    </span>
+                  )}
                   {t.stance && (
                     <span
                       ref={isCurrent ? latestBadgeRef : null}
-                      className={`text-[11px] uppercase tracking-[0.08em] font-mono ${
-                        t.stance === "champion" ? "text-primary" : "text-error"
-                      }`}
+                      className={`font-mono text-[11px] uppercase tracking-[0.08em] ${STANCE_TEXT[t.stance] ?? "text-muted"}`}
                     >
                       {t.stance}
                     </span>
                   )}
+                  {t.action_type && (
+                    <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.08em] text-muted">
+                      <ActionGlyph type={t.action_type} size={11} />
+                      {actionLabel(t.action_type)}
+                    </span>
+                  )}
+                  {vote && (
+                    <span
+                      className={`rounded-full px-2 py-[1px] font-mono text-[10px] font-bold tracking-[0.1em] ${VOTE_CHIP[vote] ?? VOTE_CHIP.abstain}`}
+                    >
+                      {vote.toUpperCase()}
+                    </span>
+                  )}
+                  {target && (
+                    <span className="text-[12px] text-muted">→ {target}</span>
+                  )}
                   <span className="ml-auto font-mono text-[11px] text-muted" style={{ fontVariantNumeric: "tabular-nums" }}>
-                    T{String(t.turn_index).padStart(2, "0")}
+                    Turn {t.turn_number + 1}
                   </span>
                 </div>
                 <div className="text-[15px] leading-relaxed text-ink">

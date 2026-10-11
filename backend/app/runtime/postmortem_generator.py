@@ -393,9 +393,7 @@ class PostmortemGenerator:
 
             # Executive summary
             summary=narrative.get("summary", ""),
-            verdict="Deal reached" if termination.outcome_type == "agreement" \
-                    else "Walkaway" if termination.outcome_type == "walkaway" \
-                    else "No consensus",
+            verdict=verdict_label(termination),
 
             # Conclusion details
             end_reason=termination.reason,
@@ -556,3 +554,16 @@ class PostmortemGenerator:
                 reasoning=termination.judge_notes,
             )]
         return []
+
+
+def verdict_label(termination: TerminationResult) -> str:
+    """Plain-language verdict, the same wording the war room's banner uses."""
+    reason, outcome = termination.reason, termination.outcome_type
+    if reason == "vote_majority":
+        return "Motion carried" if outcome == "agreement" else "Motion rejected"
+    if reason == "vote_incomplete":
+        return "Vote incomplete"
+    if reason == "stopped":
+        return "Stopped"
+    return {"agreement": "Deal reached", "walkaway": "Walkaway", "impasse": "Impasse",
+            "judge_ruling": "Judge ruling", "rejected": "Motion rejected"}.get(outcome, "No decision")

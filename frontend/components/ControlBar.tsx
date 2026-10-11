@@ -11,6 +11,10 @@ interface ControlBarProps {
   turn: number;
   total: number;
   status: PlaybackStatus;
+  /** Whether the view is advancing; separate from whether the run is live. Defaults to status === "running". */
+  playing?: boolean;
+  /** Shown only while a run is live. */
+  onStop?: () => void;
   speedMul: SpeedMultiplier;
   layout: WarRoomLayout;
   scenarioLabel?: string;
@@ -101,6 +105,8 @@ export function ControlBar({
   turn,
   total,
   status,
+  playing: playingProp,
+  onStop,
   speedMul,
   layout,
   scenarioLabel,
@@ -113,8 +119,9 @@ export function ControlBar({
   onSpeedChange,
   onLayoutChange,
 }: ControlBarProps) {
-  const playing = status === "running";
+  const live = status === "running";
   const done = status === "complete";
+  const playing = playingProp ?? live;
   const liveDotRef = useRef<HTMLDivElement>(null);
   const turnRef = useRef<HTMLSpanElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
@@ -124,18 +131,19 @@ export function ControlBar({
   // Turn counter count-up
   useEffect(() => {
     if (!turnRef.current) return;
+    const target = Math.min(total, turn + 1);
     const obj = { val: parseInt(turnRef.current.textContent?.replace(/\D/g, "") || "0") };
     gsap.to(obj, {
-      val: turn,
+      val: target,
       duration: 0.3,
       ease: "power2.out",
       onUpdate: () => {
         if (turnRef.current) {
-          turnRef.current.textContent = `T${String(Math.round(obj.val)).padStart(2, "0")}`;
+          turnRef.current.textContent = `Turn ${Math.round(obj.val)}`;
         }
       },
     });
-  }, [turn]);
+  }, [turn, total]);
 
   return (
     <div
@@ -158,13 +166,13 @@ export function ControlBar({
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <div
             ref={liveDotRef}
-            className={playing ? "anim-glow" : ""}
+            className={live ? "anim-glow" : ""}
             style={{
               width: 8,
               height: 8,
               borderRadius: "50%",
               background:
-                playing ? "var(--color-primary)" : done ? "var(--color-muted)" : "var(--color-hairline)",
+                live ? "var(--color-primary)" : done ? "var(--color-muted)" : "var(--color-hairline)",
               transition: "background 240ms ease",
             }}
           />
@@ -175,14 +183,14 @@ export function ControlBar({
               fontWeight: 700,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
-              color: playing
+              color: live
                 ? "var(--color-primary)"
                 : done
                 ? "var(--color-muted)"
                 : "var(--color-muted)",
             }}
           >
-            {done ? "Concluded" : playing ? "Live" : "Paused"}
+            {done ? (playing ? "Replaying" : "Concluded") : live ? (playing ? "Live" : "Live · view paused") : "Starting"}
           </span>
         </div>
 
@@ -211,6 +219,9 @@ export function ControlBar({
           borderRadius: 9999,
           background: "var(--color-surface-card)",
           margin: "0 auto",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          maxWidth: "100%",
         }}
       >
         <PlaybackBtn onClick={onRestart} title="Restart">
@@ -259,6 +270,14 @@ export function ControlBar({
           </svg>
         </PlaybackBtn>
 
+        {onStop && live && (
+          <PlaybackBtn onClick={onStop} title="Stop the simulation">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+              <rect x="2.5" y="2.5" width="7" height="7" rx="1" fill="currentColor"/>
+            </svg>
+          </PlaybackBtn>
+        )}
+
         <div style={{ width: 1, height: 16, background: "var(--color-hairline)", margin: "0 4px" }} />
 
         <div style={{ display: "flex", gap: 2 }}>
@@ -292,9 +311,10 @@ export function ControlBar({
             color: "var(--color-ink)",
             padding: "0 8px",
             fontVariantNumeric: "tabular-nums",
+            whiteSpace: "nowrap",
           }}
         >
-          <span ref={turnRef}>T{String(turn).padStart(2, "0")}</span> / T{String(Math.max(0, total - 1)).padStart(2, "0")}
+          <span ref={turnRef}>Turn {Math.min(total, turn + 1)}</span> / {total}
         </span>
       </div>
 

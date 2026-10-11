@@ -7,9 +7,13 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
+import { TwistMenu } from "@/components/TwistMenu";
+import { Sheet } from "@/components/room/Sheet";
+import { Icon } from "@/components/room/ui";
 import {
   fetchSimulations,
   createSimulation,
+  deleteSimulation,
   fetchTemplates,
   type TemplateListItem,
   type SimulationListItem,
@@ -175,6 +179,7 @@ export default function SimulationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [twistFor, setTwistFor] = useState<SimulationListItem | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string; undo?: () => void } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [cardsReady, setCardsReady] = useState(false);
@@ -228,11 +233,12 @@ export default function SimulationsPage() {
     return result;
   }, [items, searchQuery, sortBy]);
 
-  const handleQuickPlay = async () => {
+  // Launch the given template, or a default one for "Quick Play".
+  const handleQuickPlay = async (template?: TemplateListItem) => {
     setCreating(true);
     try {
-      const first = templates.find((t) => t.category === "Fundraising") ?? templates[0];
-      if (!first || !first.config) return;
+      const first = template ?? templates.find((t) => t.category === "Fundraising") ?? templates[0];
+      if (!first || !first.config) { setCreating(false); return; }
       const res = await createSimulation(first.config as any);
       router.push(`/simulate/${res.simulation_id}`);
     } catch { setError("Failed to launch quick play."); setCreating(false); }
@@ -240,11 +246,18 @@ export default function SimulationsPage() {
 
   const handleRetry = () => { setError(""); setLoading(true); window.location.reload(); };
   const handleDelete = (id: string) => { setConfirmDeleteId(id); setOpenMenuId(null); };
-  const confirmDelete = () => {
-    if (!confirmDeleteId) return;
-    setItems((prev) => prev.filter((i) => i.simulation_id !== confirmDeleteId));
+  const confirmDelete = async () => {
+    const id = confirmDeleteId;
+    if (!id) return;
     setConfirmDeleteId(null);
-    setSnackbar({ message: "Simulation deleted", undo: () => window.location.reload() });
+    try {
+      await deleteSimulation(id);
+      setItems((prev) => prev.filter((i) => i.simulation_id !== id));
+      setSnackbar({ message: "Simulation deleted" });
+    } catch (err) {
+      setSnackbar({ message: err instanceof Error ? err.message : "Could not delete the simulation" });
+    }
+    setTimeout(() => setSnackbar(null), 3000);
   };
 
   const closeMenu = useCallback(() => setOpenMenuId(null), []);
@@ -253,7 +266,7 @@ export default function SimulationsPage() {
 
   if (!loading && items.length === 0) {
     return (
-      <AppShell activeTab="War Room" hideTopNav>
+      <AppShell>
         <div className="max-w-lg mx-auto py-24 px-8 text-center">
           <div className="w-14 h-14 rounded-xl bg-surface-container-low flex items-center justify-center mx-auto mb-6 border border-hairline">
             <span className="material-symbols-outlined text-2xl text-muted">precision_manufacturing</span>
@@ -261,7 +274,7 @@ export default function SimulationsPage() {
           <h1 className="font-serif-title text-3xl tracking-display text-ink mb-2">No simulations yet</h1>
           <p className="text-sm text-muted mb-8 leading-relaxed">Launch a pre-built scenario or design a custom one from scratch. Your war room is ready when you are.</p>
           <div className="flex items-center justify-center gap-3">
-            <Button onClick={handleQuickPlay} disabled={creating}>{creating ? "Launching..." : "Quick Play"}</Button>
+            <Button onClick={() => handleQuickPlay()} disabled={creating}>{creating ? "Launching..." : "Quick Play"}</Button>
             <Link href="/simulate/new"><Button variant="ghost">Custom Setup</Button></Link>
           </div>
           {templates.length > 0 && (
@@ -269,7 +282,8 @@ export default function SimulationsPage() {
               <p className="text-xs text-muted mb-4 uppercase tracking-widest font-semibold">Try one of these pre-built scenarios</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
                 {templates.slice(0, 3).map((t) => (
-                  <button key={t.slug} onClick={() => handleQuickPlay()} className="rounded-xl border border-hairline bg-surface-container-low p-4 text-left hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer">
+                  // Opens the scenario in the Room to adjust before starting; Quick Play above launches as-is.
+                  <Link key={t.slug} href={`/simulate/new?template=${encodeURIComponent(t.slug)}`} className="block rounded-xl border border-hairline bg-surface-container-low p-4 text-left hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer">
                     <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{t.category}</p>
                     <p className="mt-2 text-sm font-semibold text-ink">{t.name}</p>
                     <p className="mt-1 text-xs text-muted line-clamp-2 leading-relaxed">{t.description}</p>
@@ -278,7 +292,7 @@ export default function SimulationsPage() {
                       <span className="w-1 h-1 rounded-full bg-hairline" />
                       <span>{t.voltage}v</span>
                     </div>
-                  </button>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -291,7 +305,7 @@ export default function SimulationsPage() {
   // ── Main ──
 
   return (
-    <AppShell activeTab="War Room" hideTopNav>
+    <AppShell>
       {error && (
         <div className="mx-8 mt-8 mb-4 rounded-xl bg-error-soft px-5 py-3 text-sm text-error flex items-center gap-3">
           <span className="material-symbols-outlined text-lg">error_outline</span>
@@ -505,11 +519,13 @@ export default function SimulationsPage() {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === "Enter") router.push(`/simulate/${sim.simulation_id}`); }}
                     onClick={() => { if (viewMode === "list") router.push(`/simulate/${sim.simulation_id}`); }}
-                    className={`relative overflow-hidden transition-all duration-200 cursor-pointer ${
+                    // An open actions menu hangs below the card: it must not be clipped, must sit above the next card,
+                    // and a hover transform would trap its fixed backdrop inside the card.
+                    className={`relative ${menuOpen ? "z-30 overflow-visible" : "overflow-hidden hover:-translate-y-0.5"} transition-all duration-200 cursor-pointer ${
                       sim.status === "running"
                         ? "shadow-[0_0_0_1px_var(--color-success)] hover:shadow-[0_0_0_1px_var(--color-success),_0_4px_16px_rgba(0,0,0,0.08)]"
                         : "border border-hairline/60 hover:shadow-md hover:border-hairline"
-                    } hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-primary ${
+                    } focus-visible:outline-2 focus-visible:outline-primary ${
                       viewMode === "list"
                         ? "rounded-xl p-3 flex items-center gap-4 bg-surface-container-low"
                         : "rounded-xl p-[18px] bg-surface-container-low"
@@ -571,11 +587,10 @@ export default function SimulationsPage() {
                               </button>
                               {menuOpen && (
                                 <>
-                                  <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
-                                  <div className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
+                                  <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); }} />
+                                  <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
                                     <Link href={`/simulate/${sim.simulation_id}`} className="block px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors no-underline">Open</Link>
-                                    <button onClick={() => { setOpenMenuId(null); }} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Rename</button>
-                                    <button onClick={() => { setOpenMenuId(null); }} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Duplicate</button>
+                                    <button onClick={() => { setOpenMenuId(null); setTwistFor(sim); }} aria-haspopup="dialog" className="flex w-full items-center justify-between gap-2 text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again<Icon name="chevron_right" className="text-[18px] text-muted" /></button>
                                     <div className="h-px bg-hairline my-1" />
                                     <button onClick={() => handleDelete(sim.simulation_id)} className="block w-full text-left px-4 py-2 text-sm text-error hover:bg-error-soft transition-colors cursor-pointer">Delete</button>
                                   </div>
@@ -611,11 +626,10 @@ export default function SimulationsPage() {
                           </button>
                           {menuOpen && (
                             <>
-                              <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
-                              <div className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
+                              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); }} />
+                              <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
                                 <Link href={`/simulate/${sim.simulation_id}`} className="block px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors no-underline">Open</Link>
-                                <button onClick={() => { setOpenMenuId(null); }} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Rename</button>
-                                <button onClick={() => { setOpenMenuId(null); }} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Duplicate</button>
+                                <button onClick={() => { setOpenMenuId(null); setTwistFor(sim); }} aria-haspopup="dialog" className="flex w-full items-center justify-between gap-2 text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again<Icon name="chevron_right" className="text-[18px] text-muted" /></button>
                                 <div className="h-px bg-hairline my-1" />
                                 <button onClick={() => handleDelete(sim.simulation_id)} className="block w-full text-left px-4 py-2 text-sm text-error hover:bg-error-soft transition-colors cursor-pointer">Delete</button>
                               </div>
@@ -638,6 +652,13 @@ export default function SimulationsPage() {
             onConfirm={confirmDelete}
             onCancel={() => setConfirmDeleteId(null)}
           />
+
+          {/* ── Run again with a twist ── */}
+          {twistFor && (
+            <Sheet variant="center" title="Run again with…" subtitle={twistFor.subject?.name || "Untitled"} onClose={() => setTwistFor(null)}>
+              <TwistMenu simulationId={twistFor.simulation_id} variant="list" />
+            </Sheet>
+          )}
 
           {/* ── Snackbar ── */}
           <Snackbar message={snackbar?.message ?? ""} visible={!!snackbar} onUndo={snackbar?.undo} />
@@ -667,9 +688,6 @@ export default function SimulationsPage() {
             <div className="flex items-center justify-center gap-3">
               <Link href="/simulate/new">
                 <Button>Start New Simulation</Button>
-              </Link>
-              <Link href="/library">
-                <Button variant="ghost">Explore Library</Button>
               </Link>
             </div>
           </section>

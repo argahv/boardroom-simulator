@@ -2,17 +2,10 @@
 
 import React from "react";
 
-interface EmotionState {
-  anger: number;
-  fear: number;
-  joy: number;
-  shame: number;
-  surprise: number;
-}
-
 interface CognitiveStatePanelProps {
   agentId: string;
-  emotions?: EmotionState;
+  emotions?: Record<string, number>;
+  /** Accepted for existing callers but not shown: it is seeded from empathy, not a live state. */
   confidence?: number;
   certainty?: number;
   focus?: string;
@@ -27,15 +20,34 @@ const EMOTION_COLORS: Record<string, string> = {
   surprise: "#3b82f6",
 };
 
-export default function CognitiveStatePanel({
-  agentId,
-  emotions = { anger: 0.2, fear: 0.2, joy: 0.5, shame: 0.2, surprise: 0.2 },
-  confidence = 0.5,
-  certainty = 0.5,
-  focus = "",
-  goalPriority = 3,
-}: CognitiveStatePanelProps) {
-  const emotionEntries = Object.entries(emotions) as [string, number][];
+const EMOTION_ORDER = ["anger", "fear", "joy", "shame", "surprise"];
+
+function Bar({ label, value, color }: { label: string; value: number; color: string }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-14 text-right text-xs capitalize">{label}</span>
+      <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
+        <div
+          className="h-full rounded-full transition-all duration-300"
+          style={{ width: `${pct}%`, backgroundColor: color }}
+        />
+      </div>
+      <span className="w-8 text-right text-xs tabular-nums">{pct}%</span>
+    </div>
+  );
+}
+
+export default function CognitiveStatePanel({ agentId, emotions, certainty, focus }: CognitiveStatePanelProps) {
+  const emotionEntries = Object.entries(emotions ?? {})
+    .filter((e): e is [string, number] => typeof e[1] === "number" && Number.isFinite(e[1]))
+    .sort(([a], [b]) => {
+      const ia = EMOTION_ORDER.indexOf(a);
+      const ib = EMOTION_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    });
+  const hasCertainty = typeof certainty === "number" && Number.isFinite(certainty);
+  const hasData = emotionEntries.length > 0 || hasCertainty || !!focus;
 
   return (
     <div className="rounded-lg border border-[var(--color-hairline)] bg-[var(--color-surface)] p-3 text-sm">
@@ -43,55 +55,29 @@ export default function CognitiveStatePanel({
         Cognitive State — {agentId}
       </div>
 
-      {/* Emotion bars */}
-      <div className="mb-3 space-y-1.5">
-        <div className="text-xs text-[var(--color-secondary)]">Emotions</div>
-        {emotionEntries.map(([name, val]) => (
-          <div key={name} className="flex items-center gap-2">
-            <span className="w-14 text-right text-xs capitalize">{name}</span>
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-              <div
-                className="h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${Math.round(val * 100)}%`,
-                  backgroundColor: EMOTION_COLORS[name] || "#888",
-                }}
-              />
-            </div>
-            <span className="w-8 text-right text-xs tabular-nums">
-              {Math.round(val * 100)}%
-            </span>
-          </div>
-        ))}
-      </div>
+      {!hasData && (
+        <div className="py-3 text-center text-xs italic text-[var(--color-muted)]">
+          No state snapshot for this agent yet
+        </div>
+      )}
 
-      {/* Confidence & Certainty */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <span className="text-xs">Confidence</span>
-          <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div
-              className="h-full rounded-full bg-blue-500 transition-all duration-300"
-              style={{ width: `${Math.round(confidence * 100)}%` }}
-            />
-          </div>
-          <span className="w-8 text-right text-xs tabular-nums">
-            {Math.round(confidence * 100)}%
-          </span>
+      {emotionEntries.length > 0 && (
+        <div className="mb-3 space-y-1.5">
+          <div className="text-xs text-[var(--color-secondary)]">Emotions</div>
+          {emotionEntries.map(([name, val]) => (
+            <Bar key={name} label={name} value={val} color={EMOTION_COLORS[name] || "#888"} />
+          ))}
         </div>
-        <div className="flex items-center justify-between">
-          <span className="text-xs">Certainty</span>
-          <div className="h-2 w-24 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-            <div
-              className="h-full rounded-full bg-purple-500 transition-all duration-300"
-              style={{ width: `${Math.round(certainty * 100)}%` }}
-            />
-          </div>
-          <span className="w-8 text-right text-xs tabular-nums">
-            {Math.round(certainty * 100)}%
-          </span>
+      )}
+
+      {hasCertainty && (
+        <div
+          className="space-y-1.5"
+          title="Seeded from stubbornness; drops when questioned, rises when compromises land"
+        >
+          <Bar label="Certainty" value={certainty} color="#a855f7" />
         </div>
-      </div>
+      )}
 
       {focus && (
         <div className="mt-2 text-xs text-[var(--color-secondary)]">

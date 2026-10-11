@@ -134,7 +134,7 @@ export default function AnalyticsPage() {
   // ── Loading state (initial only) ──
   if (loading && !analytics) {
     return (
-      <AppShell activeTab="Analytics">
+      <AppShell>
         <div className="px-8 py-8 space-y-6">
           <div className="flex items-center justify-between">
             <div>
@@ -155,7 +155,7 @@ export default function AnalyticsPage() {
   // ── Error state ──
   if (error) {
     return (
-      <AppShell activeTab="Analytics">
+      <AppShell>
         <div className="px-8 py-8">
           <h1 className="font-display text-4xl font-semibold tracking-display">
             Analytics
@@ -181,7 +181,7 @@ export default function AnalyticsPage() {
   // ── Empty state ──
   if (!analytics || analytics.kpi.total_simulations === 0) {
     return (
-      <AppShell activeTab="Analytics">
+      <AppShell>
         <div className="px-8 py-8">
           <h1 className="font-display text-4xl font-semibold tracking-display">
             Analytics
@@ -209,7 +209,7 @@ export default function AnalyticsPage() {
 
   // ── Data state ──
   return (
-    <AppShell activeTab="Analytics">
+    <AppShell>
       <div className="px-8 py-8 space-y-0">
         {/* Page heading */}
         <div className="flex items-start justify-between pb-6">
@@ -252,7 +252,7 @@ export default function AnalyticsPage() {
         </div>
 
         {/* Sticky section anchor nav */}
-        <div className="sticky top-0 z-10 -mx-8 border-b border-hairline bg-canvas/90 backdrop-blur-sm">
+        <div className="sticky top-16 z-10 -mx-8 border-b border-hairline bg-canvas/90 backdrop-blur-sm">
           <nav
             className="flex items-center gap-6 overflow-x-auto px-8 py-3"
             aria-label="Section quick nav"

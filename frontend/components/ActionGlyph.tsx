@@ -8,7 +8,9 @@ export type ActionType =
   | "agreement"
   | "coalition_signal"
   | "interrupt"
-  | "escalate";
+  | "escalate"
+  | "vote"
+  | "walkaway";
 
 const ACTION_LABELS: Record<string, string> = {
   statement:       "Statement",
@@ -19,6 +21,8 @@ const ACTION_LABELS: Record<string, string> = {
   coalition_signal:"Coalition",
   interrupt:       "Interrupt",
   escalate:        "Escalate",
+  vote:            "Vote",
+  walkaway:        "Walkaway",
 };
 
 interface ActionGlyphProps {
@@ -79,6 +83,18 @@ export function ActionGlyph({ type, size = 12 }: ActionGlyphProps) {
       return (
         <svg width={size} height={size} viewBox={v} fill="none" aria-hidden>
           <path d="M2 13l4-6 3 3 5-7M9 3h4v4" stroke={s} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    case "vote":
+      return (
+        <svg width={size} height={size} viewBox={v} fill="none" aria-hidden>
+          <path d="M3 9h10v4H3zM5.5 9l1-5h3l1 5M6.5 6.5l1.2 1.2L10 5" stroke={s} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
+    case "walkaway":
+      return (
+        <svg width={size} height={size} viewBox={v} fill="none" aria-hidden>
+          <path d="M9 3H4v10h5M7 8h7M11.5 5.5L14 8l-2.5 2.5" stroke={s} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round"/>
         </svg>
       );
     default:

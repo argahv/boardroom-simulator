@@ -8,16 +8,14 @@ Next.js 16 (--turbo) + React 19 + Tailwind CSS 4.3.
 frontend/
 ├── app/               # App Router pages
 │   ├── layout.tsx     # Root layout (4 Google fonts)
-│   ├── page.tsx       # Landing / home
+│   ├── page.tsx       # Redirects to /simulate (the home)
 │   ├── globals.css    # Tailwind v4 + custom theme
-│   ├── simulate/      # Simulation wizard + war room
-│   ├── personas/      # Stakeholder config
-│   ├── library/       # Template library
-│   ├── analytics/     # Post-simulation analysis
-│   └── frameworks/    # Framework comparison
-├── components/        # Shared UI
-│   ├── layouts/       # AppShell, sidebars
-│   └── war-room/      # Negotiation UI panels
+│   ├── simulate/      # Simulations list, setup, war room, postmortem
+│   ├── personas/      # Persona library, editor, detail
+│   ├── frameworks/    # Scenario templates ("Templates" in the nav)
+│   └── analytics/     # Cross-simulation analytics
+├── components/        # Shared UI (AppShell = the single top navigation)
+│   └── war-room/      # War-room layouts and panels
 └── lib/               # API client, utils
 ```
 
