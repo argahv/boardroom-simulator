@@ -18,8 +18,9 @@ import type { Postmortem, SimulationConfig } from "@/lib/types";
 import type { Turn } from "@/components/war-room/TranscriptStream";
 import { Avatar, initialsFromName } from "@/components/Avatar";
 import { Button } from "@/components/Button";
+import { TwistMenu } from "@/components/TwistMenu";
 
-type PageProps = { params: Promise<{ id: string }> };
+type PageProps = { params: Promise<{ id: string }>; searchParams: Promise<{ seat?: string | string[] }> };
 
 type RawEvent = Record<string, unknown>;
 
@@ -142,8 +143,10 @@ const VOTE_KEYS: Array<[string, string]> = [["for", "For"], ["against", "Against
 
 const clip = (text: string, n: number) => (text.length > n ? `${text.slice(0, n)}…` : text);
 
-export default function WarRoomPage({ params }: PageProps) {
+export default function WarRoomPage({ params, searchParams }: PageProps) {
   const { id } = use(params);
+  // "That's me" in the Room links here with ?seat=<stakeholderId>, so the inject box speaks as that seat.
+  const { seat } = use(searchParams);
 
   const [config, setConfig] = useState<SimulationConfig | null>(null);
   const [turns, setTurns] = useState<Turn[]>([]);
@@ -164,7 +167,7 @@ export default function WarRoomPage({ params }: PageProps) {
   const [outcome, setOutcome] = useState<SimulationOutcome | null>(null);
 
   const [humanContent, setHumanContent] = useState("");
-  const [selectedStakeholder, setSelectedStakeholder] = useState("");
+  const [selectedStakeholder, setSelectedStakeholder] = useState(typeof seat === "string" ? seat : "");
   const [sendingHumanTurn, setSendingHumanTurn] = useState(false);
   const [humanError, setHumanError] = useState("");
 
@@ -702,6 +705,13 @@ export default function WarRoomPage({ params }: PageProps) {
             </div>
             );
           })()}
+
+          {/* ── Try again with… — a new run from this setup plus one twist ── */}
+          {(showVerdict || done) && config && (
+            <div className="mx-4 mb-4 rounded-xl border border-hairline bg-surface-card px-4 py-3 sm:px-5">
+              <TwistMenu simulationId={id} config={config} seat={typeof seat === "string" ? seat : null} />
+            </div>
+          )}
 
           {postmortem && (() => {
             const reports = [...(postmortem.stakeholder_reports ?? [])].sort((a, b) => (b.total_turns ?? 0) - (a.total_turns ?? 0));

@@ -381,15 +381,35 @@ _STANCE_FOR_ARCHETYPE = {"detractor": "guardian", "champion": "opportunist", "mo
                          "wildcard": "agitator", "neutral": "pragmatist"}
 
 
-def _pick_name(people: list[dict], seed: str) -> str:
+# So an invented name doesn't contradict the text ("Daniel" for a CFO described as "she").
+_SHE_NAMES = {"Priya Nair", "Sofia Marquez", "Aisha Rahman", "Lena Fischer", "Yuki Tanaka", "Grace Kim",
+              "Elena Petrova", "Nadia Coleman", "Morgan Lee", "Sam Whitfield"}
+_HE_NAMES = {"Daniel Okafor", "Tom Becker", "Marcus Hale", "Carlos Mendes", "Omar Haddad", "Ravi Shah",
+             "Morgan Lee", "Sam Whitfield"}
+_SHE = re.compile(r"\b(?:she|her|hers|herself)\b", re.I)
+_HE = re.compile(r"\b(?:he|him|his|himself)\b", re.I)
+
+
+def _pronoun_pool(text: str) -> set[str] | None:
+    she, he = len(_SHE.findall(text)), len(_HE.findall(text))
+    if she > he:
+        return _SHE_NAMES
+    if he > she:
+        return _HE_NAMES
+    return None
+
+
+def _pick_name(people: list[dict], seed: str, pool: set[str] | None = None) -> str:
     full = {p.get("name", "").casefold() for p in people}
     first = {p.get("name", "").split(" ")[0].casefold() for p in people if p.get("name")}
     start = zlib.crc32(seed.encode("utf-8")) % len(_NAME_POOL)
     for i in range(len(_NAME_POOL)):
         name = _NAME_POOL[(start + i) % len(_NAME_POOL)]
+        if pool is not None and name not in pool:
+            continue
         if name.casefold() not in full and name.split(" ")[0].casefold() not in first:
             return name
-    return f"Guest {len(people) + 1}"
+    return _pick_name(people, seed) if pool is not None else f"Guest {len(people) + 1}"
 
 
 def _invent_person(stance: str, cfg: dict, seed: str, role: str = "") -> dict:
@@ -1099,7 +1119,7 @@ def _persona_from_rules(text: str) -> tuple[dict, list[str]]:
         guessed.append("hidden_agenda")
 
     if not name:
-        name = _pick_name([], text)
+        name = _pick_name([], text, _pronoun_pool(text))
         guessed.append("name")
 
     backstory = rest[:1500]

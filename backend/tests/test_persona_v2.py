@@ -87,10 +87,8 @@ async def test_create_stakeholder_api_with_v2_fields(client):
     assert data["role"] == "CEO"
     assert data["backstory"] == "Built and sold two companies."
     assert data["stance"] == "champion"
-    assert data["personality"] == json.dumps(
-        {"aggressiveness": 60, "empathy": 40, "stubbornness": 70, "verbosity": 50}
-    )
-    assert data["tools"] == '["financial_modeler", "due_diligence_bot"]'
+    assert data["personality"] == {"aggressiveness": 60, "empathy": 40, "stubbornness": 70, "verbosity": 50}
+    assert data["tools"] == ["financial_modeler", "due_diligence_bot"]
     assert data["hidden_agenda"] == "Want to acquire the startup cheaply"
     assert "id" in data
 
@@ -108,8 +106,9 @@ async def test_create_stakeholder_api_v1_backwards_compat(client):
     # v2 fields should default to empty/neutral
     assert data["backstory"] == ""
     assert data["stance"] == "neutral"
-    assert data["personality"] == "{}"
-    assert data["tools"] == "[]"
+    # Persona JSON always carries all four traits (50 when unset) and tools as a list.
+    assert data["personality"] == {"aggressiveness": 50, "empathy": 50, "stubbornness": 50, "verbosity": 50}
+    assert data["tools"] == []
 
 
 @pytest.mark.usefixtures("db_setup")
@@ -128,8 +127,8 @@ async def test_update_stakeholder_api_v2_fields(client):
 
     assert data["backstory"] == "Updated backstory"
     assert data["stance"] == "detractor"
-    assert data["personality"] == "{}"
-    assert data["tools"] == "[]"
+    assert data["personality"] == {"aggressiveness": 50, "empathy": 50, "stubbornness": 50, "verbosity": 50}
+    assert data["tools"] == []
     assert data["id"] == sid
 
 

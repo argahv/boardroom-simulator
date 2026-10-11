@@ -12,7 +12,6 @@ type AppShellProps = {
 const NAV_TABS: { label: string; href: string }[] = [
   { label: "Simulations", href: "/simulate" },
   { label: "Personas", href: "/personas" },
-  { label: "Templates", href: "/frameworks" },
   { label: "Analytics", href: "/analytics" },
 ];
 
@@ -44,13 +43,13 @@ export function AppShell({ children }: AppShellProps) {
                 key={tab.href}
                 href={tab.href}
                 aria-current={active ? "page" : undefined}
-                className={`relative shrink-0 whitespace-nowrap px-3 sm:px-5 py-2 text-sm font-medium transition-colors duration-150 ${
+                className={`relative shrink-0 whitespace-nowrap px-2 sm:px-5 py-2 text-sm font-medium transition-colors duration-150 ${
                   active ? "text-ink" : "text-muted hover:text-ink"
                 }`}
               >
                 {tab.label}
                 {active && (
-                  <span className="absolute bottom-0 left-3 right-3 sm:left-4 sm:right-4 h-[2px] bg-primary rounded-full" />
+                  <span className="absolute bottom-0 left-2 right-2 sm:left-4 sm:right-4 h-[2px] bg-primary rounded-full" />
                 )}
               </Link>
             );

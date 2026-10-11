@@ -727,22 +727,22 @@ async def list_simulations_handler() -> list[dict]:
     # List from new schema, unioned with in-memory active streams
     db = get_database()
     now_iso = datetime.now(timezone.utc).isoformat()
+    try:
+        db_sims = await db.list_simulations_v2()
+    except Exception:
+        db_sims = []
+    # The stored creation time, so "recent" lists don't float every in-memory run to the top as "just now".
+    created = {s["simulation_id"]: s.get("created_at") for s in db_sims}
     active = [
         {"simulation_id": sid, "subject": entry["config"].get("subject", {}), "status": entry["status"],
          "stakeholder_count": len(entry["config"].get("stakeholders", [])), "voltage": entry["config"].get("voltage", 50),
          "model_temperature": entry["config"].get("model_temperature", "stable"),
-         "created_at": now_iso}
+         "created_at": created.get(sid) or now_iso}
         for sid, entry in _active_simulations.items()
     ]
-    try:
-        db_sims = await db.list_simulations_v2()
-        # Merge: DB sims + active (active overrides with latest status)
-        seen = {s["simulation_id"] for s in active}
-        for s in db_sims:
-            if s["simulation_id"] not in seen:
-                active.append(s)
-    except Exception:
-        pass
+    # Merge: DB sims + active (active overrides with latest status)
+    seen = {s["simulation_id"] for s in active}
+    active.extend(s for s in db_sims if s["simulation_id"] not in seen)
     return active
 
 

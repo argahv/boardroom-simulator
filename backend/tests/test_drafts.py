@@ -214,6 +214,16 @@ def test_persona_fallback_without_a_name_marks_it_guessed(client, no_llm):
     assert "name" in body["guessed"]
 
 
+@pytest.mark.parametrize("text,pool", [
+    ("Skeptical CFO burned by a vendor. She protects cash and her team at all costs.", "_SHE_NAMES"),
+    ("Union rep who protects jobs; he distrusts management and his members trust him.", "_HE_NAMES"),
+])
+def test_persona_fallback_invented_name_follows_pronouns(client, no_llm, text, pool):
+    body = client.post("/drafts/persona", json={"text": text}).json()
+    assert body["persona"]["name"] in getattr(drafts, pool)
+    assert "name" in body["guessed"]
+
+
 def test_persona_from_llm_is_validated(client, use_llm):
     fake = use_llm("```json\n" + json.dumps({
         "name": "Dana Okafor", "role": "Chief Financial Officer", "focus": "Runway",

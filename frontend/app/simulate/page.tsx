@@ -7,9 +7,11 @@ import { useGSAP } from "@gsap/react";
 import gsap from "gsap";
 import { AppShell } from "@/components/AppShell";
 import { Button } from "@/components/Button";
+import { TwistMenu } from "@/components/TwistMenu";
+import { Sheet } from "@/components/room/Sheet";
+import { Icon } from "@/components/room/ui";
 import {
   fetchSimulations,
-  fetchSimulation,
   createSimulation,
   deleteSimulation,
   fetchTemplates,
@@ -177,6 +179,7 @@ export default function SimulationsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [twistFor, setTwistFor] = useState<SimulationListItem | null>(null);
   const [snackbar, setSnackbar] = useState<{ message: string; undo?: () => void } | null>(null);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [cardsReady, setCardsReady] = useState(false);
@@ -241,21 +244,6 @@ export default function SimulationsPage() {
     } catch { setError("Failed to launch quick play."); setCreating(false); }
   };
 
-  // A new run with the same setup.
-  const runAgain = async (id: string) => {
-    setCreating(true);
-    try {
-      const sim = await fetchSimulation(id);
-      if (!sim.config) throw new Error("This simulation has no saved setup");
-      const res = await createSimulation(sim.config as any);
-      router.push(`/simulate/${res.simulation_id}`);
-    } catch (err) {
-      setSnackbar({ message: err instanceof Error ? err.message : "Could not start a new run" });
-      setTimeout(() => setSnackbar(null), 3000);
-      setCreating(false);
-    }
-  };
-
   const handleRetry = () => { setError(""); setLoading(true); window.location.reload(); };
   const handleDelete = (id: string) => { setConfirmDeleteId(id); setOpenMenuId(null); };
   const confirmDelete = async () => {
@@ -294,7 +282,8 @@ export default function SimulationsPage() {
               <p className="text-xs text-muted mb-4 uppercase tracking-widest font-semibold">Try one of these pre-built scenarios</p>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-left">
                 {templates.slice(0, 3).map((t) => (
-                  <button key={t.slug} onClick={() => handleQuickPlay(t)} disabled={creating} className="rounded-xl border border-hairline bg-surface-container-low p-4 text-left hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer">
+                  // Opens the scenario in the Room to adjust before starting; Quick Play above launches as-is.
+                  <Link key={t.slug} href={`/simulate/new?template=${encodeURIComponent(t.slug)}`} className="block rounded-xl border border-hairline bg-surface-container-low p-4 text-left hover:border-primary/40 hover:shadow-sm transition-all cursor-pointer">
                     <p className="text-[11px] font-semibold uppercase tracking-widest text-primary">{t.category}</p>
                     <p className="mt-2 text-sm font-semibold text-ink">{t.name}</p>
                     <p className="mt-1 text-xs text-muted line-clamp-2 leading-relaxed">{t.description}</p>
@@ -303,7 +292,7 @@ export default function SimulationsPage() {
                       <span className="w-1 h-1 rounded-full bg-hairline" />
                       <span>{t.voltage}v</span>
                     </div>
-                  </button>
+                  </Link>
                 ))}
               </div>
             </div>
@@ -530,11 +519,13 @@ export default function SimulationsPage() {
                     tabIndex={0}
                     onKeyDown={(e) => { if (e.key === "Enter") router.push(`/simulate/${sim.simulation_id}`); }}
                     onClick={() => { if (viewMode === "list") router.push(`/simulate/${sim.simulation_id}`); }}
-                    className={`relative overflow-hidden transition-all duration-200 cursor-pointer ${
+                    // An open actions menu hangs below the card: it must not be clipped, must sit above the next card,
+                    // and a hover transform would trap its fixed backdrop inside the card.
+                    className={`relative ${menuOpen ? "z-30 overflow-visible" : "overflow-hidden hover:-translate-y-0.5"} transition-all duration-200 cursor-pointer ${
                       sim.status === "running"
                         ? "shadow-[0_0_0_1px_var(--color-success)] hover:shadow-[0_0_0_1px_var(--color-success),_0_4px_16px_rgba(0,0,0,0.08)]"
                         : "border border-hairline/60 hover:shadow-md hover:border-hairline"
-                    } hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-primary ${
+                    } focus-visible:outline-2 focus-visible:outline-primary ${
                       viewMode === "list"
                         ? "rounded-xl p-3 flex items-center gap-4 bg-surface-container-low"
                         : "rounded-xl p-[18px] bg-surface-container-low"
@@ -596,10 +587,10 @@ export default function SimulationsPage() {
                               </button>
                               {menuOpen && (
                                 <>
-                                  <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
-                                  <div className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
+                                  <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); }} />
+                                  <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
                                     <Link href={`/simulate/${sim.simulation_id}`} className="block px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors no-underline">Open</Link>
-                                    <button onClick={() => { setOpenMenuId(null); runAgain(sim.simulation_id); }} disabled={creating} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again</button>
+                                    <button onClick={() => { setOpenMenuId(null); setTwistFor(sim); }} aria-haspopup="dialog" className="flex w-full items-center justify-between gap-2 text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again<Icon name="chevron_right" className="text-[18px] text-muted" /></button>
                                     <div className="h-px bg-hairline my-1" />
                                     <button onClick={() => handleDelete(sim.simulation_id)} className="block w-full text-left px-4 py-2 text-sm text-error hover:bg-error-soft transition-colors cursor-pointer">Delete</button>
                                   </div>
@@ -635,10 +626,10 @@ export default function SimulationsPage() {
                           </button>
                           {menuOpen && (
                             <>
-                              <div className="fixed inset-0 z-40" onClick={() => setOpenMenuId(null)} />
-                              <div className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
+                              <div className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpenMenuId(null); }} />
+                              <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()} className="absolute right-0 top-full mt-1 z-50 bg-surface-card rounded-xl border border-hairline shadow-lg py-1 min-w-[160px]">
                                 <Link href={`/simulate/${sim.simulation_id}`} className="block px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors no-underline">Open</Link>
-                                <button onClick={() => { setOpenMenuId(null); runAgain(sim.simulation_id); }} disabled={creating} className="block w-full text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again</button>
+                                <button onClick={() => { setOpenMenuId(null); setTwistFor(sim); }} aria-haspopup="dialog" className="flex w-full items-center justify-between gap-2 text-left px-4 py-2 text-sm text-ink hover:bg-surface-container-low transition-colors cursor-pointer">Run again<Icon name="chevron_right" className="text-[18px] text-muted" /></button>
                                 <div className="h-px bg-hairline my-1" />
                                 <button onClick={() => handleDelete(sim.simulation_id)} className="block w-full text-left px-4 py-2 text-sm text-error hover:bg-error-soft transition-colors cursor-pointer">Delete</button>
                               </div>
@@ -661,6 +652,13 @@ export default function SimulationsPage() {
             onConfirm={confirmDelete}
             onCancel={() => setConfirmDeleteId(null)}
           />
+
+          {/* ── Run again with a twist ── */}
+          {twistFor && (
+            <Sheet variant="center" title="Run again with…" subtitle={twistFor.subject?.name || "Untitled"} onClose={() => setTwistFor(null)}>
+              <TwistMenu simulationId={twistFor.simulation_id} variant="list" />
+            </Sheet>
+          )}
 
           {/* ── Snackbar ── */}
           <Snackbar message={snackbar?.message ?? ""} visible={!!snackbar} onUndo={snackbar?.undo} />
@@ -690,9 +688,6 @@ export default function SimulationsPage() {
             <div className="flex items-center justify-center gap-3">
               <Link href="/simulate/new">
                 <Button>Start New Simulation</Button>
-              </Link>
-              <Link href="/frameworks">
-                <Button variant="ghost">Browse templates</Button>
               </Link>
             </div>
           </section>

@@ -556,6 +556,16 @@ class PrismaBackend(DatabaseBackend):
             result.append(row)
         return result
 
+    @staticmethod
+    def _config_people(config) -> int:
+        if isinstance(config, str):
+            try:
+                config = json.loads(config)
+            except ValueError:
+                return 0
+        people = config.get("stakeholders") if isinstance(config, dict) else None
+        return len(people) if isinstance(people, list) else 0
+
     async def list_simulations_v2(self) -> list[dict]:
         client = self._client_or_raise()
         rows = await client.simulations.find_many(
@@ -571,7 +581,8 @@ class PrismaBackend(DatabaseBackend):
                     "description": r.subject_description,
                 },
                 "status": r.status,
-                "stakeholder_count": r.total_participants,
+                # total_participants is never written; the stored config knows who was seated.
+                "stakeholder_count": r.total_participants or self._config_people(r.config),
                 "voltage": r.voltage,
                 "model_temperature": r.model_temperature,
                 "created_at": r.created_at,
